@@ -1,58 +1,103 @@
 package com.zcw.chatai.ui.theme
 
-import android.app.Activity
-import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.CompositionLocalProvider
 
-private val DarkColorScheme = darkColorScheme(
-    primary = Purple80,
-    secondary = PurpleGrey80,
-    tertiary = Pink80
+private val LightScheme = lightColorScheme(
+    primary = Coral,
+    onPrimary = OnPrimary,
+    primaryContainer = SurfaceCreamStrong,
+    onPrimaryContainer = Ink,
+    inversePrimary = CoralActive,
+    secondary = AccentTeal,
+    onSecondary = OnPrimary,
+    secondaryContainer = SurfaceCreamStrong,
+    onSecondaryContainer = Ink,
+    tertiary = AccentAmber,
+    onTertiary = Ink,
+    tertiaryContainer = SurfaceCard,
+    onTertiaryContainer = Ink,
+    background = Canvas,
+    onBackground = Ink,
+    surface = Canvas,
+    onSurface = Ink,
+    surfaceVariant = SurfaceSoft,
+    onSurfaceVariant = Muted,
+    surfaceTint = Coral,
+    inverseSurface = SurfaceDark,
+    inverseOnSurface = OnDark,
+    error = ErrorRed,
+    onError = OnPrimary,
+    errorContainer = SurfaceCreamStrong,
+    onErrorContainer = ErrorRed,
+    outline = Hairline,
+    outlineVariant = HairlineSoft,
+    scrim = Ink,
+    surfaceBright = Canvas,
+    surfaceDim = SurfaceSoft,
+    surfaceContainerLowest = Canvas,
+    surfaceContainerLow = SurfaceSoft,
+    surfaceContainer = SurfaceCard,
+    surfaceContainerHigh = SurfaceCreamStrong,
+    surfaceContainerHighest = SurfaceCreamStrong,
 )
 
-private val LightColorScheme = lightColorScheme(
-    primary = Purple40,
-    secondary = PurpleGrey40,
-    tertiary = Pink40
-
-    /* Other default colors to override
-    background = Color(0xFFFFFBFE),
-    surface = Color(0xFFFFFBFE),
-    onPrimary = Color.White,
-    onSecondary = Color.White,
-    onTertiary = Color.White,
-    onBackground = Color(0xFF1C1B1F),
-    onSurface = Color(0xFF1C1B1F),
-    */
+private val DarkScheme = darkColorScheme(
+    primary = Coral,
+    onPrimary = OnPrimary,
+    primaryContainer = DarkCoralContainer,
+    onPrimaryContainer = DarkOnCoralContainer,
+    inversePrimary = CoralActive,
+    secondary = AccentTeal,
+    onSecondary = DarkOnTealContainer,
+    secondaryContainer = DarkTealContainer,
+    onSecondaryContainer = DarkOnTealContainer,
+    tertiary = AccentAmber,
+    onTertiary = DarkOnAmberContainer,
+    tertiaryContainer = DarkAmberContainer,
+    onTertiaryContainer = DarkOnAmberContainer,
+    background = DarkCanvas,
+    onBackground = OnDark,
+    surface = DarkSurface,
+    onSurface = OnDark,
+    surfaceVariant = DarkSurfaceElevated,
+    onSurfaceVariant = OnDarkSoft,
+    surfaceTint = Coral,
+    inverseSurface = OnDark,
+    inverseOnSurface = DarkCanvas,
+    error = DarkError,
+    onError = DarkOnError,
+    errorContainer = DarkCoralContainer,
+    onErrorContainer = DarkError,
+    outline = DarkOutline,
+    outlineVariant = DarkHairline,
+    scrim = DarkSurfaceLowest,
+    surfaceBright = DarkSurfaceHighest,
+    surfaceDim = DarkCanvas,
+    surfaceContainerLowest = DarkSurfaceLowest,
+    surfaceContainerLow = DarkCanvas,
+    surfaceContainer = DarkSurface,
+    surfaceContainerHigh = DarkSurfaceElevated,
+    surfaceContainerHighest = DarkSurfaceHighest,
 )
 
 @Composable
 fun ChatAITheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    // Dynamic color is available on Android 12+
-    dynamicColor: Boolean = true,
-    content: @Composable () -> Unit
+    content: @Composable () -> Unit,
 ) {
-    val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
-
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
+    CompositionLocalProvider(
+        LocalChatColors provides if (darkTheme) DarkChatColors else LightChatColors,
+        LocalChatTypography provides ChatTypography.Default,
+    ) {
+        MaterialTheme(
+            colorScheme = if (darkTheme) DarkScheme else LightScheme,
+            typography = Typography,
+            content = content,
+        )
     }
-
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = Typography,
-        content = content
-    )
 }
