@@ -1,0 +1,111 @@
+package com.zcw.chatai.data.db
+
+import com.zcw.chatai.data.model.Conversation
+import com.zcw.chatai.data.model.Message
+import com.zcw.chatai.data.model.MessageStatus
+import com.zcw.chatai.data.model.Role
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Test
+
+class MappersTest {
+
+    private val conversation = Conversation(
+        id = "conv-1",
+        title = "示例对话",
+        model = "deepseek-chat",
+        systemPrompt = "you are helpful",
+        createdAt = 1_700_000_000_000L,
+        updatedAt = 1_700_000_100_000L,
+        lastMessagePreview = "hello there",
+        messageCount = 3,
+        isPinned = true,
+    )
+
+    private val message = Message(
+        id = "msg-1",
+        conversationId = "conv-1",
+        role = Role.ASSISTANT,
+        content = "hello",
+        status = MessageStatus.STREAMING,
+        errorMessage = "boom",
+        reasoningContent = "thinking",
+        seq = 7L,
+        model = "deepseek-reasoner",
+        promptTokens = 11,
+        completionTokens = 22,
+        createdAt = 1_700_000_000_000L,
+        updatedAt = 1_700_000_100_000L,
+    )
+
+    @Test
+    fun conversationRoundTripIsStable() {
+        assertEquals(conversation, conversation.toEntity().toModel())
+    }
+
+    @Test
+    fun messageRoundTripIsStable() {
+        assertEquals(message, message.toEntity().toModel())
+    }
+
+    @Test
+    fun roundTripKeepsNullableFieldsNullable() {
+        val sparse = message.copy(
+            errorMessage = null,
+            reasoningContent = null,
+            model = null,
+            promptTokens = null,
+            completionTokens = null,
+        )
+        val restored = sparse.toEntity().toModel()
+        assertEquals(sparse, restored)
+        assertNull(restored.errorMessage)
+        assertNull(restored.reasoningContent)
+        assertNull(restored.model)
+        assertNull(restored.promptTokens)
+        assertNull(restored.completionTokens)
+
+        val noSystemPrompt = conversation.copy(systemPrompt = null)
+        assertEquals(noSystemPrompt, noSystemPrompt.toEntity().toModel())
+    }
+
+    @Test
+    fun enumNamesArePersisted() {
+        assertEquals("ASSISTANT", message.toEntity().role)
+        assertEquals("STREAMING", message.toEntity().status)
+    }
+
+    @Test
+    fun unknownRoleFallsBackToSystem() {
+        assertEquals(Role.SYSTEM, message.toEntity().copy(role = "WIZARD").toModel().role)
+        assertEquals(Role.SYSTEM, message.toEntity().copy(role = "assistant").toModel().role)
+        assertEquals(Role.SYSTEM, message.toEntity().copy(role = "").toModel().role)
+    }
+
+    @Test
+    fun unknownStatusFallsBackToComplete() {
+        assertEquals(
+            MessageStatus.COMPLETE,
+            message.toEntity().copy(status = "PARTIAL").toModel().status,
+        )
+        assertEquals(
+            MessageStatus.COMPLETE,
+            message.toEntity().copy(status = "streaming").toModel().status,
+        )
+        assertEquals(
+            MessageStatus.COMPLETE,
+            message.toEntity().copy(status = "").toModel().status,
+        )
+    }
+
+    @Test
+    fun knownRoleAndStatusAreParsed() {
+        assertEquals(Role.USER, message.toEntity().copy(role = "USER").toModel().role)
+        assertEquals(Role.SYSTEM, message.toEntity().copy(role = "SYSTEM").toModel().role)
+        assertEquals(MessageStatus.ERROR, message.toEntity().copy(status = "ERROR").toModel().status)
+        assertEquals(
+            MessageStatus.CANCELLED,
+            message.toEntity().copy(status = "CANCELLED").toModel().status,
+        )
+    }
+}
