@@ -1,0 +1,14 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "scrcpy": {
+      "type": "local",
+      "command": ["npx", "-y", "scrcpy-mcp"],
+      "enabled": true,
+      "environment": {
+        "ADB_PATH": "C:\\Users\\ZZW\\AppData\\Local\\Android\\Sdk\\platform-tools\\adb.exe",
+        "SCRCPY_SERVER_PATH": "C:\\Users\\ZZW\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Genymobile.scrcpy_Microsoft.Winget.Source_8wekyb3d8bbwe\\scrcpy-win64-v4.1\\scrcpy-server"
+      }
+    }
+  }
+}
