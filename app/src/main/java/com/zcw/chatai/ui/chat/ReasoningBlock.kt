@@ -29,8 +29,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import com.zcw.chatai.R
 import com.zcw.chatai.data.ai.collapseReasoningWhitespace
@@ -108,6 +113,8 @@ fun ReasoningBlock(
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(max = 220.dp)
+                    // 到底后不要把剩余滚动量交给外层 LazyColumn。
+                    .nestedScroll(IsolateReasoningNestedScroll)
                     .verticalScroll(rememberScrollState()),
             ) {
                 Text(
@@ -146,4 +153,15 @@ private fun ReasoningTicker(
             modifier = if (followEnd) Modifier else Modifier.basicMarquee(),
         )
     }
+}
+
+/** 吃掉思考区自己用不完的滚动量和 fling，避免穿透到聊天列表。 */
+private object IsolateReasoningNestedScroll : NestedScrollConnection {
+    override fun onPostScroll(
+        consumed: Offset,
+        available: Offset,
+        source: NestedScrollSource,
+    ): Offset = available
+
+    override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity = available
 }
