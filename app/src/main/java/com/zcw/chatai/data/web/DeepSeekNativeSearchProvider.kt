@@ -82,6 +82,14 @@ object DeepSeekSearchParser {
             if (gt < 0) break
             cleaned = cleaned.removeRange(start, gt + 1)
         }
+        // 再清掉孤立的结束标记（只有 close、没有 open 的残段）。
+        while (true) {
+            val start = cleaned.indexOf(closeMarker)
+            if (start < 0) break
+            val gt = cleaned.indexOf('>', start)
+            if (gt < 0) break
+            cleaned = cleaned.removeRange(start, gt + 1)
+        }
         return collapseBlankLines(cleaned).trim()
     }
 
@@ -167,6 +175,9 @@ class DeepSeekNativeSearchProvider(
                     DeepSeekSearchParser.parse(body)
                 }
             } catch (e: ChatApiException) {
+                throw e
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // 协程取消必须原样向上传播，不能被包装成普通失败。
                 throw e
             } catch (t: Exception) {
                 throw ChatApiException("联网搜索失败：${t.message ?: "未知错误"}", t)

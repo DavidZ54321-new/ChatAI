@@ -4,6 +4,7 @@ import com.zcw.chatai.data.model.ChatConfig
 import com.zcw.chatai.data.net.ChatApiException
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.runBlocking
+import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
@@ -52,6 +53,32 @@ class DeepSeekNativeSearchProviderTest {
     }
 
     @Test
+    fun coercesMaxUsesIntoRange() = runBlocking {
+        server.enqueue(okResponse())
+        DeepSeekNativeSearchProvider().search("kotlin", 99, config())
+        val high = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS)).body.readUtf8()
+        assertTrue(high, high.contains("\"max_uses\":5"))
+
+        server.enqueue(okResponse())
+        DeepSeekNativeSearchProvider().search("kotlin", 0, config())
+        val low = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS)).body.readUtf8()
+        assertTrue(low, low.contains("\"max_uses\":1"))
+    }
+
+    @Test
+    fun cancellationIsNotWrapped() = runBlocking {
+        val cancel = java.util.concurrent.CancellationException("cancelled")
+        val client = OkHttpClient.Builder().addInterceptor { throw cancel }.build()
+        try {
+            DeepSeekNativeSearchProvider(client).search("x", 5, config())
+            fail("Expected CancellationException")
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // 能进入这个 catch 就说明没有被包装成 ChatApiException。
+            assertEquals("cancelled", e.message)
+        }
+    }
+
+    @Test
     fun mapsHttpErrorToFriendlyMessage() = runBlocking {
         server.enqueue(
             MockResponse().setResponseCode(401)
@@ -73,6 +100,12 @@ class DeepSeekNativeSearchProviderTest {
         assertTrue(!provider.available("https://api.deepseek.com/v1", ""))
         assertTrue(!provider.available("", "k"))
     }
+
+    private fun okResponse() = MockResponse()
+        .setHeader("Content-Type", "application/json")
+        .setBody(
+            """{"content":[{"type":"text","text":"OK"},{"type":"web_search_tool_result","tool_use_id":"s","content":[{"type":"web_search_result","url":"https://a","title":"A"}]}]}""",
+        )
 
     private fun config() = ChatConfig(
         baseUrl = server.url("/v1").toString(),

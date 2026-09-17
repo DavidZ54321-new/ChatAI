@@ -36,6 +36,25 @@ class DeepSeekSearchParserTest {
     }
 
     @Test
+    fun stripsLoneCloseMarker() {
+        val body = """{"content":[{"type":"text","text":"前 <\uFF5C\uFF5C/DSML\uFF5C\uFF5Ctool_calls> 后"}]}"""
+        val result = DeepSeekSearchParser.parse(body)
+        assertFalse(result.answer.orEmpty(), result.answer.orEmpty().contains("DSML"))
+        assertTrue(result.answer.orEmpty(), result.answer.orEmpty().contains("前"))
+        assertTrue(result.answer.orEmpty(), result.answer.orEmpty().contains("后"))
+    }
+
+    @Test
+    fun stripsMultipleDsmlPairs() {
+        val body = """{"content":[{"type":"text","text":"A <\uFF5C\uFF5CDSML\uFF5C\uFF5Ctool_calls>x<\uFF5C\uFF5C/DSML\uFF5C\uFF5Ctool_calls> B <\uFF5C\uFF5CDSML\uFF5C\uFF5Ctool_calls>y<\uFF5C\uFF5C/DSML\uFF5C\uFF5Ctool_calls> C"}]}"""
+        val result = DeepSeekSearchParser.parse(body)
+        assertFalse(result.answer.orEmpty(), result.answer.orEmpty().contains("DSML"))
+        assertTrue(result.answer.orEmpty(), result.answer.orEmpty().contains("A"))
+        assertTrue(result.answer.orEmpty(), result.answer.orEmpty().contains("B"))
+        assertTrue(result.answer.orEmpty(), result.answer.orEmpty().contains("C"))
+    }
+
+    @Test
     fun emptyContentGivesEmptyResult() {
         val result = DeepSeekSearchParser.parse("""{"content":[]}""")
         assertEquals(null, result.answer)
