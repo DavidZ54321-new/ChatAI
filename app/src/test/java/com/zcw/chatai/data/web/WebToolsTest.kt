@@ -1,9 +1,8 @@
 package com.zcw.chatai.data.web
 
-import com.zcw.chatai.data.model.ToolResult
 import com.zcw.chatai.data.model.ToolSource
-import com.zcw.chatai.data.model.ToolStatus
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -25,6 +24,16 @@ class WebToolsTest {
     }
 
     @Test
+    fun parsesArgumentsWithEdgeCaseInputs() {
+        // 非字符串的 JSON 标量按字面量取用（JsonPrimitive.contentOrNull 会给出 "123"）。
+        assertEquals("123", WebTools.queryOf("{\"query\":123}"))
+        assertNull(WebTools.queryOf("[1]"))
+        assertNull(WebTools.queryOf("{\"query\":null}"))
+        assertNull(WebTools.queryOf("{\"query\":\"   \"}"))
+        assertNull(WebTools.urlOf("{\"url\":{\"x\":1}}"))
+    }
+
+    @Test
     fun formatsSearchResultWithHeadingAndSources() {
         val text = WebTools.formatSearchResult(
             "kotlin",
@@ -40,16 +49,35 @@ class WebToolsTest {
     }
 
     @Test
-    fun formatsEmptySearchResult() {
+    fun formatsEmptySearchResultWithoutCitationHint() {
         val text = WebTools.formatSearchResult("x", WebSearchResult())
         assertTrue(text, text.contains("No results found."))
+        assertFalse(text, text.contains("markdown"))
+    }
+
+    @Test
+    fun capsProviderAnswer() {
+        val long = "a".repeat(WebTools.MAX_SEARCH_ANSWER_CHARS + 100)
+        val text = WebTools.formatSearchResult("x", WebSearchResult(answer = long))
+        assertTrue(text, text.contains("(answer truncated)"))
+        assertTrue(text.length <= WebTools.MAX_SEARCH_ANSWER_CHARS + 200)
     }
 
     @Test
     fun formatsFetchResultAndTruncates() {
         val long = "a".repeat(WebTools.MAX_FETCH_CHARS + 100)
         val text = WebTools.formatFetchResult(WebFetchResult("https://a", 200, long, truncated = false))
-        assertTrue(text.length <= WebTools.MAX_FETCH_CHARS + 200)
-        assertTrue(text, text.contains("https://a"))
+        val header = "Fetched https://a (HTTP 200):\n"
+        assertTrue(text, text.startsWith(header))
+        assertTrue(text, text.contains("[content truncated]"))
+        val body = text.removePrefix(header).removeSuffix("\n[content truncated]")
+        assertEquals(WebTools.MAX_FETCH_CHARS, body.length)
+        assertTrue(body, body.all { it == 'a' })
+    }
+
+    @Test
+    fun marksShortTextWhenFetcherReportsTruncation() {
+        val text = WebTools.formatFetchResult(WebFetchResult("https://a", 200, "short", truncated = true))
+        assertTrue(text, text.contains("[content truncated]"))
     }
 }

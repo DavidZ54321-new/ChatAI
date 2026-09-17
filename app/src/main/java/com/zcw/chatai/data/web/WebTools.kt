@@ -4,6 +4,7 @@ import com.zcw.chatai.data.model.ToolSource
 import com.zcw.chatai.data.net.dto.ChatTool
 import com.zcw.chatai.data.net.dto.FunctionSpec
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -29,6 +30,7 @@ object WebTools {
     const val FETCH = "web_fetch"
     const val DEFAULT_MAX_RESULTS = 5
     const val MAX_FETCH_CHARS = 20_000
+    const val MAX_SEARCH_ANSWER_CHARS = 8_000
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
@@ -51,25 +53,32 @@ object WebTools {
     fun formatSearchResult(query: String, result: WebSearchResult): String {
         val builder = StringBuilder()
         builder.append("Search results for \"").append(query).append("\":\n")
-        result.answer?.takeIf { it.isNotBlank() }?.let { builder.append(it).append("\n\n") }
-        if (result.sources.isEmpty()) {
-            if (result.answer.isNullOrBlank()) builder.append("No results found.\n")
-        } else {
+        result.answer?.takeIf { it.isNotBlank() }?.let { answer ->
+            val body = if (answer.length > MAX_SEARCH_ANSWER_CHARS) {
+                answer.take(MAX_SEARCH_ANSWER_CHARS) + "(answer truncated)"
+            } else {
+                answer
+            }
+            builder.append(body).append("\n\n")
+        }
+        if (result.sources.isEmpty() && result.answer.isNullOrBlank()) {
+            builder.append("No results found.\n")
+        } else if (result.sources.isNotEmpty()) {
             builder.append("Sources:\n")
             result.sources.forEach { source ->
                 builder.append("- ").append(source.title ?: source.url).append(" — ").append(source.url)
                 source.snippet?.takeIf { it.isNotBlank() }?.let { builder.append("\n  ").append(it) }
                 builder.append("\n")
             }
+            builder.append("Cite the relevant URLs above as markdown links in your answer.")
         }
-        builder.append("Cite the relevant URLs above as markdown links in your answer.")
         return builder.toString()
     }
 
     fun formatFetchResult(result: WebFetchResult): String {
         val header = "Fetched ${result.url} (HTTP ${result.statusCode}):\n"
         val body = result.text.take(MAX_FETCH_CHARS)
-        val note = if (result.truncated || result.text.length > MAX_FETCH_CHARS) "\n[内容已截断]" else ""
+        val note = if (result.truncated || result.text.length > MAX_FETCH_CHARS) "\n[content truncated]" else ""
         return header + body + note
     }
 
@@ -85,7 +94,7 @@ object WebTools {
                         put("description", "The search query.")
                     }
                 }
-                put("required", kotlinx.serialization.json.JsonArray(listOf(JsonPrimitive("query"))))
+                put("required", JsonArray(listOf(JsonPrimitive("query"))))
                 put("additionalProperties", false)
             },
         ),
@@ -103,7 +112,7 @@ object WebTools {
                         put("description", "Absolute http(s) URL to read.")
                     }
                 }
-                put("required", kotlinx.serialization.json.JsonArray(listOf(JsonPrimitive("url"))))
+                put("required", JsonArray(listOf(JsonPrimitive("url"))))
                 put("additionalProperties", false)
             },
         ),
