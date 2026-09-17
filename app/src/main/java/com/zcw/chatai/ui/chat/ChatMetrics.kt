@@ -4,7 +4,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /**
- * 聊天界面的视觉度量。两个比例都相对「手机视窗」而不是相对父容器，
+ * 聊天界面的视觉度量。比例都相对「手机视窗」而不是相对父容器，
  * 这样分屏 / 折叠 / 旋转时观感一致，也方便纯函数单测。
  */
 object ChatMetrics {
@@ -12,12 +12,41 @@ object ChatMetrics {
     /** 消息里图片缩略图的边长 = 视窗宽度的 20%。单图多图统一，超宽就横向滑动。 */
     const val THUMB_FRACTION = 0.2f
 
-    /** 底部消散带高度 = 视窗高度的 10%（就是系统隐形导航栏那一带）。 */
-    const val BOTTOM_DISSOLVE_FRACTION = 0.10f
+    /**
+     * 顶栏按钮行本身完全不透明，消散只发生在按钮下沿之后。
+     * 尾巴高度 = 视窗高 4%。
+     */
+    const val TOP_DISSOLVE_TAIL_FRACTION = 0.04f
+
+    /**
+     * 底部消散引导带 = 视窗高 3%，贴在 Composer 上沿，
+     * 不再用 10% 整条架在消息正文上。
+     */
+    const val BOTTOM_DISSOLVE_LEAD_FRACTION = 0.03f
+
+    /** [FloatingTopControls]：上下 6.dp padding + 44.dp 按钮。 */
+    val TOP_BAR_CONTENT: Dp = 56.dp
+
+    data class DissolveBand(val height: Dp, val opaqueStop: Float)
 
     fun thumbnailSide(windowWidth: Dp): Dp =
         (windowWidth * THUMB_FRACTION).coerceAtLeast(1.dp)
 
-    fun bottomDissolve(windowHeight: Dp): Dp =
-        (windowHeight * BOTTOM_DISSOLVE_FRACTION).coerceAtLeast(1.dp)
+    fun topDissolve(windowHeight: Dp, statusBar: Dp): DissolveBand {
+        val tail = (windowHeight * TOP_DISSOLVE_TAIL_FRACTION).coerceAtLeast(1.dp)
+        val height = statusBar + TOP_BAR_CONTENT + tail
+        return DissolveBand(height, opaqueStop(statusBar + TOP_BAR_CONTENT, height))
+    }
+
+    fun bottomDissolve(windowHeight: Dp, composerStack: Dp): DissolveBand {
+        val lead = (windowHeight * BOTTOM_DISSOLVE_LEAD_FRACTION).coerceAtLeast(1.dp)
+        val height = composerStack + lead
+        return DissolveBand(height, opaqueStop(lead, height))
+    }
+
+    private fun opaqueStop(part: Dp, total: Dp): Float {
+        val t = total.value
+        if (t <= 0f) return 1f
+        return (part.value / t).coerceIn(0f, 1f)
+    }
 }

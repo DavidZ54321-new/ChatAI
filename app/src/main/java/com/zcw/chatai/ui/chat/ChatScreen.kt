@@ -54,7 +54,7 @@ import androidx.core.content.FileProvider
 import com.zcw.chatai.data.model.Role
 import com.zcw.chatai.ui.theme.ChatTheme
 import java.io.File
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 @Composable
@@ -87,12 +87,14 @@ fun ChatScreen(
     var overflowOpen by remember { mutableStateOf(false) }
     var attachOpen by remember { mutableStateOf(false) }
 
-    // 底部消散带 = 视窗高度的 10%（模拟系统隐形导航栏那一带），文字在带内快速消散。
+    // 底消散贴 Composer 上沿；顶消散在按钮行内实心，只在按钮下沿淡出。
     // 底部留白跟 Composer 实测高度走：待发图把它撑高时，最后一条消息不会被盖住。
     var composerHeight by remember { mutableIntStateOf(0) }
-    val dissolveHeight = ChatMetrics.bottomDissolve(LocalWindowInfo.current.containerDpSize.height)
+    val windowHeight = LocalWindowInfo.current.containerDpSize.height
     val composerDp = with(LocalDensity.current) { composerHeight.toDp() }
     val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val topBand = ChatMetrics.topDissolve(windowHeight, topInset)
+    val bottomBand = ChatMetrics.bottomDissolve(windowHeight, composerDp + bottomInset + 10.dp)
 
     val messages = state.messages
     val lastMessage = messages.lastOrNull()
@@ -117,31 +119,27 @@ fun ChatScreen(
     val atBottom by remember {
         derivedStateOf {
             val info = listState.layoutInfo
-            val last = info.visibleItemsInfo.lastOrNull()
-            last == null || (
-                last.index >= info.totalItemsCount - 1 &&
-                    last.offset + last.size <= info.viewportEndOffset + 48
-                )
+            isChatListAtBottom(
+                lastVisibleIndex = info.visibleItemsInfo.lastOrNull()?.index,
+                totalItems = info.totalItemsCount,
+                canScrollForward = listState.canScrollForward,
+            )
         }
+    }
+
+    var listEndJob by remember { mutableStateOf<Job?>(null) }
+    fun scrollListToEnd() {
+        listEndJob?.cancel()
+        listEndJob = scope.launch { listState.scrollToEnd() }
     }
 
     LaunchedEffect(messages.size, lastMessage?.id) {
-        if (messages.isNotEmpty()) {
-            repeat(6) {
-                listState.scrollToItem(messages.lastIndex)
-                delay(100)
-            }
-        }
+        if (messages.isNotEmpty()) scrollListToEnd()
     }
 
     LaunchedEffect(lastMessage?.content?.length, lastMessage?.reasoning?.length, state.isStreaming) {
-        if (messages.isNotEmpty() && atBottom) {
-            if (state.isStreaming) {
-                listState.scrollToItem(messages.lastIndex)
-            } else {
-                listState.animateScrollToItem(messages.lastIndex)
-            }
-        }
+        if (messages.isEmpty() || !state.isStreaming) return@LaunchedEffect
+        if (atBottom) scrollListToEnd()
     }
 
     Box(modifier = modifier.fillMaxSize().background(colors.canvas).imePadding()) {
@@ -155,9 +153,10 @@ fun ChatScreen(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(
-                    top = topInset + 68.dp,
-                    // 静止时最后一行要停在消散带「上方」，否则滚到底也会是半透明的。
-                    bottom = composerDp + bottomInset + dissolveHeight + 22.dp,
+                    // 含顶消散尾巴：停在顶部时第一条气泡在渐变之下，实色。
+                    top = topBand.height,
+                    // 静止时最后一行停在底引导带上方，正文本身保持实色。
+                    bottom = bottomBand.height + 12.dp,
                 ),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
@@ -195,14 +194,12 @@ fun ChatScreen(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .padding(bottom = composerDp + bottomInset + 10.dp)
-                .height(dissolveHeight)
+                .height(bottomBand.height)
                 .background(
                     Brush.verticalGradient(
                         colorStops = arrayOf(
                             0f to Color.Transparent,
-                            0.45f to colors.canvas.copy(alpha = 0.55f),
-                            0.72f to colors.canvas.copy(alpha = 0.92f),
+                            bottomBand.opaqueStop to colors.canvas,
                             1f to colors.canvas,
                         ),
                     ),
@@ -212,9 +209,15 @@ fun ChatScreen(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
-                .height(110.dp)
+                .height(topBand.height)
                 .background(
-                    Brush.verticalGradient(listOf(colors.canvas, Color.Transparent)),
+                    Brush.verticalGradient(
+                        colorStops = arrayOf(
+                            0f to colors.canvas,
+                            topBand.opaqueStop to colors.canvas,
+                            1f to Color.Transparent,
+                        ),
+                    ),
                 ),
         )
         FloatingTopControls(
@@ -226,7 +229,7 @@ fun ChatScreen(
         if (messages.isNotEmpty() && !atBottom) {
             ScrollToBottomButton(
                 onClick = {
-                    scope.launch { listState.animateScrollToItem(messages.lastIndex) }
+                    scrollListToEnd()
                 },
                 modifier = Modifier
                     .align(Alignment.BottomEnd)

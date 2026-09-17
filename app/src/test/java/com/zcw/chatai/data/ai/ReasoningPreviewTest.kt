@@ -8,18 +8,18 @@ class ReasoningPreviewTest {
 
     @Test
     fun blankReasoningHasNoPreview() {
-        assertNull(reasoningPreview(""))
-        assertNull(reasoningPreview("   \n\n \t "))
+        assertNull(collapseReasoningWhitespace(""))
+        assertNull(collapseReasoningWhitespace("   \n\n \t "))
     }
 
     @Test
     fun skipsLeadingBlankLinesAndCollapsesNewlines() {
-        assertEquals("先看用户给的图。 第二段", reasoningPreview("\n\n  先看用户给的图。  \n第二段"))
+        assertEquals("先看用户给的图。 第二段", collapseReasoningWhitespace("\n\n  先看用户给的图。  \n第二段"))
     }
 
     @Test
     fun collapsesWhitespaceRunsIntoOneSpace() {
-        assertEquals("a b c", reasoningPreview("a \t  b\nc"))
+        assertEquals("a b c", collapseReasoningWhitespace("a \t  b\nc"))
     }
 
     /**
@@ -28,25 +28,24 @@ class ReasoningPreviewTest {
      */
     @Test
     fun perCharacterNewlinesStillGiveUsefulPreview() {
-        assertEquals("用 户 发 来 多 张 图", reasoningPreview("用\n户\n发\n来\n多\n张\n图"))
-    }
-
-    @Test
-    fun truncatesLongLineWithEllipsis() {
-        val preview = reasoningPreview("甲".repeat(100), maxChars = 10)
-        assertEquals("甲".repeat(10) + "…", preview)
-    }
-
-    @Test
-    fun truncationDoesNotLeaveTrailingSpace() {
-        // 截断正好落在空格上：空格要被去掉，不能出现 "abc …"
-        assertEquals("abc…", reasoningPreview("abc     defgh", maxChars = 4))
-        // 截断落在词中间：保留词内空格
-        assertEquals("abc de…", reasoningPreview("abc     defgh", maxChars = 6))
+        assertEquals("用 户 发 来 多 张 图", collapseReasoningWhitespace("用\n户\n发\n来\n多\n张\n图"))
     }
 
     @Test
     fun shortTextIsReturnedAsIs() {
-        assertEquals("想一下", reasoningPreview("想一下"))
+        assertEquals("想一下", collapseReasoningWhitespace("想一下"))
+    }
+
+    @Test
+    fun collapseDoesNotTruncate() {
+        val long = "甲".repeat(100)
+        assertEquals(long, collapseReasoningWhitespace(long))
+    }
+
+    @Test
+    fun tickerTakesTailWhileFollowingAndHeadWhenIdle() {
+        assertEquals("cdef", reasoningTickerText("abcdef", followEnd = true, maxChars = 4))
+        assertEquals("abcd", reasoningTickerText("abcdef", followEnd = false, maxChars = 4))
+        assertEquals("短", reasoningTickerText("短", followEnd = true, maxChars = 4))
     }
 }
