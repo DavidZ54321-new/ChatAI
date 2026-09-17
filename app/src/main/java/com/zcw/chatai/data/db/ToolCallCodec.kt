@@ -8,7 +8,12 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 
-/** `messages.tool_calls` / `messages.tool_result` 两列的 JSON 编解码（纯函数，JVM 可测）。 */
+/**
+ * `messages.tool_calls` / `messages.tool_result` 两列的 JSON 编解码（纯函数，JVM 可测）。
+ *
+ * 容错策略：整串非法（坏 JSON / 形状不符 / 必填字段缺失）→ 空列表或 null；
+ * 数组内单条语义非法（缺 id/name、未知 status、空 URL 来源）→ 丢弃该条或回退，其余保留。
+ */
 object ToolCallCodec {
 
     private val json = Json {
@@ -25,7 +30,7 @@ object ToolCallCodec {
         if (raw.isNullOrBlank()) return emptyList()
         return try {
             json.decodeFromString(callsSerializer, raw).mapNotNull { it.toModel() }
-        } catch (t: Exception) {
+        } catch (_: Exception) {
             emptyList()
         }
     }
@@ -37,7 +42,7 @@ object ToolCallCodec {
         if (raw.isNullOrBlank()) return null
         return try {
             json.decodeFromString(ToolResultDto.serializer(), raw).toModel()
-        } catch (t: Exception) {
+        } catch (_: Exception) {
             null
         }
     }
