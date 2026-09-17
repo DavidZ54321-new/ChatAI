@@ -43,4 +43,21 @@ class EndpointUrlTest {
         assertNull(EndpointUrl.chatCompletions("   "))
         assertNull(EndpointUrl.chatCompletions(""))
     }
+
+    @Test
+    fun derivesModelsEndpointFromBaseUrl() {
+        assertEquals(
+            "https://api.deepseek.com/v1/models",
+            EndpointUrl.models("https://api.deepseek.com/v1"),
+        )
+        assertEquals(
+            "https://api.deepseek.com/v1/models",
+            EndpointUrl.models("https://api.deepseek.com"),
+        )
+        assertEquals(
+            "https://api.openai.com/v1/models",
+            EndpointUrl.models("https://api.openai.com/v1/chat/completions"),
+        )
+        assertNull(EndpointUrl.models(""))
+    }
 }

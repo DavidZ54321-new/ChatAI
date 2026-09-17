@@ -64,7 +64,7 @@ class ChatStreamTest {
     }
 
     @Test
-    fun surfacesHttpErrorBody() = runBlocking {
+    fun mapsHttpErrorBodyToFriendlyMessage() = runBlocking {
         server.enqueue(
             MockResponse()
                 .setResponseCode(401)
@@ -76,7 +76,24 @@ class ChatStreamTest {
             collectEvents(config())
             fail("Expected ChatApiException")
         } catch (e: ChatApiException) {
-            assertTrue(e.message.orEmpty(), e.message.orEmpty().contains("Invalid API key"))
+            assertTrue(e.message.orEmpty(), e.message.orEmpty().contains("API Key"))
+        }
+    }
+
+    @Test
+    fun keepsServerDetailForBadRequest() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(400)
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"error":{"message":"model not found"}}"""),
+        )
+
+        try {
+            collectEvents(config())
+            fail("Expected ChatApiException")
+        } catch (e: ChatApiException) {
+            assertTrue(e.message.orEmpty(), e.message.orEmpty().contains("model not found"))
         }
     }
 
@@ -153,6 +170,127 @@ class ChatStreamTest {
         val userIndex = payload.indexOf("\"user\"")
         assertTrue(payload, systemIndex in 0 until userIndex)
         assertTrue(payload, payload.contains("你是助手"))
+    }
+
+    @Test
+    fun emitsFinishedEventWithReason() = runBlocking {
+        val body = buildString {
+            append(deltaEvent("半"))
+            append("""data: {"choices":[{"index":0,"delta":{"content":""},"finish_reason":"length"}]}""")
+            append("\n\n")
+            append("""data: {"choices":[{"index":0,"delta":{"content":""},"finish_reason":null}],"usage":{"prompt_tokens":41,"completion_tokens":24,"completion_tokens_details":{"reasoning_tokens":24},"prompt_cache_hit_tokens":7}}""")
+            append("\n\n")
+            append(DONE_EVENT)
+        }
+        server.enqueue(eventStream(body))
+
+        val events = collectEvents(config())
+
+        assertEquals(listOf<ChatStreamEvent>(ChatStreamEvent.Finished("length")), events.filterIsInstance<ChatStreamEvent.Finished>())
+        val usage = events.filterIsInstance<ChatStreamEvent.Usage>().single()
+        assertEquals(41, usage.promptTokens)
+        assertEquals(24, usage.reasoningTokens)
+        assertEquals(7, usage.cachedTokens)
+    }
+
+    @Test
+    fun sendsImagesAsContentPartsOnlyForUserRole() = runBlocking {
+        server.enqueue(eventStream(deltaEvent("ok") + DONE_EVENT))
+        val messages = listOf(
+            ChatRequestMessage(
+                role = "user",
+                content = "这是什么？",
+                images = listOf(ChatRequestImage(dataUrl = "data:image/jpeg;base64,AAAA", detail = "low")),
+            ),
+            ChatRequestMessage(
+                role = "assistant",
+                content = "图片被塞进 assistant 也应被剥离",
+                images = listOf(ChatRequestImage(dataUrl = "data:image/jpeg;base64,BBBB")),
+            ),
+        )
+
+        withTimeout(TIMEOUT_MS) {
+            OpenAiCompatibleChatApi().stream(config().copy(reasoningEffort = "low", maxTokens = 128), messages).toList()
+        }
+
+        val payload = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS)).body.readUtf8()
+        assertTrue(payload, payload.contains("\"image_url\""))
+        assertTrue(payload, payload.contains("data:image/jpeg;base64,AAAA"))
+        assertFalse(payload, payload.contains("BBBB"))
+        assertTrue(payload, payload.contains("\"reasoning_effort\":\"low\""))
+        assertTrue(payload, payload.contains("\"max_tokens\":128"))
+        assertTrue(payload, payload.contains("\"stream_options\":{\"include_usage\":true}"))
+        assertTrue(payload, payload.contains("\"temperature\""))
+    }
+
+    @Test
+    fun mergesUserExtraParamsButKeepsProtectedKeys() = runBlocking {
+        server.enqueue(eventStream(deltaEvent("ok") + DONE_EVENT))
+
+        withTimeout(TIMEOUT_MS) {
+            OpenAiCompatibleChatApi()
+                .stream(
+                    config().copy(extraParams = """{"top_k":20,"model":"hacked","stream":false}"""),
+                    requestMessages(),
+                )
+                .toList()
+        }
+
+        val payload = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS)).body.readUtf8()
+        assertTrue(payload, payload.contains("\"top_k\":20"))
+        assertTrue(payload, payload.contains("\"stream\":true"))
+        assertFalse(payload, payload.contains("hacked"))
+    }
+
+    @Test
+    fun mapsRateLimitErrorToFriendlyMessage() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(429)
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"error":{"message":"Rate limit reached","type":"rate_limit_error"}}"""),
+        )
+
+        try {
+            collectEvents(config())
+            fail("Expected ChatApiException")
+        } catch (e: ChatApiException) {
+            assertTrue(e.message.orEmpty(), e.message.orEmpty().contains("稍后重试"))
+        }
+    }
+
+    @Test
+    fun listModelsParsesStandardResponse() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"object":"list","data":[{"id":"deepseek-flash","object":"model"},{"id":"deepseek-v4-pro","object":"model"}]}"""),
+        )
+
+        val models = OpenAiCompatibleChatApi().listModels(config())
+
+        assertEquals(listOf("deepseek-flash", "deepseek-v4-pro"), models)
+        val recorded = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+        assertEquals("/v1/models", recorded.path)
+        assertEquals("GET", recorded.method)
+        assertEquals("Bearer test-key", recorded.getHeader("Authorization"))
+    }
+
+    @Test
+    fun listModelsSurfacesAuthFailure() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(401)
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"error":{"message":"Authentication Fails"}}"""),
+        )
+
+        try {
+            OpenAiCompatibleChatApi().listModels(config())
+            fail("Expected ChatApiException")
+        } catch (e: ChatApiException) {
+            assertTrue(e.message.orEmpty(), e.message.orEmpty().contains("API Key"))
+        }
     }
 
     private fun config(): ChatConfig = ChatConfig(
