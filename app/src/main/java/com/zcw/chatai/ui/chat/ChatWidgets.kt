@@ -98,33 +98,6 @@ internal fun IconBareButton(
 }
 
 @Composable
-internal fun FilledCircleButton(
-    icon: ImageVector,
-    contentDescription: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    size: Dp = 36.dp,
-    container: Color = MaterialTheme.colorScheme.onSurface,
-    content: Color = MaterialTheme.colorScheme.surface,
-) {
-    Box(
-        modifier = modifier
-            .size(size)
-            .clip(CircleShape)
-            .background(container)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = contentDescription,
-            tint = content,
-            modifier = Modifier.size(size * 0.5f),
-        )
-    }
-}
-
-@Composable
 internal fun IconActionButton(
     contentDescription: String,
     onClick: () -> Unit,

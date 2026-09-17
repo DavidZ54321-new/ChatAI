@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Menu
@@ -35,12 +34,11 @@ fun FloatingTopControls(
             onClick = onOpenDrawer,
         )
         Spacer(Modifier.weight(1f))
-        FilledCircleButton(
+        IconBareButton(
             icon = Icons.Filled.Add,
             contentDescription = "新对话",
             onClick = onNewConversation,
         )
-        Spacer(Modifier.width(2.dp))
         IconBareButton(
             icon = Icons.Filled.MoreVert,
             contentDescription = "更多",

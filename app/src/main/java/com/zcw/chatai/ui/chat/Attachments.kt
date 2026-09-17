@@ -8,7 +8,6 @@ import android.os.Environment
 import android.provider.MediaStore
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -18,6 +17,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
@@ -42,12 +43,15 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.zcw.chatai.ui.theme.ChatTheme
 import java.io.File
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -83,13 +87,14 @@ fun AttachmentThumbnail(
     modifier: Modifier = Modifier,
 ) {
     val colors = ChatTheme.colors
-    val bitmap = rememberBitmap(path, maxEdge = 400)
+    // 按实际显示尺寸解码：82dp 的缩略图没必要解 400px 的位图（多图时差别很明显）。
+    val maxEdge = with(LocalDensity.current) { (size.value * density).roundToInt() }.coerceAtLeast(96)
+    val bitmap = rememberBitmap(path, maxEdge = maxEdge)
     Box(
         modifier = modifier
             .size(size)
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(14.dp))
             .background(colors.surfaceSoft)
-            .border(1.dp, colors.hairline, RoundedCornerShape(10.dp))
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -105,30 +110,26 @@ fun AttachmentThumbnail(
     }
 }
 
-/** 消息里横向排列的图片（最多 8 张，一行放不下就换行）。 */
+/**
+ * 消息里的图片：全是「视窗宽度 20%」的正方形缩略图。
+ * 少则贴着气泡右边缘排，多则横向懒加载滑动（不会像以前那样只用前 3 张、其余全看不到）。
+ */
 @Composable
 fun MessageImageRow(
     images: List<MessageImage>,
     onOpen: (MessageImage) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Row(
+    val side = ChatMetrics.thumbnailSide(LocalWindowInfo.current.containerDpSize.width)
+    LazyRow(
         modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
     ) {
-        images.take(3).forEach { image ->
+        items(items = images, key = { it.id }) { image ->
             AttachmentThumbnail(
                 path = image.thumbnailPath,
-                size = if (images.size == 1) 168.dp else 104.dp,
+                size = side,
                 onClick = { onOpen(image) },
-            )
-        }
-        if (images.size > 3) {
-            Text(
-                text = "+${images.size - 3}",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
@@ -253,18 +254,18 @@ private fun saveToGallery(context: Context, path: String): Boolean = try {
     false
 }
 
-/** Composer 里的待发送缩略图，右上角可删除。 */
+/** Composer 里的待发送缩略图，右上角可删除。8 张也不能把输入框撑破，所以同样横向懒加载。 */
 @Composable
 fun PendingAttachmentStrip(
     pending: List<PendingAttachment>,
     onRemove: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Row(
+    LazyRow(
         modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        pending.forEach { item ->
+        items(items = pending, key = { it.id }) { item ->
             Box {
                 AttachmentThumbnail(
                     path = item.thumbnailPath,
