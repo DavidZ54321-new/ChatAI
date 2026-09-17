@@ -21,14 +21,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontStyle
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.BaselineShift
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
@@ -49,7 +42,6 @@ private const val MATRIX_DELIM_SCALE_PER_ROW = 0.6f
 private const val MATRIX_DELIM_MAX_SCALE = 4.0f
 private val MATRIX_COL_GAP = 12.dp
 private val MATRIX_ROW_GAP = 4.dp
-private val SCRIPT_FONT_SIZE = 12.sp
 
 /** Reused sentinel for absent matrix cells — avoids allocating a new empty Group per recomposition. */
 private val EMPTY_MATRIX_CELL: MathAtom = Group(persistentListOf())
@@ -83,18 +75,6 @@ fun MathFormula(
     val color = LocalContentColor.current
     Box(modifier) {
         AtomRenderer(atom, display = display, baseSize = baseSize, color = color)
-    }
-}
-
-/**
- * Appends an inline math fragment into an [AnnotatedString] so it flows with the surrounding
- * paragraph text: same line, same baseline, no placeholder box. Color and font size are inherited
- * from the paragraph style; scripts use [SCRIPT_FONT_SIZE].
- */
-fun AnnotatedString.Builder.appendInlineMath(latex: String) {
-    when (val atom = MathParser.parse(latex)) {
-        is Group -> for (inner in atom.atoms) appendAtomInline(inner, Color.Unspecified)
-        else -> appendAtomInline(atom, Color.Unspecified)
     }
 }
 
@@ -208,123 +188,6 @@ private fun InlineRun(atoms: ImmutableList<MathAtom>, baseSize: TextUnit, color:
     Text(text = annotated, style = style.copy(fontSize = baseSize, color = color))
 }
 
-private fun AnnotatedString.Builder.appendAtomInline(atom: MathAtom, color: Color) {
-    when (atom) {
-        is Sym -> append(symSpan(atom))
-
-        is Space -> {
-            // Approximation — the AnnotatedString.Builder has no Density access, so we pick the
-            // nearest Unicode space width (thin / en / em / 2×em) instead of a pixel-exact width.
-            val raw = atom.emWidth
-            when {
-                raw <= 0f -> Unit
-                raw < 0.3f -> append('\u2009')
-                raw < 0.8f -> append('\u2002')
-                raw < 1.5f -> append('\u2003')
-                else -> append('\u2003').also { append('\u2003') }
-            }
-        }
-
-        is Styled -> {
-            val span = styleSpan(atom.style)
-            withStyle(span) {
-                if (atom.style == MathStyle.DOUBLE_STRUCK || atom.style == MathStyle.CALLIGRAPHIC) {
-                    for (inner in atom.atoms) appendMapped(inner, atom.style)
-                } else {
-                    for (inner in atom.atoms) appendAtomInline(inner, color)
-                }
-            }
-        }
-
-        is Group -> for (inner in atom.atoms) appendAtomInline(inner, color)
-
-        is Script -> {
-            appendAtomInline(atom.base, color)
-            appendScripts(atom.sub, atom.sup, color)
-        }
-
-        is LargeOp -> {
-            append(atom.symbol)
-            appendScripts(atom.sub, atom.sup, color)
-        }
-
-        is Frac, is Radical, is Delim, is Accent, is Matrix -> {
-            // Shouldn't reach here — [isInlineRenderable] keeps these off the AnnotatedString path.
-            append('\u25A1')
-        }
-    }
-}
-
-private fun AnnotatedString.Builder.appendScripts(sub: MathAtom?, sup: MathAtom?, color: Color) {
-    sup?.let {
-        withStyle(SpanStyle(fontSize = SCRIPT_FONT_SIZE, baselineShift = BaselineShift.Superscript)) {
-            appendAtomInline(it, color)
-        }
-    }
-    sub?.let {
-        withStyle(SpanStyle(fontSize = SCRIPT_FONT_SIZE, baselineShift = BaselineShift.Subscript)) {
-            appendAtomInline(it, color)
-        }
-    }
-}
-
-private fun AnnotatedString.Builder.appendMapped(atom: MathAtom, style: MathStyle) {
-    when (atom) {
-        is Sym -> {
-            val mapped = atom.text.map { ch ->
-                when (style) {
-                    MathStyle.DOUBLE_STRUCK -> MathSymbols.mapDoubleStruck(ch)
-                    MathStyle.CALLIGRAPHIC -> MathSymbols.mapCalligraphic(ch)
-                    else -> ch.toString()
-                }
-            }.joinToString("")
-            append(mapped)
-        }
-
-        is Group -> for (inner in atom.atoms) appendMapped(inner, style)
-
-        else -> appendAtomInline(atom, Color.Unspecified)
-    }
-}
-
-private fun symSpan(sym: Sym): AnnotatedString {
-    val italic = sym.kind == SymKind.VARIABLE && sym.text.length == 1 && sym.text[0].isLetter() && !isGreek(sym.text[0])
-    return buildAnnotatedString {
-        val spacing = kindSpacing(sym.kind)
-        if (spacing.first > 0) append('\u2009')
-        withStyle(SpanStyle(fontStyle = if (italic) FontStyle.Italic else FontStyle.Normal)) {
-            append(sym.text)
-        }
-        if (spacing.second > 0) append('\u2009')
-    }
-}
-
-private fun kindSpacing(kind: SymKind): Pair<Int, Int> = when (kind) {
-    SymKind.BIN_OP, SymKind.REL_OP -> 1 to 1
-    SymKind.PUNCT -> 0 to 1
-    SymKind.FUNCTION -> 0 to 1
-    else -> 0 to 0
-}
-
-private fun isGreek(ch: Char): Boolean = ch.code in 0x0370..0x03FF
-
-private fun styleSpan(style: MathStyle): SpanStyle = when (style) {
-    MathStyle.TEXT -> SpanStyle(fontFamily = FontFamily.Default, fontStyle = FontStyle.Normal)
-
-    MathStyle.BOLD -> SpanStyle(fontWeight = FontWeight.Bold)
-
-    MathStyle.BOLD_ITALIC -> SpanStyle(fontWeight = FontWeight.Bold, fontStyle = FontStyle.Italic)
-
-    MathStyle.ITALIC -> SpanStyle(fontStyle = FontStyle.Italic)
-
-    MathStyle.ROMAN -> SpanStyle(fontStyle = FontStyle.Normal)
-
-    MathStyle.DOUBLE_STRUCK -> SpanStyle()
-
-    // handled via mapping
-    MathStyle.CALLIGRAPHIC -> SpanStyle() // handled via mapping
-}
-
 @Composable
 private fun SymText(sym: Sym, baseSize: TextUnit, color: Color) {
     val text = symSpan(sym)
@@ -344,9 +207,9 @@ private fun FractionRenderer(
     Layout(
         modifier = Modifier.padding(horizontal = horizontalPadding),
         content = {
-            AtomRenderer(frac.num, display, baseSize, color)
+            Box { AtomRenderer(frac.num, display, baseSize, color) }
             HorizontalBar(barColor, thickness = 1.dp)
-            AtomRenderer(frac.den, display, baseSize, color)
+            Box { AtomRenderer(frac.den, display, baseSize, color) }
         },
     ) { measurables, constraints ->
         // Strip min-width so numerator/denominator measure at their intrinsic content size.
@@ -461,7 +324,7 @@ private fun AccentRenderer(
             } else {
                 HorizontalBar(color, lineThicknessDp)
             }
-            AtomRenderer(accent.base, display, baseSize, color)
+            Box { AtomRenderer(accent.base, display, baseSize, color) }
         },
     ) { measurables, constraints ->
         val childConstraints = constraints.copy(minWidth = 0)
@@ -473,7 +336,7 @@ private fun AccentRenderer(
         }
         val gapPx = accentGapDp.roundToPx()
         val totalWidth = maxOf(baseP.width, accentP.width)
-        val totalHeight = accentP.height + gapPx + baseP.height
+        val totalHeight = (accentP.height + gapPx + baseP.height).coerceAtLeast(0)
         layout(totalWidth, totalHeight) {
             accentP.placeRelative((totalWidth - accentP.width) / 2, 0)
             baseP.placeRelative((totalWidth - baseP.width) / 2, accentP.height + gapPx)

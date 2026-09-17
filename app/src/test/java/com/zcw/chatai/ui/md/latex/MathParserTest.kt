@@ -144,6 +144,17 @@ class MathParserTest {
     }
 
     @Test
+    fun incompleteFracKeepsEmptyDenominatorGroup() {
+        val atom = MathParser.parse("""\frac{T^2}""")
+
+        assertTrue("expected Frac, got $atom", atom is Frac)
+        val frac = atom as Frac
+        assertTrue("expected Script numerator, got ${frac.num}", frac.num is Script)
+        assertTrue("expected empty Group den, got ${frac.den}", frac.den is Group)
+        assertTrue((frac.den as Group).atoms.isEmpty())
+    }
+
+    @Test
     fun formulasProduceNonEmptyAtomTrees() {
         val samples = listOf(
             """x^2+\frac{a}{b}""",
