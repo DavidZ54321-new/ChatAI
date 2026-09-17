@@ -5,14 +5,13 @@ import com.zcw.chatai.data.net.dto.ApiErrorEnvelope
 import com.zcw.chatai.data.net.dto.ChatCompletionChunk
 import com.zcw.chatai.data.net.dto.ChatCompletionRequest
 import com.zcw.chatai.data.net.dto.ChatRequestBody
-import com.zcw.chatai.data.net.dto.ChatTool
-import com.zcw.chatai.data.net.dto.FunctionSpec
 import com.zcw.chatai.data.net.dto.ModelList
 import com.zcw.chatai.data.net.dto.RequestFunctionCall
 import com.zcw.chatai.data.net.dto.RequestMessage
 import com.zcw.chatai.data.net.dto.RequestToolCall
 import com.zcw.chatai.data.net.dto.StreamOptions
 import com.zcw.chatai.data.net.dto.chatJson
+import com.zcw.chatai.data.web.WebTools
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ProducerScope
@@ -23,11 +22,7 @@ import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
-import kotlinx.serialization.json.putJsonObject
 import okhttp3.MediaType
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.HttpUrl
@@ -157,7 +152,7 @@ class OpenAiCompatibleChatApi(
             reasoningEffort = config.reasoningEffort?.takeIf { it.isNotBlank() },
             maxTokens = config.maxTokens,
             streamOptions = if (config.includeUsage) StreamOptions(includeUsage = true) else null,
-            tools = if (config.webSearchEnabled) listOf(searchToolSpec(), fetchToolSpec()) else null,
+            tools = if (config.webSearchEnabled) WebTools.specs() else null,
             toolChoice = if (config.webSearchEnabled) JsonPrimitive("auto") else null,
         )
         val body = ChatRequestBody.encode(json, payload, config.extraParams)
@@ -279,27 +274,3 @@ class OpenAiCompatibleChatApi(
             .build()
     }
 }
-
-private fun searchToolSpec() = ChatTool(
-    function = FunctionSpec(
-        name = "web_search",
-        description = "Search the web for current information.",
-        parameters = buildJsonObject {
-            put("type", "object")
-            putJsonObject("properties") { putJsonObject("query") { put("type", "string") } }
-            put("required", JsonArray(listOf(JsonPrimitive("query"))))
-        },
-    ),
-)
-
-private fun fetchToolSpec() = ChatTool(
-    function = FunctionSpec(
-        name = "web_fetch",
-        description = "Fetch the full text of one http(s) URL.",
-        parameters = buildJsonObject {
-            put("type", "object")
-            putJsonObject("properties") { putJsonObject("url") { put("type", "string") } }
-            put("required", JsonArray(listOf(JsonPrimitive("url"))))
-        },
-    ),
-)
