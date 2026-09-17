@@ -22,6 +22,9 @@ object ContextBuilder {
     const val IMAGE_OMITTED = "［图片已省略］"
     const val IMAGE_MISSING = "［图片不可用］"
 
+    /** 工具返回空文本时的占位：保留该行以应答对应的 assistant tool_calls。 */
+    const val TOOL_EMPTY = "[工具无返回内容]"
+
     fun build(
         history: List<Message>,
         imageLimit: Int,
@@ -42,19 +45,17 @@ object ContextBuilder {
 
         val keepImages = messageIdsKeepingImages(usable, imageLimit)
 
-        return usable.mapNotNull { message ->
+        return usable.map { message ->
             if (message.role == Role.TOOL) {
-                val text = message.toolResult?.text?.takeIf { it.isNotBlank() } ?: message.content
-                // 空白工具结果没有发送价值，且会破坏 tool_call_id 配对语义。
-                if (text.isBlank()) {
-                    null
-                } else {
-                    ChatRequestMessage(
-                        role = message.role.wire,
-                        content = text,
-                        toolCallId = message.toolCallId,
-                    )
-                }
+                // 空白工具结果也必须保留：它对应的 assistant tool_calls 需要被应答，
+                // 否则服务端会因找不到 tool_call_id 而 400（例如进程在 RUNNING 与更新之间被杀）。
+                val text = (message.toolResult?.text?.takeIf { it.isNotBlank() } ?: message.content)
+                    .ifBlank { TOOL_EMPTY }
+                ChatRequestMessage(
+                    role = message.role.wire,
+                    content = text,
+                    toolCallId = message.toolCallId,
+                )
             } else if (message.attachments.isEmpty()) {
                 ChatRequestMessage(
                     role = message.role.wire,

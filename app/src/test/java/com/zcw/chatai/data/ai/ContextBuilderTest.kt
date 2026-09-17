@@ -171,7 +171,7 @@ class ContextBuilderTest {
     }
 
     @Test
-    fun dropsToolMessageWithBlankResolvedText() {
+    fun blankToolResultIsKeptWithPlaceholderToPreservePairing() {
         val messages = listOf(
             message(
                 id = "a1",
@@ -188,8 +188,10 @@ class ContextBuilderTest {
             ),
         )
         val built = ContextBuilder.build(messages, imageLimit = 0) { null }
-        assertEquals(1, built.size)
-        assertTrue(built.none { it.role == "tool" })
+        assertEquals(listOf("assistant", "tool"), built.map { it.role })
+        assertEquals("call_1", built[1].toolCallId)
+        assertTrue(built[1].content.isNotBlank())
+        assertEquals(ContextBuilder.TOOL_EMPTY, built[1].content)
     }
 
     @Test
