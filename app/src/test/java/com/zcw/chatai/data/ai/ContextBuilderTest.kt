@@ -5,9 +5,11 @@ import com.zcw.chatai.data.model.AttachmentKind
 import com.zcw.chatai.data.model.Message
 import com.zcw.chatai.data.model.MessageStatus
 import com.zcw.chatai.data.model.Role
+import com.zcw.chatai.data.model.ToolCall
 import com.zcw.chatai.data.net.ChatRequestImage
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -103,6 +105,27 @@ class ContextBuilderTest {
         assertEquals("纯文本", built.single().content)
     }
 
+    @Test
+    fun keepsToolMessagesAndCarriesToolCallId() {
+        val calls = listOf(ToolCall("call_1", "web_search", "{\"query\":\"x\"}"))
+        val messages = listOf(
+            message(id = "a1", role = Role.ASSISTANT, content = "", toolCalls = calls, reasoningContent = "想"),
+            message(id = "t1", role = Role.TOOL, content = "结果", toolCallId = "call_1"),
+        )
+        val built = ContextBuilder.build(messages, imageLimit = 0) { null }
+        assertEquals(listOf("assistant", "tool"), built.map { it.role })
+        assertEquals(calls, built[0].toolCalls)
+        assertEquals("想", built[0].reasoning)
+        assertEquals("call_1", built[1].toolCallId)
+    }
+
+    @Test
+    fun plainAssistantDoesNotEchoReasoning() {
+        val messages = listOf(message(id = "a1", role = Role.ASSISTANT, content = "答案", reasoningContent = "想"))
+        val built = ContextBuilder.build(messages, imageLimit = 0) { null }
+        assertNull(built.single().reasoning)
+    }
+
     private fun attachment(id: String, path: String) = Attachment(
         id = id,
         kind = AttachmentKind.IMAGE,
@@ -119,6 +142,9 @@ class ContextBuilderTest {
         content: String,
         attachments: List<Attachment> = emptyList(),
         status: MessageStatus = MessageStatus.COMPLETE,
+        toolCalls: List<ToolCall> = emptyList(),
+        toolCallId: String? = null,
+        reasoningContent: String? = null,
     ) = Message(
         id = id,
         conversationId = "c1",
@@ -126,12 +152,14 @@ class ContextBuilderTest {
         content = content,
         status = status,
         errorMessage = null,
-        reasoningContent = null,
+        reasoningContent = reasoningContent,
         seq = id.hashCode().toLong(),
         model = "deepseek-flash",
         promptTokens = null,
         completionTokens = null,
         attachments = attachments,
+        toolCalls = toolCalls,
+        toolCallId = toolCallId,
         createdAt = 0L,
         updatedAt = 0L,
     )

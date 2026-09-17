@@ -28,16 +28,32 @@ object ContextBuilder {
         imageProvider: (Attachment) -> ChatRequestImage?,
     ): List<ChatRequestMessage> {
         val usable = history
-            .filter { it.role == Role.USER || it.role == Role.ASSISTANT }
+            .filter { it.role == Role.USER || it.role == Role.ASSISTANT || it.role == Role.TOOL }
             .filter { it.status != MessageStatus.STREAMING }
-            .filter { it.content.isNotBlank() || it.attachments.isNotEmpty() }
+            .filter {
+                it.content.isNotBlank() || it.attachments.isNotEmpty() ||
+                    it.toolCalls.isNotEmpty() || it.toolCallId != null
+            }
             .takeLast(MAX_MESSAGES)
 
         val keepImages = messageIdsKeepingImages(usable, imageLimit)
 
         return usable.map { message ->
+            if (message.role == Role.TOOL) {
+                return@map ChatRequestMessage(
+                    role = message.role.wire,
+                    content = message.toolResult?.text ?: message.content,
+                    toolCallId = message.toolCallId,
+                )
+            }
             if (message.attachments.isEmpty()) {
-                ChatRequestMessage(role = message.role.wire, content = message.content)
+                ChatRequestMessage(
+                    role = message.role.wire,
+                    content = message.content,
+                    toolCalls = message.toolCalls,
+                    // 只有带 tool_calls 的回合必须回传思考内容，否则思考模式 400。
+                    reasoning = message.reasoningContent.takeIf { message.toolCalls.isNotEmpty() },
+                )
             } else {
                 val keep = message.id in keepImages
                 val images = if (keep) message.attachments.mapNotNull(imageProvider) else emptyList()
