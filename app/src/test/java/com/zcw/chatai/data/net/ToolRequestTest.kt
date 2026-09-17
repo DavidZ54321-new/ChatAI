@@ -1,7 +1,5 @@
 package com.zcw.chatai.data.net
 
-import com.zcw.chatai.data.model.ChatConfig
-import com.zcw.chatai.data.model.ToolCall
 import com.zcw.chatai.data.net.dto.chatJson
 import com.zcw.chatai.data.net.dto.ChatCompletionRequest
 import com.zcw.chatai.data.net.dto.ChatRequestBody
@@ -10,8 +8,12 @@ import com.zcw.chatai.data.net.dto.FunctionSpec
 import com.zcw.chatai.data.net.dto.RequestFunctionCall
 import com.zcw.chatai.data.net.dto.RequestMessage
 import com.zcw.chatai.data.net.dto.RequestToolCall
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -71,6 +73,12 @@ class ToolRequestTest {
         assertTrue(body, body.contains("\"call_1\""))
         assertTrue(body, body.contains("\"tool_call_id\":\"call_1\""))
         assertTrue(body, body.contains("\"role\":\"tool\""))
+
+        val messages = Json.parseToJsonElement(body).jsonObject.getValue("messages").jsonArray
+        val assistant = messages[0].jsonObject
+        assertFalse(assistant.toString(), assistant.containsKey("content"))
+        val tool = messages[1].jsonObject
+        assertEquals("结果", tool.getValue("content").jsonPrimitive.content)
     }
 
     @Test
@@ -94,5 +102,19 @@ class ToolRequestTest {
         assertTrue(body, body.contains("\"web_fetch\""))
         assertTrue(body, body.contains("\"temperature\":0.5"))
         assertFalse(body, body.contains("\"temperature\":null"))
+    }
+
+    @Test
+    fun extraParamsCannotOverrideToolProtocol() {
+        val payload = ChatCompletionRequest(
+            model = "m",
+            messages = emptyList(),
+            tools = listOf(ChatTool(function = FunctionSpec("web_search", "search", buildJsonObject { put("type", "object") }))),
+            toolChoice = JsonPrimitive("auto"),
+        )
+        val body = ChatRequestBody.encode(chatJson, payload, """{"tools":[],"tool_choice":"none"}""")
+        assertTrue(body, body.contains("\"web_search\""))
+        assertTrue(body, body.contains("\"tool_choice\":\"auto\""))
+        assertFalse(body, body.contains("\"tool_choice\":\"none\""))
     }
 }

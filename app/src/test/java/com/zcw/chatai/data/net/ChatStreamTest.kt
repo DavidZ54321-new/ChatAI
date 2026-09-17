@@ -316,6 +316,59 @@ class ChatStreamTest {
         }
     }
 
+    @Test
+    fun omitsToolsWhenWebSearchDisabled() = runBlocking {
+        server.enqueue(eventStream(deltaEvent("ok") + DONE_EVENT))
+
+        collectEvents(config().copy(webSearchEnabled = false))
+
+        val payload = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS)).body.readUtf8()
+        assertFalse(payload, payload.contains("\"tools\""))
+        assertFalse(payload, payload.contains("\"tool_choice\""))
+    }
+
+    @Test
+    fun injectsWebToolsWhenEnabled() = runBlocking {
+        server.enqueue(eventStream(deltaEvent("ok") + DONE_EVENT))
+
+        collectEvents(config().copy(webSearchEnabled = true))
+
+        val payload = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS)).body.readUtf8()
+        assertTrue(payload, payload.contains("\"tools\""))
+        assertTrue(payload, payload.contains("\"web_search\""))
+        assertTrue(payload, payload.contains("\"web_fetch\""))
+        assertTrue(payload, payload.contains("\"tool_choice\":\"auto\""))
+    }
+
+    @Test
+    fun mapsFragmentedToolCallDeltas() = runBlocking {
+        val body = buildString {
+            append("""data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"web_search","arguments":"{\"qu"}}]}}]}""")
+            append("\n\n")
+            append("""data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"ery\":\"x\"}"}}]}}]}""")
+            append("\n\n")
+            append("""data: {"choices":[{"index":0,"delta":{"content":""},"finish_reason":"tool_calls"}]}""")
+            append("\n\n")
+            append(DONE_EVENT)
+        }
+        server.enqueue(eventStream(body))
+
+        val events = collectEvents(config())
+
+        val deltas = events.filterIsInstance<ChatStreamEvent.ToolCallDelta>()
+        assertEquals(
+            listOf<ChatStreamEvent>(
+                ChatStreamEvent.ToolCallDelta(0, id = "call_1", name = "web_search", arguments = "{\"qu"),
+                ChatStreamEvent.ToolCallDelta(0, arguments = "ery\":\"x\"}"),
+            ),
+            deltas,
+        )
+        assertEquals(
+            listOf<ChatStreamEvent>(ChatStreamEvent.Finished("tool_calls")),
+            events.filterIsInstance<ChatStreamEvent.Finished>(),
+        )
+    }
+
     private fun config(): ChatConfig = ChatConfig(
         baseUrl = server.url("/v1").toString(),
         apiKey = "test-key",

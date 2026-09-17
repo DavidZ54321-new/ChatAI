@@ -148,7 +148,7 @@ class OpenAiCompatibleChatApi(
                                     function = RequestFunctionCall(name = it.name, arguments = it.arguments),
                                 )
                             },
-                            reasoningContent = message.reasoning,
+                            reasoningContent = message.reasoning.takeIf { message.role == ROLE_ASSISTANT },
                         ),
                     )
                 }
@@ -267,6 +267,7 @@ class OpenAiCompatibleChatApi(
 
     companion object {
         private const val ROLE_USER = "user"
+        private const val ROLE_ASSISTANT = "assistant"
         private const val DONE_DATA = "[DONE]"
         private val JSON_MEDIA_TYPE: MediaType = "application/json".toMediaType()
 

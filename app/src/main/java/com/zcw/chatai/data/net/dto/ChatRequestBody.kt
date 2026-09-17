@@ -19,11 +19,12 @@ import kotlinx.serialization.json.putJsonObject
  *    图片块用标准 OpenAI 形状 `{"type":"image_url","image_url":{"url","detail"}}`，
  *    图片必须内联为 `data:` URL（外部 URL 会被防盗链拒绝）。
  * 2. [extraParams] 是兼容逃生口：用户 JSON 的顶层键合并进请求体，但
- *    `model` / `messages` / `stream` 受保护，永远以应用生成的值为准。
+ *    `model` / `messages` / `stream` 以及应用自有的工具协议
+ *    (`tools` / `tool_choice`) 受保护，永远以应用生成的值为准。
  */
 object ChatRequestBody {
 
-    private val ProtectedKeys = setOf("model", "messages", "stream")
+    private val ProtectedKeys = setOf("model", "messages", "stream", "tools", "tool_choice")
 
     private val extraJson = Json { isLenient = true }
 
