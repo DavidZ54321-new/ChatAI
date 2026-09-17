@@ -60,4 +60,30 @@ class EndpointUrlTest {
         )
         assertNull(EndpointUrl.models(""))
     }
+
+    @Test
+    fun derivesAnthropicMessagesEndpoint() {
+        assertEquals(
+            "https://api.deepseek.com/anthropic/v1/messages",
+            EndpointUrl.anthropicMessages("https://api.deepseek.com"),
+        )
+        assertEquals(
+            "https://api.deepseek.com/anthropic/v1/messages",
+            EndpointUrl.anthropicMessages("https://api.deepseek.com/v1"),
+        )
+        assertEquals(
+            "https://api.deepseek.com/anthropic/v1/messages",
+            EndpointUrl.anthropicMessages("https://api.deepseek.com/v1/chat/completions"),
+        )
+        assertEquals(
+            "https://api.deepseek.com/anthropic/v1/messages",
+            EndpointUrl.anthropicMessages("https://api.deepseek.com/anthropic/v1"),
+        )
+        assertEquals(
+            "http://192.168.1.5:11434/anthropic/v1/messages",
+            EndpointUrl.anthropicMessages("http://192.168.1.5:11434/v1"),
+        )
+        assertNull(EndpointUrl.anthropicMessages(""))
+        assertNull(EndpointUrl.anthropicMessages("   "))
+    }
 }
