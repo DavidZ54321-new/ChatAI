@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  仅 debug 构建：允许明文流量，便于用 `adb reverse tcp:8443 tcp:8443` +
+  宿主机转发脚本做真机/模拟器联调（宿主机可能挂了会做 TLS 拦截的代理，
+  模拟器无法信任其 CA）。release 清单不含该属性。
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:usesCleartextTraffic="true" />
+</manifest>

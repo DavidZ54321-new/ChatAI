@@ -1,7 +1,24 @@
 package com.zcw.chatai.ui.chat
 
+import com.zcw.chatai.data.model.Attachment
 import com.zcw.chatai.data.model.MessageStatus
 import com.zcw.chatai.data.model.Role
+
+/** 消息里一张图：缩略图给气泡，原图给全屏预览。 */
+data class MessageImage(
+    val id: String,
+    val thumbnailPath: String,
+    val fullPath: String,
+    val width: Int,
+    val height: Int,
+)
+
+/** 待发送附件（已落私有目录，发送成功前可撤回并删文件）。 */
+data class PendingAttachment(
+    val id: String,
+    val thumbnailPath: String,
+    val attachment: Attachment,
+)
 
 data class ChatMessageItem(
     val id: String,
@@ -13,16 +30,23 @@ data class ChatMessageItem(
     val model: String? = null,
     val promptTokens: Int? = null,
     val completionTokens: Int? = null,
+    val reasoningTokens: Int? = null,
+    val cachedTokens: Int? = null,
+    val images: List<MessageImage> = emptyList(),
 )
 
 data class ChatUiState(
+    val conversationId: String? = null,
     val title: String = "新对话",
     val model: String = "",
     val messages: List<ChatMessageItem> = emptyList(),
     val isStreaming: Boolean = false,
     val streamingMessageId: String? = null,
     val input: String = "",
+    val pending: List<PendingAttachment> = emptyList(),
+    val defaultModel: String = "",
+    val notice: String? = null,
 ) {
     val canSend: Boolean
-        get() = input.isNotBlank() && !isStreaming
+        get() = (input.isNotBlank() || pending.isNotEmpty()) && !isStreaming
 }

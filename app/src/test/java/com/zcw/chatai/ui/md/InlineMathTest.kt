@@ -54,6 +54,40 @@ class InlineMathTest {
     }
 
     @Test
+    fun replacesParenthesisDelimitedInlineMath() {
+        val prepared = prepareInlineMath("平均复杂度是 \\(O(n \\log n)\\) 级别")
+
+        assertEquals(listOf("O(n \\log n)"), prepared.formulas)
+        assertEquals("平均复杂度是 ${open}0$close 级别", prepared.text)
+        assertFalse(prepared.text.contains("\\("))
+    }
+
+    @Test
+    fun parenthesisDelimitedMathMixedWithDollarMath() {
+        val prepared = prepareInlineMath("\\(a\\) 与 \$b\$ 并列")
+
+        assertEquals(listOf("a", "b"), prepared.formulas)
+        assertEquals("${open}0$close 与 ${open}1$close 并列", prepared.text)
+    }
+
+    @Test
+    fun keepsParenthesisDelimiterInsideCodeSpan() {
+        val prepared = prepareInlineMath("用 `\\(x\\)` 表示")
+
+        assertTrue(prepared.formulas.isEmpty())
+        assertEquals("用 `\\(x\\)` 表示", prepared.text)
+    }
+
+    @Test
+    fun keepsBracketBlockMathForSplitter() {
+        val source = "推导 \\[T(n) = 2T(n/2)\\] 结束"
+        val prepared = prepareInlineMath(source)
+
+        assertTrue(prepared.formulas.isEmpty())
+        assertEquals(source, prepared.text)
+    }
+
+    @Test
     fun rejectsCurrencyAmounts() {
         val prepared = prepareInlineMath("花了 \$5 和 \$3 块钱")
 

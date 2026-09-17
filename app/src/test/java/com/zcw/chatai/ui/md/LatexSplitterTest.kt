@@ -127,6 +127,56 @@ class LatexSplitterTest {
     }
 
     @Test
+    fun bracketDelimitedBlockFormulaIsSplit() {
+        assertEquals(
+            listOf(
+                MdSegment.Markdown("前文\n"),
+                MdSegment.BlockMath("O(n\\log n)"),
+                MdSegment.Markdown("\n后文"),
+            ),
+            LatexSplitter.split("前文\n\\[ O(n\\log n) \\]\n后文"),
+        )
+    }
+
+    @Test
+    fun multilineBracketBlockFormulaIsSplit() {
+        val text = "递推式：\n\\[\nT(n)=2T(n/2)+O(n)\n\\Rightarrow T(n)=O(n\\log n)\n\\]\n完毕"
+        val segments = LatexSplitter.split(text)
+        assertEquals(
+            listOf("T(n)=2T(n/2)+O(n)\n\\Rightarrow T(n)=O(n\\log n)"),
+            segments.filterIsInstance<MdSegment.BlockMath>().map { it.latex },
+        )
+    }
+
+    @Test
+    fun unclosedBracketFormulaAtEndOfStreamIsEmitted() {
+        assertEquals(
+            listOf(MdSegment.Markdown("text "), MdSegment.BlockMath("x^2")),
+            LatexSplitter.split("text \\[x^2"),
+        )
+    }
+
+    @Test
+    fun bracketInsideCodeFenceIsNotTreatedAsFormula() {
+        val text = "```\n\\[x\\]\n```\nafter"
+        assertEquals(listOf(MdSegment.Markdown(text)), LatexSplitter.split(text))
+    }
+
+    @Test
+    fun bothDelimiterStylesCanCoexist() {
+        val segments = LatexSplitter.split("\\[a\\] mid \$\$b\$\$")
+        assertEquals(
+            listOf("a", "b"),
+            segments.filterIsInstance<MdSegment.BlockMath>().map { it.latex },
+        )
+    }
+
+    @Test
+    fun emptyBracketFormulaIsDropped() {
+        assertEquals(listOf(MdSegment.Markdown("x \\[ \\] y")), LatexSplitter.split("x \\[ \\] y"))
+    }
+
+    @Test
     fun segmentsRoundTripToOriginalText() {
         val text = "a\n\$\$b\$\$\nc\n```\n\$\$d\$\$\n```\nf \$\$g\$\$ h"
         val segments = LatexSplitter.split(text)

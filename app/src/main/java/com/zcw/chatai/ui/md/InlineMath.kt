@@ -57,6 +57,19 @@ fun prepareInlineMath(markdown: String): PreparedMarkdown {
                 }
             }
         }
+        // 模型常用的 LaTeX 原生行内写法 \( … \)（与 $ … $ 等价）
+        if (c == '\\' && markdown.getOrNull(i + 1) == '(') {
+            val close = markdown.indexOf("\\)", i + 2)
+            if (close > 0) {
+                val latex = markdown.substring(i + 2, close).trim()
+                if (latex.isNotEmpty()) {
+                    formulas += latex
+                    out.append(PLACEHOLDER_OPEN).append(formulas.lastIndex).append(PLACEHOLDER_CLOSE)
+                    i = close + 2
+                    continue
+                }
+            }
+        }
         out.append(c)
         i++
     }

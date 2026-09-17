@@ -44,32 +44,44 @@ fun UserMessageItem(
     onLongPress: () -> Unit,
     onCopy: () -> Unit,
     onDelete: () -> Unit,
+    onOpenImage: (MessageImage) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val colors = ChatTheme.colors
     BoxWithConstraints(modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
         val bubbleMaxWidth = maxWidth * 0.85f
-        Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
-            Box(
-                modifier = Modifier
-                    .widthIn(max = bubbleMaxWidth)
-                    .clip(
-                        RoundedCornerShape(
-                            topStart = 14.dp,
-                            topEnd = 14.dp,
-                            bottomStart = 14.dp,
-                            bottomEnd = 4.dp,
-                        ),
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            if (message.images.isNotEmpty()) {
+                Box(modifier = Modifier.widthIn(max = bubbleMaxWidth)) {
+                    MessageImageRow(images = message.images, onOpen = onOpenImage)
+                }
+            }
+            if (message.content.isNotEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .widthIn(max = bubbleMaxWidth)
+                        .clip(
+                            RoundedCornerShape(
+                                topStart = 14.dp,
+                                topEnd = 14.dp,
+                                bottomStart = 14.dp,
+                                bottomEnd = 4.dp,
+                            ),
+                        )
+                        .background(colors.bubbleUser)
+                        .combinedClickable(onClick = {}, onLongClick = onLongPress)
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                ) {
+                    Text(
+                        text = message.content,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = colors.bubbleUserText,
                     )
-                    .background(colors.bubbleUser)
-                    .combinedClickable(onClick = {}, onLongClick = onLongPress)
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
-            ) {
-                Text(
-                    text = message.content,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = colors.bubbleUserText,
-                )
+                }
             }
             MessageActions(
                 onCopy = onCopy,
@@ -87,6 +99,7 @@ fun UserMessageItem(
 fun AiMessageItem(
     message: ChatMessageItem,
     isStreaming: Boolean,
+    reasoningSeconds: Int?,
     meta: String?,
     onLongPress: () -> Unit,
     onRetry: () -> Unit,
@@ -98,9 +111,17 @@ fun AiMessageItem(
     Box(modifier.fillMaxWidth().padding(vertical = 4.dp), contentAlignment = Alignment.Center) {
         Column(
             modifier = Modifier.fillMaxWidth(0.9f),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            if (isStreaming && message.content.isEmpty()) {
+            val reasoning = message.reasoning.orEmpty()
+            if (reasoning.isNotBlank()) {
+                ReasoningBlock(
+                    reasoning = reasoning,
+                    isStreaming = isStreaming,
+                    answerStarted = message.content.isNotEmpty(),
+                    seconds = reasoningSeconds,
+                )
+            } else if (isStreaming && message.content.isEmpty()) {
                 StreamingIndicator()
             }
             if (message.content.isNotEmpty()) {
@@ -114,7 +135,7 @@ fun AiMessageItem(
             when (message.status) {
                 MessageStatus.ERROR -> ErrorRow(message.errorMessage, onRetry)
                 MessageStatus.CANCELLED -> CancelledRow(onRetry)
-                else -> Unit
+                else -> message.errorMessage?.let { WarningRow(it) }
             }
             if (isStreaming && message.content.isNotEmpty()) {
                 StreamingIndicator()
@@ -216,6 +237,16 @@ private fun ErrorRow(message: String?, onRetry: () -> Unit) {
             modifier = Modifier.clickable(onClick = onRetry),
         )
     }
+}
+
+/** 有内容但被截断/受限的提示（例如 finish_reason=length），用琥珀色而非报错红。 */
+@Composable
+private fun WarningRow(message: String) {
+    Text(
+        text = message,
+        style = MaterialTheme.typography.bodySmall,
+        color = ChatTheme.colors.accentAmber,
+    )
 }
 
 @Composable

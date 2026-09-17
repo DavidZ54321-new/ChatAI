@@ -32,8 +32,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.zcw.chatai.R
 import com.zcw.chatai.ui.theme.ChatTheme
 
 private val ComposerShape = RoundedCornerShape(26.dp)
@@ -45,8 +47,12 @@ fun Composer(
     model: String,
     isStreaming: Boolean,
     canSend: Boolean,
+    pending: List<PendingAttachment>,
     onSend: () -> Unit,
     onStop: () -> Unit,
+    onAddImage: () -> Unit,
+    onRemoveAttachment: (String) -> Unit,
+    onModelClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val colors = ChatTheme.colors
@@ -73,6 +79,9 @@ fun Composer(
             .padding(start = 18.dp, end = 10.dp, top = 14.dp, bottom = 10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        if (pending.isNotEmpty()) {
+            PendingAttachmentStrip(pending = pending, onRemove = onRemoveAttachment)
+        }
         BasicTextField(
             value = value,
             onValueChange = onValueChange,
@@ -97,7 +106,14 @@ fun Composer(
             },
         )
         Row(verticalAlignment = Alignment.CenterVertically) {
-            ModelChip(model = model)
+            IconBareButton(
+                painter = painterResource(R.drawable.ic_image),
+                contentDescription = "添加图片",
+                onClick = onAddImage,
+                iconSize = 22.dp,
+                tint = scheme.onSurfaceVariant,
+            )
+            ModelChip(model = model, onClick = onModelClick)
             Spacer(Modifier.weight(1f))
             PrimaryActionButton(
                 isStreaming = isStreaming,
@@ -110,12 +126,13 @@ fun Composer(
 }
 
 @Composable
-private fun ModelChip(model: String) {
+private fun ModelChip(model: String, onClick: () -> Unit) {
     val colors = ChatTheme.colors
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(999.dp))
             .background(colors.chipBackground)
+            .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 8.dp),
     ) {
         Text(
@@ -124,7 +141,7 @@ private fun ModelChip(model: String) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.widthIn(max = 190.dp),
+            modifier = Modifier.widthIn(max = 170.dp),
         )
     }
 }

@@ -189,3 +189,44 @@ kotlinx-serialization-json `1.11.0` · markdown-renderer `0.45.0`。
 5. Kai 代码为 CMP 风格，vendoring 时需做包名与 API 清理（保留 Apache-2.0 版权头 +
    第三方声明）。
 6. 严格 90% 在竖屏无碍；上平板后行长偏长需再调。
+
+---
+
+## 11. 修订（2026-09-17 晚）：多模态 + 思考模式 + 里程碑重排
+
+### 11.1 接口现状（真接口实测，详见 `AGENTS.md`）
+
+`deepseek-flash`（支持图片、思考默认开 effort=high、1M 上下文）/ `deepseek-v4-pro`（无视觉）。
+图片走标准 `image_url` + **内联 base64 data URL**（外部 URL 实测被防盗链拒绝），
+只能出现在 `user` 消息；`detail:"low"` 实测省 5 倍图片 token（1029→199）。
+`reasoning_effort` 是标准字段（`none` 即关思考），无需厂商专有 `thinking`。
+
+### 11.2 本轮范围（已确认）
+
+**做**：图片输入（相册多选/拍照/粘贴，≤8 张，压缩副本落私有目录）；思考过程展示；
+`reasoning_effort` 强度设置；`GET /models` 模型选择；错误/截断精确映射；附加参数 JSON 逃生口。
+**不做**：语音、文档/Files API、视频、图片生成、Anthropic 端点、Function Calling、`thinking` 专有字段。
+
+**默认值**：模型 `deepseek-flash`；不发 `reasoning_effort`（尊重服务端默认）；不发 `max_tokens`；
+图片精度标准档；历史图片只重发最近 2 条（出站请求里更早的替换为 `[图片已省略]`，DB 不动）；
+只存压缩副本（长边 1568px JPEG q85 + 320px 缩略图）。
+
+### 11.3 数据模型变更（schema v1 → v2，写 Migration，不破坏性迁移）
+
+`messages` 增三列：`attachments`（TEXT，JSON 数组）、`reasoning_tokens`、`cached_tokens`。
+图片二进制不入库，落 `filesDir/attachments/{conversationId}/{id}.jpg`（+ `.thumb.jpg`）。
+
+### 11.4 兼容性四原则
+
+① 线上只用标准交集；② 厂商差异靠数据消化（预设基址表、`ModelCapabilities`、附加参数 JSON）；
+③ 不预设能力，不支持时给可读提示（v4-pro 收到图片是**静默丢弃**，必须客户端提示）；
+④ 请求体不因厂商分叉。
+
+### 11.5 里程碑（重排）
+
+| # | 内容 | 验收 |
+|---|---|---|
+| M5 | 接线 + 思考过程：ChatRepository / ChatViewModel / ConversationDrawer、DB v2、错误映射、取消/重试/切会话、ReasoningBlock、附加参数 | 真 key 端到端 + 截图；`ApiErrorMapperTest` |
+| M6 | 图片输入：picker/拍照 → 压缩 → 存储 → 组装 → 展示 → 预览；能力提示；历史图片降级 | 真 key 发图问答 + 截图；`ImagePayloadTest` |
+| M7 | 设置页：baseUrl/key/模型（拉 `/models`）/系统提示词/思考强度/回复上限/图片精度/附加参数/主题/历史图片策略/测试连接 | 截图 + 错误路径 |
+| M8 | 打磨：行内公式防拆行、宽表格横向滚动、IME、用量成本展示、lint/test 全绿 | 设备走查 |

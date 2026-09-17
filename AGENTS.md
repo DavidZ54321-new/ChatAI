@@ -1,10 +1,25 @@
 # ChatAI
 
-Single-module Jetpack Compose template (Android Studio "Empty Activity" scaffold).
-`app/` is the only module; `MainActivity.kt` + `ui/theme/` are the entire source.
+单模块 Jetpack Compose + Material 3 的 AI 聊天应用，视觉落地仓库根目录的 `DESIGN.md`
+（Anthropic/Claude 设计系统：暖奶油画布 + 珊瑚主色 + 衬线标题 + 深色产品面）。
 
-There is **no** architecture yet — no DI, navigation, networking, persistence, or
-domain/data layers. Don't assume layers exist or invent them unprompted.
+架构是**手写 ServiceLocator + 单向数据流**（无 Hilt、无导航库，单 Activity 两屏）：
+
+```
+ChatAiApp (Application)  →  懒加载单例：AppDatabase / SettingsRepository / ChatApi / ChatRepository
+MainActivity             →  ChatAITheme + 主题模式 + 路由（Chat ↔ Settings）
+data/model               →  Conversation / Message / ChatConfig / Attachment / ConversationTitle
+data/db                  →  Room 2（schema v2）：ConversationEntity / MessageEntity / DAO / Mappers
+data/prefs               →  SettingsRepository（DataStore，key 只存本机）
+data/net                 →  ChatApi 接口 + OpenAiCompatibleChatApi（okhttp-sse + callbackFlow）
+data/media               →  图片压缩与私有目录存储（ImageCompressor / AttachmentStore）
+data/ChatRepository      →  唯一业务入口：落库 → 组上下文 → 流式 → 节流写回
+ui/chat                  →  ChatScreen / ChatViewModel / ChatUiState / Composer / MessageItems / ReasoningBlock
+ui/drawer                →  ConversationDrawer
+ui/settings              →  SettingsScreen / SettingsViewModel
+ui/md                    →  MessageMarkdown（mikepenz）+ LatexSplitter + latex/（vendored Kai，Apache-2.0）
+ui/theme                 →  设计系统（Color / ChatColors / Type / Theme / SpikeMark）
+```
 
 ## Build & test
 
@@ -12,16 +27,16 @@ domain/data layers. Don't assume layers exist or invent them unprompted.
 .\gradlew.bat assembleDebug        # build only, no device needed
 .\gradlew.bat installDebug         # build + install to the connected device
 .\gradlew.bat test                 # JVM unit tests (app/src/test)
-.\gradlew.bat connectedAndroidTest # instrumented tests (app/src/androidTest), needs a device
-.\gradlew.bat testDebugUnitTest --tests "com.zcw.chatai.ExampleUnitTest"
+.\gradlew.bat testDebugUnitTest --tests "com.zcw.chatai.data.net.ChatStreamTest"
 .\gradlew.bat lint                 # AGP default; no formatter or typecheck task is configured
 ```
 
-The only tests are stubs: `ExampleUnitTest.kt` and `ExampleInstrumentedTest.kt`.
+单测全是 JVM 测试（67+ 个）：网络层用 MockWebServer，其余是纯函数（错误映射、压缩尺寸、
+能力表、LaTeX 分段、Markdown 行内公式、Room 映射往返）。
 
 ## AGP 9 DSL — differs from most examples you'll find
 
-AGP 9.4.0 / Gradle 9.6.0 / Kotlin 2.2.10. AGP 9 changed the build DSL:
+AGP 9.4.0 / Gradle 9.6.0 / **Kotlin 2.4.10**（AGP 9 内置 Kotlin）/ KSP 2.3.12。AGP 9 的 DSL：
 
 - `compileSdk { version = release(37) }` — not `compileSdk = 37`
 - R8 is `buildTypes { release { optimization { enable = false } } }` — not
@@ -29,11 +44,43 @@ AGP 9.4.0 / Gradle 9.6.0 / Kotlin 2.2.10. AGP 9 changed the build DSL:
 - R8 keep rules live in `app/src/main/keepRules/*.keep` (currently `rules.keep`),
   **not** `proguard-rules.pro`
 
+Kotlin 版本必须与 `markdown-renderer 0.45.0` 自带的 stdlib 对齐（2.4.10）；根
+`build.gradle.kts` 用 `buildscript { classpath(...) { version { strictly(...) } } }`
+把内置 Kotlin 钉住，KSP 在 AGP 9 下原生工作（**不需要** `android.disallowKotlinSourceSets=false`）。
+
 ## Versions
 
 All dependency and plugin versions live in `gradle/libs.versions.toml` and are
 referenced via `libs.*` in `app/build.gradle.kts`. There are no hardcoded versions
 in the build script — keep it that way.
+
+## DeepSeek / OpenAI 兼容端点的事实（2026-09 实测，勿凭记忆改）
+
+我们在真接口上逐条验证过（`https://api-docs.deepseek.com/zh-cn`）：
+
+- 模型：`deepseek-flash`（V4.1，**支持图片**，思考默认开，1M 上下文）/ `deepseek-v4-pro`
+  （**不支持图片**）。旧名 `deepseek-chat`、`deepseek-v4-flash*` 仍可用但被静默重定向到 Flash。
+- baseUrl 归一化后 `https://api.deepseek.com/v1/chat/completions` 与不带 `/v1` 都可用。
+- **图片只能出现在 `user`/`tool` 消息**，放 system 会 400（`Image in system message is unsupported`）。
+  内容块是标准 OpenAI 形状：`{"type":"text"}` / `{"type":"image_url","image_url":{"url","detail"}}`。
+- **必须内联 base64 data URL**：外部 URL 方式连它自家 CDN 都 `Failed to download image`（防盗链）。
+- 服务端会拒绝过小的图片（1×1 报 `unsupported image`），格式按内容嗅探（JPEG/PNG/GIF/WebP）。
+- `detail: "low"` 实测把同一张图的输入 token 从 **1029 → 199**；单图 token 上限 1024。
+- 思考模式**默认开启且 effort=high**，思维链走 `reasoning_content` 与 `content` 同级；
+  `reasoning_effort` 取 `none|low|high|max`（`none` 即关闭思考）——这是标准字段，
+  不要发 `thinking` 之类厂商专有字段。
+- 思考模式下 `temperature`/`top_p` 不生效（服务端静默忽略）；`frequency_penalty`/`presence_penalty` 已废弃。
+- **`max_tokens` 太小 + 思考开启 = 思维链吃光额度、`content` 为空**（实测 `finish_reason=length`）。
+  默认不发送 `max_tokens`，让服务端用 64K 默认值。
+- `finish_reason` 新增 `insufficient_system_resource` / `aborted`；错误码 401/402/422/429/500/503
+  映射见 `data/net/ApiErrorMapper.kt`（纯函数 + 单测）。
+- 流式：每个 chunk 只带 1~2 个字符、`content: null` 与 `reasoning_content: null` 交替出现，
+  **usage 挂在最后一个带 `finish_reason` 的 chunk 上**（不是单独一块），以 `data: [DONE]` 收尾。
+- `GET /models` 是标准 OpenAI 端点（实测返回两个模型），设置页的「拉取模型列表/测试连接」用它。
+
+设计原则：**不为任何厂商特制**。线上只用标准交集（`image_url` data URL、`reasoning_effort`、
+`stream_options`）；厂商差异靠数据消化（预设基址表、模型能力表 `ModelCapabilities`、
+设置里的「附加请求参数 (JSON)」逃生口）；不预设模型能力，不支持时给可读提示而非静默失败。
 
 ## Android skills are installed project-locally
 
@@ -74,9 +121,46 @@ Gotchas that cost real debugging time:
   `app/src/main/res/values/themes.xml` sets
   `android:windowLayoutInDisplayCutoutMode=shortEdges` — removing it brings the
   band back.
+- 给模拟器塞测试图片：`adb push <file> /sdcard/Pictures/` 后跑
+  `adb shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file:///sdcard/Pictures/<file>`
+  再 `adb shell cmd media_scanner scan`，系统相册才会看到。
+- 输入框 IME 顶起行为在该 AVD 上无法目视验证（硬件键盘，只弹浮动工具条），需真机。
+
+## 踩过的坑（改代码前先读这几条）
+
+- **不要在 `Regex(...)` 里用 Java 专有语法**。Android 用的是 ICU 正则引擎，`(?U)`、`(?<name>…)`
+  这类内联标志/构造会抛 `PatternSyntaxException`，而且是在**类初始化**时抛
+  `ExceptionInInitializerError`，表现为「某个功能整体不可用」。JVM 单测发现不了（JVM 引擎认识它们）。
+  折叠空白这类需求用 `Char.isWhitespace()` 手写循环更安全（见 `ConversationTitle.collapse`）。
+  全仓库目前只有零个 `Regex`，保持这样最好。
+- **用户动作不能依赖 UI 生命周期**。发消息、重试、删除这类操作一律跑在 `ChatRepository` 自己的
+  scope 上（`send`/`regenerate`/`deleteMessage` 是同步返回、异步执行），否则用户点完发送立刻切后台
+  就会「消息存了但回答没了」。只有在 VM 里做纯 UI 编排（选会话、清输入框）才用 `viewModelScope`。
+- **LaTeX 有两种写法**：`$…$`/`$$…$$` 与模型更爱用的 `\(…\)`/`\[…\]`。`LatexSplitter` 处理块级、
+  `InlineMath` 处理行内，两套都要覆盖（实测 DeepSeek 直接输出 `\[ … \]`）。
+- **思考模式默认开**：不回填 `reasoning_content` 的话，用户在「思考中」上会干等几十秒。折叠式
+  `ReasoningBlock` 是必需项，不是装饰。
+- `adb shell input text` **不支持非 ASCII**：中文要用 `scrcpy` 的 `clipboard_set(paste=true)`。
+- 模拟器坐标：用 `uiautomator dump` / MCP 的 `ui_find_element` 拿，不要靠截图目测估——
+  底部手势区（约 y > 2268 @1080×2400）会误触 Home，发送按钮虽然贴着它但不在里面。
+
+## 用模拟器联调真接口（宿主机挂了会做 TLS 拦截的代理时）
+
+宿主机开着 FlClash/Clash 这类 **TUN + fake-IP** 代理时，模拟器把 `api.deepseek.com` 解析成
+`198.18.x.x`，TLS 会因「不信任中间 CA」失败（`Trust anchor for certification path not found`）——
+这是环境问题，不是 App 的问题（宿主机 `curl` 正常、MockWebServer 单测正常）。模拟器又不可 `adb root`，
+装不进系统信任库。可行的绕法：
+
+1. `app/src/debug/AndroidManifest.xml` 里只对 debug 构建开 `android:usesCleartextTraffic="true"`；
+2. 宿主机跑一段转发脚本（逐块 `pipe`，SSE 不会被缓冲）到真实上游；
+3. `adb reverse tcp:8443 tcp:8443`，把应用内 Base URL 指向 `http://127.0.0.1:8443/v1`。
+
+这样 App 侧只多一个明文开关（release 不含），请求/流式解析全走真实服务端。真机不受此影响。
 
 ## Tracked-file trap
 
 `.kotlin/` matches no `.gitignore` entry, so `git add .` will commit JetBrains
-session caches. `app/build/`, `build/`, `.codegraph/` and `.idea/workspace.xml` are
-correctly ignored. `.claude/skills/` is tracked on purpose.
+session caches（已在 `.gitignore` 里补上 `.kotlin/`）。`app/build/`, `build/`,
+`.codegraph/`, `.idea/workspace.xml`, `.idea/markdown.xml` 已忽略。`.claude/skills/`
+是**故意**入库的。API key 只从 DataStore 读，绝不入库、绝不打日志（`local.properties`
+也不放 key）。
