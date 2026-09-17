@@ -214,6 +214,7 @@ class ChatViewModel(
                 item.copy(
                     content = activeStream.content,
                     reasoning = activeStream.reasoning.ifEmpty { null },
+                    reasoningMs = activeStream.reasoningMs,
                     status = MessageStatus.STREAMING,
                 )
             } else {
@@ -226,6 +227,7 @@ class ChatViewModel(
                     role = Role.ASSISTANT,
                     content = activeStream.content,
                     reasoning = activeStream.reasoning.ifEmpty { null },
+                    reasoningMs = activeStream.reasoningMs,
                     status = MessageStatus.STREAMING,
                     model = conversation?.model,
                 )
@@ -257,8 +259,9 @@ class ChatViewModel(
         model = model,
         promptTokens = promptTokens,
         completionTokens = completionTokens,
-        reasoningTokens = reasoningTokens,
-        cachedTokens = cachedTokens,
+    reasoningTokens = reasoningTokens,
+    cachedTokens = cachedTokens,
+    reasoningMs = reasoningMs,
         images = attachments.map { attachment ->
             MessageImage(
                 id = attachment.id,

@@ -32,6 +32,8 @@ data class ChatMessageItem(
     val completionTokens: Int? = null,
     val reasoningTokens: Int? = null,
     val cachedTokens: Int? = null,
+    /** 思考耗时（毫秒）；null = 未测量。 */
+    val reasoningMs: Long? = null,
     val images: List<MessageImage> = emptyList(),
 )
 

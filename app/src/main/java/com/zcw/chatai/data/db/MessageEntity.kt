@@ -46,6 +46,9 @@ data class MessageEntity(
     val reasoningTokens: Int? = null,
     @ColumnInfo(name = "cached_tokens")
     val cachedTokens: Int? = null,
+    /** 思考耗时（毫秒）。NULL = 未测量（v3 之前的历史消息、没有思考的消息）。 */
+    @ColumnInfo(name = "reasoning_ms")
+    val reasoningMs: Long? = null,
     @ColumnInfo(name = "attachments")
     val attachments: String? = null,
     @ColumnInfo(name = "created_at")

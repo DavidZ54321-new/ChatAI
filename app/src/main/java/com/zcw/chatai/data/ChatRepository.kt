@@ -21,6 +21,7 @@ import com.zcw.chatai.data.net.ApiErrorMapper
 import com.zcw.chatai.data.net.ChatApi
 import com.zcw.chatai.data.net.ChatApiException
 import com.zcw.chatai.data.prefs.SettingsRepository
+import android.os.SystemClock
 import android.util.Log
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
@@ -46,6 +47,8 @@ data class StreamingMessage(
     val messageId: String,
     val content: String,
     val reasoning: String,
+    /** 思考耗时（毫秒）；null = 还没有思考增量。和落库的值同一个来源。 */
+    val reasoningMs: Long? = null,
 )
 
 sealed interface SendResult {
@@ -67,6 +70,8 @@ class ChatRepository(
     private val attachmentStore: AttachmentStore,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
     private val nowMs: () -> Long = System::currentTimeMillis,
+    /** 量时长用的**单调**时钟：墙钟被改 / NTP 跳一下会让时长算出负数或离谱值。 */
+    private val elapsedMs: () -> Long = SystemClock::elapsedRealtime,
     private val newId: () -> String = { UUID.randomUUID().toString() },
 ) {
 
@@ -325,24 +330,32 @@ class ChatRepository(
                 attachmentStore.toRequestImage(attachment, config.imageDetail)
             }
         }
-        val accumulator = StreamAccumulator()
+        // 计时从这里开始（含首 token 延迟），和 UI 上「已深度思考」的口径一致。
+        val accumulator = StreamAccumulator(startedAt = elapsedMs())
         var status = MessageStatus.COMPLETE
         var errorMessage: String? = null
 
         _streaming.value = StreamingMessage(conversationId, messageId, "", "")
         try {
             api.stream(config, messages).collect { event ->
-                val update = accumulator.accept(event, nowMs())
+                val update = accumulator.accept(event, elapsedMs())
                 if (update.publish) {
                     _streaming.value = StreamingMessage(
                         conversationId = conversationId,
                         messageId = messageId,
                         content = accumulator.content,
                         reasoning = accumulator.reasoning,
+                        reasoningMs = accumulator.reasoningMs,
                     )
                 }
                 if (update.checkpoint) {
-                    db.messageDao().updateContent(messageId, accumulator.content, accumulator.reasoning, nowMs())
+                    db.messageDao().updateContent(
+                        id = messageId,
+                        content = accumulator.content,
+                        reasoning = accumulator.reasoning,
+                        reasoningMs = accumulator.reasoningMs,
+                        updatedAt = nowMs(),
+                    )
                 }
             }
         } catch (cancelled: CancellationException) {
@@ -391,6 +404,7 @@ class ChatRepository(
             completionTokens = accumulator.usage?.completionTokens,
             reasoningTokens = accumulator.usage?.reasoningTokens,
             cachedTokens = accumulator.usage?.cachedTokens,
+            reasoningMs = accumulator.reasoningMs,
             updatedAt = nowMs(),
         )
         if (_streaming.value?.messageId == messageId) {

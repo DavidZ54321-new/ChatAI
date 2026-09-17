@@ -88,4 +88,48 @@ class StreamAccumulatorTest {
         assertEquals("", accumulator.content)
         assertNull(accumulator.finishReason)
     }
+
+    @Test
+    fun reasoningDurationRunsFromTurnStartToLastReasoningDelta() {
+        val accumulator = StreamAccumulator(startedAt = start)
+        accumulator.accept(ChatStreamEvent.Delta(reasoning = "想"), start + 400)
+        accumulator.accept(ChatStreamEvent.Delta(reasoning = "想"), start + 2_000)
+        accumulator.accept(ChatStreamEvent.Delta(reasoning = "想"), start + 9_000)
+        // 正文开始后不再涨
+        accumulator.accept(ChatStreamEvent.Delta(content = "答"), start + 12_000)
+        accumulator.accept(ChatStreamEvent.Delta(content = "案"), start + 20_000)
+
+        assertEquals(9_000L, accumulator.reasoningMs)
+    }
+
+    @Test
+    fun reasoningDurationIsNullWithoutReasoning() {
+        val accumulator = StreamAccumulator(startedAt = start)
+        accumulator.accept(ChatStreamEvent.Delta(content = "答"), start + 5_000)
+        assertNull(accumulator.reasoningMs)
+    }
+
+    @Test
+    fun reasoningDurationFallsBackToFirstEventWhenStartUnknown() {
+        val accumulator = StreamAccumulator()
+        accumulator.accept(ChatStreamEvent.Delta(reasoning = "想"), start + 1_000)
+        accumulator.accept(ChatStreamEvent.Delta(reasoning = "想"), start + 5_000)
+        assertEquals(4_000L, accumulator.reasoningMs)
+    }
+
+    /** 输出顺序不保证：正文先到、思考后到也要算得出来（否则会得到 0）。 */
+    @Test
+    fun reasoningAfterContentIsStillMeasured() {
+        val accumulator = StreamAccumulator(startedAt = start)
+        accumulator.accept(ChatStreamEvent.Delta(content = "答"), start + 300)
+        accumulator.accept(ChatStreamEvent.Delta(reasoning = "想"), start + 3_000)
+        assertEquals(3_000L, accumulator.reasoningMs)
+    }
+
+    @Test
+    fun reasoningDurationNeverGoesNegative() {
+        val accumulator = StreamAccumulator(startedAt = start + 5_000)
+        accumulator.accept(ChatStreamEvent.Delta(reasoning = "想"), start + 1_000)
+        assertEquals(0L, accumulator.reasoningMs)
+    }
 }

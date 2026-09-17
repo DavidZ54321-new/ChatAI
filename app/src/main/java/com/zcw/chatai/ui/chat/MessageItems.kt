@@ -53,28 +53,20 @@ fun UserMessageItem(
         Column(
             modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.End,
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (message.images.isNotEmpty()) {
-                Box(modifier = Modifier.widthIn(max = bubbleMaxWidth)) {
-                    MessageImageRow(images = message.images, onOpen = onOpenImage)
-                }
+                // 图片行占满宽度：少则靠右对齐（LazyRow 内部 End 排列），多则可横向滑动。
+                MessageImageRow(images = message.images, onOpen = onOpenImage)
             }
             if (message.content.isNotEmpty()) {
                 Box(
                     modifier = Modifier
                         .widthIn(max = bubbleMaxWidth)
-                        .clip(
-                            RoundedCornerShape(
-                                topStart = 14.dp,
-                                topEnd = 14.dp,
-                                bottomStart = 14.dp,
-                                bottomEnd = 4.dp,
-                            ),
-                        )
+                        .clip(RoundedCornerShape(20.dp))
                         .background(colors.bubbleUser)
                         .combinedClickable(onClick = {}, onLongClick = onLongPress)
-                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                        .padding(horizontal = 16.dp, vertical = 11.dp),
                 ) {
                     Text(
                         text = message.content,
@@ -99,7 +91,6 @@ fun UserMessageItem(
 fun AiMessageItem(
     message: ChatMessageItem,
     isStreaming: Boolean,
-    reasoningSeconds: Int?,
     meta: String?,
     onLongPress: () -> Unit,
     onRetry: () -> Unit,
@@ -119,7 +110,7 @@ fun AiMessageItem(
                     reasoning = reasoning,
                     isStreaming = isStreaming,
                     answerStarted = message.content.isNotEmpty(),
-                    seconds = reasoningSeconds,
+                    reasoningMs = message.reasoningMs,
                 )
             } else if (isStreaming && message.content.isEmpty()) {
                 StreamingIndicator()

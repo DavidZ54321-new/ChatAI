@@ -211,10 +211,17 @@ kotlinx-serialization-json `1.11.0` · markdown-renderer `0.45.0`。
 图片精度标准档；历史图片只重发最近 2 条（出站请求里更早的替换为 `[图片已省略]`，DB 不动）；
 只存压缩副本（长边 1568px JPEG q85 + 320px 缩略图）。
 
-### 11.3 数据模型变更（schema v1 → v2，写 Migration，不破坏性迁移）
+### 11.3 数据模型变更（写 Migration，不破坏性迁移）
 
-`messages` 增三列：`attachments`（TEXT，JSON 数组）、`reasoning_tokens`、`cached_tokens`。
+**v1 → v2**：`messages` 增三列：`attachments`（TEXT，JSON 数组）、`reasoning_tokens`、`cached_tokens`。
 图片二进制不入库，落 `filesDir/attachments/{conversationId}/{id}.jpg`（+ `.thumb.jpg`）。
+
+**v2 → v3**：`messages` 增 `reasoning_ms`（INTEGER，可空）= 思考耗时。
+设计取舍：① 存**毫秒**不存秒——精度不丢，界面能自由格式化成「9s」或「1分12秒」；
+② **NULL 明确表示未测量**（老消息、没有思考的消息），与「0ms（瞬间完成）」区分，界面此时只显示
+「已深度思考」而不假装 0s；③ 与 `reasoning_tokens` 成对：一个「花了多少 token」、一个「花了多久」；
+④ 用 `SystemClock.elapsedRealtime()`（单调钟）测量，墙钟被 NTP 调整也不会落库一个荒谬时长。
+口径：回合开始（发请求）→ **最后一个 reasoning 增量**，回答开始就定住，不跟着正文涨。
 
 ### 11.4 兼容性四原则
 

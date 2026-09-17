@@ -16,11 +16,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -29,7 +30,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -40,9 +41,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.ClipboardManager
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -82,24 +86,17 @@ fun ChatScreen(
     var previewTarget by remember { mutableStateOf<MessageImage?>(null) }
     var overflowOpen by remember { mutableStateOf(false) }
     var attachOpen by remember { mutableStateOf(false) }
+
+    // 底部消散带 = 视窗高度的 10%（模拟系统隐形导航栏那一带），文字在带内快速消散。
+    // 底部留白跟 Composer 实测高度走：待发图把它撑高时，最后一条消息不会被盖住。
+    var composerHeight by remember { mutableIntStateOf(0) }
+    val dissolveHeight = ChatMetrics.bottomDissolve(LocalWindowInfo.current.containerDpSize.height)
+    val composerDp = with(LocalDensity.current) { composerHeight.toDp() }
+    val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+
     val messages = state.messages
     val lastMessage = messages.lastOrNull()
     val lastAssistantId = messages.lastOrNull { it.role == Role.ASSISTANT }?.id
-
-    // 计时：思考过程要显示「已深度思考 Ns」
-    var streamStartedAt by remember { mutableLongStateOf(0L) }
-    var nowTick by remember { mutableLongStateOf(0L) }
-    LaunchedEffect(state.streamingMessageId) {
-        if (state.streamingMessageId != null) {
-            streamStartedAt = System.currentTimeMillis()
-            nowTick = streamStartedAt
-            while (true) {
-                delay(500)
-                nowTick = System.currentTimeMillis()
-            }
-        }
-    }
-    val reasoningSeconds = if (streamStartedAt == 0L) null else ((nowTick - streamStartedAt) / 1000).toInt()
 
     val pickImages = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(8),
@@ -157,30 +154,37 @@ fun ChatScreen(
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(top = topInset + 68.dp, bottom = 180.dp),
+                contentPadding = PaddingValues(
+                    top = topInset + 68.dp,
+                    // 静止时最后一行要停在消散带「上方」，否则滚到底也会是半透明的。
+                    bottom = composerDp + bottomInset + dissolveHeight + 22.dp,
+                ),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                items(messages, key = { it.id }) { message ->
-                    when (message.role) {
-                        Role.USER -> UserMessageItem(
-                            message = message,
-                            onLongPress = { actionTarget = message },
-                            onCopy = { clipboard.copy(message.content) },
-                            onDelete = { onDeleteMessage(message.id) },
-                            onOpenImage = { previewTarget = it },
-                        )
+                itemsIndexed(messages, key = { _, message -> message.id }) { index, message ->
+                    val previousRole = messages.getOrNull(index - 1)?.role
+                    val turnGap = if (previousRole != null && previousRole != message.role) 18.dp else 0.dp
+                    Box(Modifier.padding(top = turnGap)) {
+                        when (message.role) {
+                            Role.USER -> UserMessageItem(
+                                message = message,
+                                onLongPress = { actionTarget = message },
+                                onCopy = { clipboard.copy(message.content) },
+                                onDelete = { onDeleteMessage(message.id) },
+                                onOpenImage = { previewTarget = it },
+                            )
 
-                        else -> AiMessageItem(
-                            message = message,
-                            isStreaming = state.isStreaming && message.id == state.streamingMessageId,
-                            reasoningSeconds = reasoningSeconds,
-                            meta = if (message.id == lastAssistantId) metaOf(message) else null,
-                            onLongPress = { actionTarget = message },
-                            onRetry = { onRetry(message.id) },
-                            onCopy = { clipboard.copy(message.content) },
-                            onRegenerate = { onRegenerate(message.id) },
-                            onDelete = { onDeleteMessage(message.id) },
-                        )
+                            else -> AiMessageItem(
+                                message = message,
+                                isStreaming = state.isStreaming && message.id == state.streamingMessageId,
+                                meta = if (message.id == lastAssistantId) metaOf(message) else null,
+                                onLongPress = { actionTarget = message },
+                                onRetry = { onRetry(message.id) },
+                                onCopy = { clipboard.copy(message.content) },
+                                onRegenerate = { onRegenerate(message.id) },
+                                onDelete = { onDeleteMessage(message.id) },
+                            )
+                        }
                     }
                 }
                 item(key = "disclaimer") { Disclaimer() }
@@ -191,9 +195,17 @@ fun ChatScreen(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .height(150.dp)
+                .padding(bottom = composerDp + bottomInset + 10.dp)
+                .height(dissolveHeight)
                 .background(
-                    Brush.verticalGradient(listOf(Color.Transparent, colors.canvas)),
+                    Brush.verticalGradient(
+                        colorStops = arrayOf(
+                            0f to Color.Transparent,
+                            0.45f to colors.canvas.copy(alpha = 0.55f),
+                            0.72f to colors.canvas.copy(alpha = 0.92f),
+                            1f to colors.canvas,
+                        ),
+                    ),
                 ),
         )
         Box(
@@ -226,7 +238,8 @@ fun ChatScreen(
                 .align(Alignment.BottomCenter)
                 .navigationBarsPadding()
                 .padding(horizontal = 16.dp, vertical = 10.dp)
-                .fillMaxWidth(),
+                .fillMaxWidth()
+                .onSizeChanged { composerHeight = it.height },
         ) {
             Composer(
                 value = state.input,

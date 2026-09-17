@@ -21,6 +21,8 @@ data class Message(
     val completionTokens: Int?,
     val reasoningTokens: Int? = null,
     val cachedTokens: Int? = null,
+    /** 思考耗时（毫秒）；null = 未测量。 */
+    val reasoningMs: Long? = null,
     val attachments: List<Attachment> = emptyList(),
     val createdAt: Long,
     val updatedAt: Long,

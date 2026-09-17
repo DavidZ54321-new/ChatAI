@@ -116,12 +116,20 @@ class MappersTest {
             ),
             reasoningTokens = 24,
             cachedTokens = 7,
+            reasoningMs = 9_400L,
         )
         val restored = withExtras.toEntity().toModel()
         assertEquals(withExtras, restored)
         assertEquals(24, restored.reasoningTokens)
         assertEquals(7, restored.cachedTokens)
+        assertEquals(9_400L, restored.reasoningMs)
         assertEquals("attachments/conv-1/att-1.jpg", restored.attachments.single().relativePath)
+    }
+
+    @Test
+    fun reasoningDurationIsNullWhenNotMeasured() {
+        assertNull(message.toEntity().reasoningMs)
+        assertNull(message.toEntity().toModel().reasoningMs)
     }
 
     @Test

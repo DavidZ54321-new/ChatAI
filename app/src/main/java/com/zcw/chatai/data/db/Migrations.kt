@@ -18,3 +18,18 @@ val MIGRATION_1_2 = object : Migration(1, 2) {
         db.execSQL("ALTER TABLE messages ADD COLUMN cached_tokens INTEGER")
     }
 }
+
+/**
+ * v2 → v3：消息增加思考耗时。
+ *
+ * - `reasoning_ms`：毫秒整数。存毫秒不存秒，精度不丢，界面想显示成「9s」还是「1分12秒」都行
+ * - 可空：NULL 明确表示**未测量**（老消息、没有思考的消息），与「0ms（瞬间完成）」区分开
+ * - 与 `reasoning_tokens` 配对：一个是思考花了多少 token，一个是思考花了多久
+ *
+ * 老数据保留 `reasoning_content`，只是没有时长——界面显示「已深度思考」而不假装是 0s。
+ */
+val MIGRATION_2_3 = object : Migration(2, 3) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE messages ADD COLUMN reasoning_ms INTEGER")
+    }
+}
