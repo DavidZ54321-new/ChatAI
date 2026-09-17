@@ -2,6 +2,9 @@
 
 单模块 Jetpack Compose + Material 3 的 AI 聊天应用，视觉落地仓库根目录的 `DESIGN.md`
 （Anthropic/Claude 设计系统：暖奶油画布 + 珊瑚主色 + 衬线标题 + 深色产品面）。
+注意 `DESIGN.md` 是**营销页**文档，第 588 行明确 chat bubbles / message tools / file chips 等
+「out of scope」——气泡、缩略图、思考行这类产品面以真实产品观感为准，别硬套营销页 token
+（尤其：coral 只给主 CTA 与整块 callout，**用户气泡用中性面色**）。
 
 架构是**手写 ServiceLocator + 单向数据流**（无 Hilt、无导航库，单 Activity 两屏）：
 
@@ -9,17 +12,28 @@
 ChatAiApp (Application)  →  懒加载单例：AppDatabase / SettingsRepository / ChatApi / ChatRepository
 MainActivity             →  ChatAITheme + 主题模式 + 路由（Chat ↔ Settings）
 data/model               →  Conversation / Message / ChatConfig / Attachment / ConversationTitle
-data/db                  →  Room 2（schema v2）：ConversationEntity / MessageEntity / DAO / Mappers
+data/db                  →  Room 2（schema v3）：ConversationEntity / MessageEntity / DAO / Mappers / Migrations
+data/ai                  →  纯逻辑（可 JVM 单测）：ContextBuilder / StreamAccumulator / ReasoningPreview / ReasoningDuration
 data/prefs               →  SettingsRepository（DataStore，key 只存本机）
 data/net                 →  ChatApi 接口 + OpenAiCompatibleChatApi（okhttp-sse + callbackFlow）
 data/media               →  图片压缩与私有目录存储（ImageCompressor / AttachmentStore）
 data/ChatRepository      →  唯一业务入口：落库 → 组上下文 → 流式 → 节流写回
-ui/chat                  →  ChatScreen / ChatViewModel / ChatUiState / Composer / MessageItems / ReasoningBlock
+ui/chat                  →  ChatScreen / ChatViewModel / ChatUiState / Composer / MessageItems / ReasoningBlock / Attachments / ChatMetrics
 ui/drawer                →  ConversationDrawer
 ui/settings              →  SettingsScreen / SettingsViewModel
 ui/md                    →  MessageMarkdown（mikepenz）+ LatexSplitter + latex/（vendored Kai，Apache-2.0）
 ui/theme                 →  设计系统（Color / ChatColors / Type / Theme / SpikeMark）
 ```
+
+两条不该踩第二次的约定：
+
+- **视觉尺寸统一走 `ui/chat/ChatMetrics.kt`**（相对**视窗**而非父容器）：消息里图片缩略图 =
+  视窗宽 20% 的正方形、底部消散带 = 视窗高 10%。调观感只动这两个常量，各配纯函数单测。
+- **思考耗时的口径**：DB 里 `messages.reasoning_ms`（毫秒，**NULL = 未测量**，与「0ms 瞬间完成」
+  区分开）。测量用 `SystemClock.elapsedRealtime()`（单调钟，墙钟被 NTP 跳会落库荒谬值），
+  口径 = 回合开始 → **最后一个 reasoning 增量**（不是第一个正文增量：输出顺序不保证）。
+  UI 侧的秒数和落库值是同一个测量，别再用墙钟自己算一遍。
+
 
 ## Build & test
 
@@ -31,8 +45,8 @@ ui/theme                 →  设计系统（Color / ChatColors / Type / Theme /
 .\gradlew.bat lint                 # AGP default; no formatter or typecheck task is configured
 ```
 
-单测全是 JVM 测试（67+ 个）：网络层用 MockWebServer，其余是纯函数（错误映射、压缩尺寸、
-能力表、LaTeX 分段、Markdown 行内公式、Room 映射往返）。
+单测全是 JVM 测试（164 个）：网络层用 MockWebServer，其余是纯函数（错误映射、压缩尺寸、
+能力表、LaTeX 分段、Markdown 行内公式、思考摘要/耗时格式化、视觉度量、Room 映射往返）。
 
 ## AGP 9 DSL — differs from most examples you'll find
 
@@ -143,6 +157,13 @@ Gotchas that cost real debugging time:
 - `adb shell input text` **不支持非 ASCII**：中文要用 `scrcpy` 的 `clipboard_set(paste=true)`。
 - 模拟器坐标：用 `uiautomator dump` / MCP 的 `ui_find_element` 拿，不要靠截图目测估——
   底部手势区（约 y > 2268 @1080×2400）会误触 Home，发送按钮虽然贴着它但不在里面。
+- **列表类展示一律用懒加载容器，别 `take(N)` + 计数占位**。图片行曾经 `take(3)` 加一个没有
+  点击事件的 `+N`，第 4~8 张图在聊天记录里**永远看不到也点不开**；待发图用 `Row` 时 8 张会把
+  输入框撑破。现在两处都是 `LazyRow`。
+- **一行预览不要假设行结构**。思考摘要原本取「第一段非空行」，遇到逐字换行的推理就只剩一个字；
+  改成跨行折叠空白（`ReasoningPreview`），行结构再怪也能出有意义的句子。
+- **错误信息要区分原因**。okhttp 的 header 校验失败（例如 API Key 里混进中文）曾经被报成
+  「Base URL 无效」。URL 用 `toHttpUrlOrNull()` 单独校验，其余组装失败报「请求参数无效：<原因>」。
 
 ## 用模拟器联调真接口（宿主机挂了会做 TLS 拦截的代理时）
 
@@ -156,6 +177,18 @@ Gotchas that cost real debugging time:
 3. `adb reverse tcp:8443 tcp:8443`，把应用内 Base URL 指向 `http://127.0.0.1:8443/v1`。
 
 这样 App 侧只多一个明文开关（release 不含），请求/流式解析全走真实服务端。真机不受此影响。
+
+只想验**界面**时更省事：同上 `adb reverse`，但宿主机换成一个本地 mock（伪装 `/v1/models` 与
+`/v1/chat/completions` 的 SSE，返回长思考链 + 多段正文），不用真 key、不花余额、回答内容可控。
+
+查设备上的库（db + `-wal` 一起拉，否则看不到最新写入）：
+
+```pwsh
+cmd /c "`"$adb`" -s emulator-5554 exec-out run-as com.zcw.chatai cat databases/chatai.db > q.db"
+python -c "import sqlite3;print([r for r in sqlite3.connect('q.db').execute('PRAGMA user_version')])"
+```
+
+顺带：pwsh 里比较**中文字符串字面量**会被控制台编码吃掉（永远 `False`），要验内容就落到文件再读。
 
 ## Tracked-file trap
 

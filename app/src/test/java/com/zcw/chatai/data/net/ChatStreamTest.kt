@@ -97,6 +97,29 @@ class ChatStreamTest {
         }
     }
 
+    /** 回归：API Key 里混进非 ASCII（粘贴事故）时不能再报「Base URL 无效」误导用户。 */
+    @Test
+    fun nonAsciiApiKeyIsReportedAsRequestProblem() = runBlocking {
+        try {
+            collectEvents(config().copy(apiKey = "sk-这不对"))
+            fail("Expected ChatApiException")
+        } catch (e: ChatApiException) {
+            val message = e.message.orEmpty()
+            assertFalse(message, message.contains("Base URL 无效"))
+            assertTrue(message, message.contains("请求参数无效"))
+        }
+    }
+
+    @Test
+    fun unparseableBaseUrlIsReportedAsInvalidBaseUrl() = runBlocking {
+        try {
+            collectEvents(config().copy(baseUrl = "http://[::bad::]/v1"))
+            fail("Expected ChatApiException")
+        } catch (e: ChatApiException) {
+            assertTrue(e.message.orEmpty(), e.message.orEmpty().contains("Base URL 无效"))
+        }
+    }
+
     @Test
     fun cancelsStreamWithTakeWithoutCrashing() = runBlocking {
         val builder = StringBuilder()

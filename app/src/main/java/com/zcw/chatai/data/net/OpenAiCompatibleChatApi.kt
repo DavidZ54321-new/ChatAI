@@ -21,6 +21,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -88,10 +90,16 @@ class OpenAiCompatibleChatApi(
             close(ChatApiException("请先在设置中填写 Base URL"))
             return null
         }
+        // URL 单独校验：下面的 header/参数错误（例如 API Key 里混进中文）不能再被报成「Base URL 无效」。
+        val httpUrl = url.toHttpUrlOrNull()
+        if (httpUrl == null) {
+            close(ChatApiException("Base URL 无效：$url"))
+            return null
+        }
         val request = try {
-            buildRequest(url, config, messages)
+            buildRequest(httpUrl, config, messages)
         } catch (t: Exception) {
-            close(ChatApiException("Base URL 无效：$url", t))
+            close(ChatApiException("请求参数无效：${t.message ?: "未知错误"}", t))
             return null
         }
         return try {
@@ -103,7 +111,7 @@ class OpenAiCompatibleChatApi(
     }
 
     private fun buildRequest(
-        url: String,
+        url: HttpUrl,
         config: ChatConfig,
         messages: List<ChatRequestMessage>,
     ): Request {
