@@ -42,4 +42,23 @@ class ConversationTitleTest {
         assertEquals("新对话", ConversationTitle.fromFirstMessage("   \n\t \n"))
         assertEquals("新对话", ConversationTitle.fromFirstMessage(" \u3000 "))
     }
+
+    @Test
+    fun collapsesUnicodeSpacesWithoutRegex() {
+        // U+00A0 不换行空格 / U+3000 全角空格 都要被折叠（ICU 正则不支持 (?U)，故用 isWhitespace）
+        assertEquals("a b c", ConversationTitle.preview("a\u00A0\u3000b\t c"))
+    }
+
+    @Test
+    fun previewFlattensMultilineText() {
+        assertEquals("第一行 第二行", ConversationTitle.preview("第一行\n\n   第二行"))
+        assertEquals("", ConversationTitle.preview("   \n  "))
+    }
+
+    @Test
+    fun previewTruncatesAtEightyCharacters() {
+        val preview = ConversationTitle.preview("x".repeat(200))
+        assertEquals(81, preview.length)
+        assertEquals("x".repeat(80) + "…", preview)
+    }
 }

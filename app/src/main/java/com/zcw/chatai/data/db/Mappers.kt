@@ -41,6 +41,9 @@ fun MessageEntity.toModel(): Message = Message(
     model = model,
     promptTokens = promptTokens,
     completionTokens = completionTokens,
+    reasoningTokens = reasoningTokens,
+    cachedTokens = cachedTokens,
+    attachments = AttachmentCodec.decode(attachments),
     createdAt = createdAt,
     updatedAt = updatedAt,
 )
@@ -57,6 +60,9 @@ fun Message.toEntity(): MessageEntity = MessageEntity(
     model = model,
     promptTokens = promptTokens,
     completionTokens = completionTokens,
+    reasoningTokens = reasoningTokens,
+    cachedTokens = cachedTokens,
+    attachments = AttachmentCodec.encode(attachments),
     createdAt = createdAt,
     updatedAt = updatedAt,
 )

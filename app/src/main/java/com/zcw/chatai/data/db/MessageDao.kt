@@ -27,7 +27,7 @@ interface MessageDao {
     @Query("UPDATE messages SET content = :content, reasoning_content = :reasoning, updated_at = :updatedAt WHERE id = :id")
     suspend fun updateContent(id: String, content: String, reasoning: String?, updatedAt: Long)
 
-    @Query("UPDATE messages SET content = :content, reasoning_content = :reasoning, status = :status, error_message = :errorMessage, prompt_tokens = :promptTokens, completion_tokens = :completionTokens, updated_at = :updatedAt WHERE id = :id")
+    @Query("UPDATE messages SET content = :content, reasoning_content = :reasoning, status = :status, error_message = :errorMessage, prompt_tokens = :promptTokens, completion_tokens = :completionTokens, reasoning_tokens = :reasoningTokens, cached_tokens = :cachedTokens, updated_at = :updatedAt WHERE id = :id")
     suspend fun finalize(
         id: String,
         content: String,
@@ -36,15 +36,27 @@ interface MessageDao {
         errorMessage: String?,
         promptTokens: Int?,
         completionTokens: Int?,
+        reasoningTokens: Int?,
+        cachedTokens: Int?,
         updatedAt: Long,
     )
+
+    @Query("SELECT * FROM messages WHERE conversation_id = :conversationId AND seq >= :seq ORDER BY seq ASC")
+    suspend fun getFrom(conversationId: String, seq: Long): List<MessageEntity>
 
     @Query("DELETE FROM messages WHERE id = :id")
     suspend fun deleteById(id: String)
 
-    @Query("DELETE FROM messages WHERE conversation_id = :conversationId AND seq > :seq")
-    suspend fun deleteAfter(conversationId: String, seq: Long)
+    @Query("DELETE FROM messages WHERE conversation_id = :conversationId AND seq >= :seq")
+    suspend fun deleteFrom(conversationId: String, seq: Long)
+
+    @Query("DELETE FROM messages WHERE conversation_id = :conversationId")
+    suspend fun deleteByConversation(conversationId: String)
 
     @Query("SELECT COUNT(*) FROM messages WHERE conversation_id = :conversationId")
     suspend fun countByConversation(conversationId: String): Int
+
+    /** 所有附件元数据（JSON），用于孤儿文件清理。 */
+    @Query("SELECT attachments FROM messages WHERE attachments IS NOT NULL")
+    suspend fun getAllAttachmentJson(): List<String>
 }

@@ -24,8 +24,11 @@ interface ConversationDao {
     @Query("UPDATE conversations SET title = :title, updated_at = :updatedAt WHERE id = :id")
     suspend fun rename(id: String, title: String, updatedAt: Long)
 
-    @Query("UPDATE conversations SET last_message_preview = :preview, message_count = message_count + 1, updated_at = :updatedAt WHERE id = :id")
-    suspend fun touchAfterMessage(id: String, preview: String, updatedAt: Long)
+    @Query("UPDATE conversations SET model = :model, updated_at = :updatedAt WHERE id = :id")
+    suspend fun updateModel(id: String, model: String, updatedAt: Long)
+
+    @Query("UPDATE conversations SET last_message_preview = :preview, message_count = :count, updated_at = :updatedAt WHERE id = :id")
+    suspend fun updateSummary(id: String, preview: String, count: Int, updatedAt: Long)
 
     @Query("DELETE FROM conversations WHERE id = :id")
     suspend fun delete(id: String)

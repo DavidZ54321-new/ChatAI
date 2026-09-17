@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 
 @Database(
     entities = [ConversationEntity::class, MessageEntity::class],
-    version = 1,
+    version = 2,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -17,7 +17,11 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun messageDao(): MessageDao
 
     companion object {
+        const val NAME = "chatai.db"
+
         fun build(context: Context): AppDatabase =
-            Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "chatai.db").build()
+            Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, NAME)
+                .addMigrations(MIGRATION_1_2)
+                .build()
     }
 }

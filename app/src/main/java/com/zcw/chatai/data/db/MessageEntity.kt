@@ -42,6 +42,12 @@ data class MessageEntity(
     val promptTokens: Int?,
     @ColumnInfo(name = "completion_tokens")
     val completionTokens: Int?,
+    @ColumnInfo(name = "reasoning_tokens")
+    val reasoningTokens: Int? = null,
+    @ColumnInfo(name = "cached_tokens")
+    val cachedTokens: Int? = null,
+    @ColumnInfo(name = "attachments")
+    val attachments: String? = null,
     @ColumnInfo(name = "created_at")
     val createdAt: Long,
     @ColumnInfo(name = "updated_at")

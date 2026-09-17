@@ -1,5 +1,7 @@
 package com.zcw.chatai.data.db
 
+import com.zcw.chatai.data.model.Attachment
+import com.zcw.chatai.data.model.AttachmentKind
 import com.zcw.chatai.data.model.Conversation
 import com.zcw.chatai.data.model.Message
 import com.zcw.chatai.data.model.MessageStatus
@@ -96,6 +98,42 @@ class MappersTest {
             MessageStatus.COMPLETE,
             message.toEntity().copy(status = "").toModel().status,
         )
+    }
+
+    @Test
+    fun messageWithAttachmentsAndUsageRoundTrips() {
+        val withExtras = message.copy(
+            attachments = listOf(
+                Attachment(
+                    id = "att-1",
+                    kind = AttachmentKind.IMAGE,
+                    relativePath = "attachments/conv-1/att-1.jpg",
+                    mimeType = "image/jpeg",
+                    width = 1200,
+                    height = 900,
+                    sizeBytes = 34567,
+                ),
+            ),
+            reasoningTokens = 24,
+            cachedTokens = 7,
+        )
+        val restored = withExtras.toEntity().toModel()
+        assertEquals(withExtras, restored)
+        assertEquals(24, restored.reasoningTokens)
+        assertEquals(7, restored.cachedTokens)
+        assertEquals("attachments/conv-1/att-1.jpg", restored.attachments.single().relativePath)
+    }
+
+    @Test
+    fun messageWithoutAttachmentsStoresNullColumn() {
+        assertNull(message.toEntity().attachments)
+        assertEquals(emptyList<Attachment>(), message.toEntity().toModel().attachments)
+    }
+
+    @Test
+    fun corruptedAttachmentJsonDegradesToEmptyList() {
+        val broken = message.toEntity().copy(attachments = "not json at all")
+        assertEquals(emptyList<Attachment>(), broken.toModel().attachments)
     }
 
     @Test
