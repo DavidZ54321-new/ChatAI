@@ -30,6 +30,9 @@ interface ConversationDao {
     @Query("UPDATE conversations SET last_message_preview = :preview, message_count = :count, updated_at = :updatedAt WHERE id = :id")
     suspend fun updateSummary(id: String, preview: String, count: Int, updatedAt: Long)
 
+    @Query("UPDATE conversations SET web_search_enabled = :enabled, updated_at = :updatedAt WHERE id = :id")
+    suspend fun updateWebSearchEnabled(id: String, enabled: Boolean, updatedAt: Long)
+
     @Query("DELETE FROM conversations WHERE id = :id")
     suspend fun delete(id: String)
 }

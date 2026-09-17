@@ -33,3 +33,22 @@ val MIGRATION_2_3 = object : Migration(2, 3) {
         db.execSQL("ALTER TABLE messages ADD COLUMN reasoning_ms INTEGER")
     }
 }
+
+/**
+ * v3 → v4：Agent 工具调用落地。
+ *
+ * - `messages.tool_calls`：assistant 一步内请求的所有函数调用（JSON 数组）
+ * - `messages.tool_call_id`：`role=TOOL` 行对应的调用 id
+ * - `messages.tool_result`：结构化工具结果（ToolCallCodec），正文同时写进 `content`
+ * - `conversations.web_search_enabled`：🌐 开关按会话记忆
+ *
+ * 均为可空/带默认值，旧数据行为 NULL/0，不做破坏性迁移。
+ */
+val MIGRATION_3_4 = object : Migration(3, 4) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE messages ADD COLUMN tool_calls TEXT")
+        db.execSQL("ALTER TABLE messages ADD COLUMN tool_call_id TEXT")
+        db.execSQL("ALTER TABLE messages ADD COLUMN tool_result TEXT")
+        db.execSQL("ALTER TABLE conversations ADD COLUMN web_search_enabled INTEGER NOT NULL DEFAULT 0")
+    }
+}

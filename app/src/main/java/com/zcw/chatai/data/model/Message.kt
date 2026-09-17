@@ -1,6 +1,6 @@
 package com.zcw.chatai.data.model
 
-enum class Role { USER, ASSISTANT, SYSTEM }
+enum class Role { USER, ASSISTANT, SYSTEM, TOOL }
 
 /** 模型请求的一次函数调用（`arguments` 是原始 JSON 字符串）。 */
 data class ToolCall(
@@ -31,6 +31,9 @@ data class Message(
     /** 思考耗时（毫秒）；null = 未测量。 */
     val reasoningMs: Long? = null,
     val attachments: List<Attachment> = emptyList(),
+    val toolCalls: List<ToolCall> = emptyList(),
+    val toolCallId: String? = null,
+    val toolResult: ToolResult? = null,
     val createdAt: Long,
     val updatedAt: Long,
 )

@@ -154,4 +154,41 @@ class MappersTest {
             message.toEntity().copy(status = "CANCELLED").toModel().status,
         )
     }
+
+    @Test
+    fun roundTripsToolFields() {
+        val message = Message(
+            id = "m1",
+            conversationId = "c1",
+            role = Role.TOOL,
+            content = "result text",
+            status = MessageStatus.COMPLETE,
+            errorMessage = null,
+            reasoningContent = null,
+            seq = 3,
+            model = null,
+            promptTokens = null,
+            completionTokens = null,
+            toolCallId = "call_1",
+            toolResult = com.zcw.chatai.data.model.ToolResult(
+                status = com.zcw.chatai.data.model.ToolStatus.OK,
+                detail = "q",
+                sources = listOf(com.zcw.chatai.data.model.ToolSource("https://a", "A")),
+                text = "result text",
+            ),
+            createdAt = 1,
+            updatedAt = 1,
+        )
+        assertEquals(message, message.toEntity().toModel())
+    }
+
+    @Test
+    fun roundTripsWebSearchEnabledConversation() {
+        val conversation = Conversation(
+            id = "c1", title = "t", model = "m", systemPrompt = null,
+            createdAt = 1, updatedAt = 1, lastMessagePreview = "", messageCount = 0,
+            isPinned = false, webSearchEnabled = true,
+        )
+        assertEquals(conversation, conversation.toEntity().toModel())
+    }
 }

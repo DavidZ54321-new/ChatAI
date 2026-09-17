@@ -51,6 +51,12 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE conversation_id = :conversationId AND seq >= :seq ORDER BY seq ASC")
     suspend fun getFrom(conversationId: String, seq: Long): List<MessageEntity>
 
+    @Query("UPDATE messages SET tool_calls = :toolCalls, updated_at = :updatedAt WHERE id = :id")
+    suspend fun updateToolCalls(id: String, toolCalls: String?, updatedAt: Long)
+
+    @Query("UPDATE messages SET content = :content, tool_result = :toolResult, updated_at = :updatedAt WHERE id = :id")
+    suspend fun updateToolResult(id: String, content: String, toolResult: String?, updatedAt: Long)
+
     @Query("DELETE FROM messages WHERE id = :id")
     suspend fun deleteById(id: String)
 

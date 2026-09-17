@@ -29,4 +29,6 @@ data class ConversationEntity(
     val messageCount: Int,
     @ColumnInfo(name = "is_pinned", defaultValue = "false")
     val isPinned: Boolean,
+    @ColumnInfo(name = "web_search_enabled", defaultValue = "0")
+    val webSearchEnabled: Boolean = false,
 )

@@ -51,6 +51,12 @@ data class MessageEntity(
     val reasoningMs: Long? = null,
     @ColumnInfo(name = "attachments")
     val attachments: String? = null,
+    @ColumnInfo(name = "tool_calls")
+    val toolCalls: String? = null,
+    @ColumnInfo(name = "tool_call_id")
+    val toolCallId: String? = null,
+    @ColumnInfo(name = "tool_result")
+    val toolResult: String? = null,
     @ColumnInfo(name = "created_at")
     val createdAt: Long,
     @ColumnInfo(name = "updated_at")

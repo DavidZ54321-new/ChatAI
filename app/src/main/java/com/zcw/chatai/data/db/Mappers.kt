@@ -15,6 +15,7 @@ fun ConversationEntity.toModel(): Conversation = Conversation(
     lastMessagePreview = lastMessagePreview,
     messageCount = messageCount,
     isPinned = isPinned,
+    webSearchEnabled = webSearchEnabled,
 )
 
 fun Conversation.toEntity(): ConversationEntity = ConversationEntity(
@@ -27,6 +28,7 @@ fun Conversation.toEntity(): ConversationEntity = ConversationEntity(
     lastMessagePreview = lastMessagePreview,
     messageCount = messageCount,
     isPinned = isPinned,
+    webSearchEnabled = webSearchEnabled,
 )
 
 fun MessageEntity.toModel(): Message = Message(
@@ -45,6 +47,9 @@ fun MessageEntity.toModel(): Message = Message(
     cachedTokens = cachedTokens,
     reasoningMs = reasoningMs,
     attachments = AttachmentCodec.decode(attachments),
+    toolCalls = ToolCallCodec.decodeCalls(toolCalls),
+    toolCallId = toolCallId,
+    toolResult = ToolCallCodec.decodeResult(toolResult),
     createdAt = createdAt,
     updatedAt = updatedAt,
 )
@@ -65,6 +70,9 @@ fun Message.toEntity(): MessageEntity = MessageEntity(
     cachedTokens = cachedTokens,
     reasoningMs = reasoningMs,
     attachments = AttachmentCodec.encode(attachments),
+    toolCalls = ToolCallCodec.encodeCalls(toolCalls),
+    toolCallId = toolCallId,
+    toolResult = ToolCallCodec.encodeResult(toolResult),
     createdAt = createdAt,
     updatedAt = updatedAt,
 )

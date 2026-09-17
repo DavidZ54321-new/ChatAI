@@ -10,4 +10,5 @@ data class Conversation(
     val lastMessagePreview: String,
     val messageCount: Int,
     val isPinned: Boolean,
+    val webSearchEnabled: Boolean = false,
 )
