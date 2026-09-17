@@ -35,24 +35,35 @@ object ContextBuilder {
                     it.toolCalls.isNotEmpty() || it.toolCallId != null
             }
             .takeLast(MAX_MESSAGES)
+            // 窗口可能恰好切在 assistant(tool_calls) 与其 TOOL 结果之间；开头孤立的
+            // TOOL 行没有前置 tool_calls，发到服务端会 400。TOOL 只会紧跟在自己的
+            // assistant 回合之后，因此任何开头的 TOOL 行都是被截断的孤儿。
+            .dropWhile { it.role == Role.TOOL }
 
         val keepImages = messageIdsKeepingImages(usable, imageLimit)
 
-        return usable.map { message ->
+        return usable.mapNotNull { message ->
             if (message.role == Role.TOOL) {
-                return@map ChatRequestMessage(
-                    role = message.role.wire,
-                    content = message.toolResult?.text ?: message.content,
-                    toolCallId = message.toolCallId,
-                )
-            }
-            if (message.attachments.isEmpty()) {
+                val text = message.toolResult?.text?.takeIf { it.isNotBlank() } ?: message.content
+                // 空白工具结果没有发送价值，且会破坏 tool_call_id 配对语义。
+                if (text.isBlank()) {
+                    null
+                } else {
+                    ChatRequestMessage(
+                        role = message.role.wire,
+                        content = text,
+                        toolCallId = message.toolCallId,
+                    )
+                }
+            } else if (message.attachments.isEmpty()) {
                 ChatRequestMessage(
                     role = message.role.wire,
                     content = message.content,
                     toolCalls = message.toolCalls,
                     // 只有带 tool_calls 的回合必须回传思考内容，否则思考模式 400。
-                    reasoning = message.reasoningContent.takeIf { message.toolCalls.isNotEmpty() },
+                    reasoning = message.reasoningContent?.takeIf {
+                        it.isNotBlank() && message.toolCalls.isNotEmpty()
+                    },
                 )
             } else {
                 val keep = message.id in keepImages

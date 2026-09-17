@@ -6,6 +6,8 @@ import com.zcw.chatai.data.model.Message
 import com.zcw.chatai.data.model.MessageStatus
 import com.zcw.chatai.data.model.Role
 import com.zcw.chatai.data.model.ToolCall
+import com.zcw.chatai.data.model.ToolResult
+import com.zcw.chatai.data.model.ToolStatus
 import com.zcw.chatai.data.net.ChatRequestImage
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -126,6 +128,85 @@ class ContextBuilderTest {
         assertNull(built.single().reasoning)
     }
 
+    @Test
+    fun dropsLeadingOrphanToolMessageAfterWindowTruncation() {
+        val history = buildList {
+            add(
+                message(
+                    id = "a0",
+                    role = Role.ASSISTANT,
+                    content = "",
+                    toolCalls = listOf(ToolCall("call_1", "web_search", "{}")),
+                ),
+            )
+            add(message(id = "t0", role = Role.TOOL, content = "结果", toolCallId = "call_1"))
+            repeat(39) { add(message(id = "u$it", role = Role.USER, content = "内容$it")) }
+        }
+        val built = ContextBuilder.build(history, imageLimit = 0) { null }
+        assertEquals(ContextBuilder.MAX_MESSAGES - 1, built.size)
+        assertFalse(built.first().role == "tool")
+        assertTrue(built.none { it.role == "tool" })
+    }
+
+    @Test
+    fun toolResultBlankTextFallsBackToNonBlankContent() {
+        val messages = listOf(
+            message(
+                id = "a1",
+                role = Role.ASSISTANT,
+                content = "",
+                toolCalls = listOf(ToolCall("call_1", "web_search", "{}")),
+            ),
+            message(
+                id = "t1",
+                role = Role.TOOL,
+                content = "真实结果",
+                toolCallId = "call_1",
+                toolResult = ToolResult(status = ToolStatus.OK, detail = "d", text = ""),
+            ),
+        )
+        val built = ContextBuilder.build(messages, imageLimit = 0) { null }
+        assertEquals(2, built.size)
+        assertEquals("真实结果", built[1].content)
+    }
+
+    @Test
+    fun dropsToolMessageWithBlankResolvedText() {
+        val messages = listOf(
+            message(
+                id = "a1",
+                role = Role.ASSISTANT,
+                content = "",
+                toolCalls = listOf(ToolCall("call_1", "web_search", "{}")),
+            ),
+            message(
+                id = "t1",
+                role = Role.TOOL,
+                content = "",
+                toolCallId = "call_1",
+                toolResult = ToolResult(status = ToolStatus.OK, detail = "d", text = ""),
+            ),
+        )
+        val built = ContextBuilder.build(messages, imageLimit = 0) { null }
+        assertEquals(1, built.size)
+        assertTrue(built.none { it.role == "tool" })
+    }
+
+    @Test
+    fun blankReasoningOnToolCallAssistantIsNotForwarded() {
+        val messages = listOf(
+            message(
+                id = "a1",
+                role = Role.ASSISTANT,
+                content = "",
+                toolCalls = listOf(ToolCall("call_1", "web_search", "{}")),
+                reasoningContent = "",
+            ),
+        )
+        val built = ContextBuilder.build(messages, imageLimit = 0) { null }
+        assertNull(built.single().reasoning)
+    }
+
     private fun attachment(id: String, path: String) = Attachment(
         id = id,
         kind = AttachmentKind.IMAGE,
@@ -144,6 +225,7 @@ class ContextBuilderTest {
         status: MessageStatus = MessageStatus.COMPLETE,
         toolCalls: List<ToolCall> = emptyList(),
         toolCallId: String? = null,
+        toolResult: ToolResult? = null,
         reasoningContent: String? = null,
     ) = Message(
         id = id,
@@ -160,6 +242,7 @@ class ContextBuilderTest {
         attachments = attachments,
         toolCalls = toolCalls,
         toolCallId = toolCallId,
+        toolResult = toolResult,
         createdAt = 0L,
         updatedAt = 0L,
     )
