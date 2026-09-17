@@ -6,6 +6,10 @@ import com.zcw.chatai.data.model.Conversation
 import com.zcw.chatai.data.model.Message
 import com.zcw.chatai.data.model.MessageStatus
 import com.zcw.chatai.data.model.Role
+import com.zcw.chatai.data.model.ToolCall
+import com.zcw.chatai.data.model.ToolResult
+import com.zcw.chatai.data.model.ToolSource
+import com.zcw.chatai.data.model.ToolStatus
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -169,17 +173,48 @@ class MappersTest {
             model = null,
             promptTokens = null,
             completionTokens = null,
+            toolCalls = listOf(ToolCall("call_1", "web_search", "{\"query\":\"x\"}")),
             toolCallId = "call_1",
-            toolResult = com.zcw.chatai.data.model.ToolResult(
-                status = com.zcw.chatai.data.model.ToolStatus.OK,
+            toolResult = ToolResult(
+                status = ToolStatus.OK,
                 detail = "q",
-                sources = listOf(com.zcw.chatai.data.model.ToolSource("https://a", "A")),
+                sources = listOf(ToolSource("https://a", "A")),
                 text = "result text",
             ),
             createdAt = 1,
             updatedAt = 1,
         )
-        assertEquals(message, message.toEntity().toModel())
+        val entity = message.toEntity()
+        assertEquals(
+            listOf(ToolCall("call_1", "web_search", "{\"query\":\"x\"}")),
+            entity.toModel().toolCalls,
+        )
+        assertEquals("call_1", entity.toModel().toolCallId)
+        assertEquals(message, entity.toModel())
+    }
+
+    @Test
+    fun messageWithoutToolFieldsStoresNullColumns() {
+        val entity = message.toEntity()
+        assertNull(entity.toolCalls)
+        assertNull(entity.toolCallId)
+        assertNull(entity.toolResult)
+
+        val restored = entity.toModel()
+        assertEquals(emptyList<ToolCall>(), restored.toolCalls)
+        assertNull(restored.toolCallId)
+        assertNull(restored.toolResult)
+    }
+
+    @Test
+    fun corruptedToolJsonDegradesToEmptyAndNull() {
+        val broken = message.toEntity().copy(
+            toolCalls = "not json at all",
+            toolResult = "{",
+        )
+        val restored = broken.toModel()
+        assertEquals(emptyList<ToolCall>(), restored.toolCalls)
+        assertNull(restored.toolResult)
     }
 
     @Test

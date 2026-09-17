@@ -55,7 +55,7 @@ interface MessageDao {
     suspend fun updateToolCalls(id: String, toolCalls: String?, updatedAt: Long)
 
     @Query("UPDATE messages SET content = :content, tool_result = :toolResult, updated_at = :updatedAt WHERE id = :id")
-    suspend fun updateToolResult(id: String, content: String, toolResult: String?, updatedAt: Long)
+    suspend fun updateToolResultContent(id: String, content: String, toolResult: String?, updatedAt: Long)
 
     @Query("DELETE FROM messages WHERE id = :id")
     suspend fun deleteById(id: String)
