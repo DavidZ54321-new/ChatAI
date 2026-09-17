@@ -1,6 +1,7 @@
 package com.zcw.chatai.data.net
 
 import com.zcw.chatai.data.model.ChatConfig
+import com.zcw.chatai.data.model.ToolCall
 import kotlinx.coroutines.flow.Flow
 
 interface ChatApi {
@@ -18,6 +19,12 @@ data class ChatRequestMessage(
     val role: String,
     val content: String,
     val images: List<ChatRequestImage> = emptyList(),
+    /** assistant 消息携带的工具调用（重发历史时用）。 */
+    val toolCalls: List<ToolCall> = emptyList(),
+    /** `role=tool` 结果消息对应的调用 id。 */
+    val toolCallId: String? = null,
+    /** 仅带 tool_calls 的 assistant 回合需要回传（否则思考模式 400）。 */
+    val reasoning: String? = null,
 )
 
 /** 内联图片（`data:image/jpeg;base64,...`）。不用外部 URL：实测多数端点有防盗链。 */
@@ -34,6 +41,14 @@ sealed interface ChatStreamEvent {
         val completionTokens: Int?,
         val reasoningTokens: Int? = null,
         val cachedTokens: Int? = null,
+    ) : ChatStreamEvent
+
+    /** 模型决定调用工具；`arguments` 是逐字符增量，必须按 index 拼接。 */
+    data class ToolCallDelta(
+        val index: Int,
+        val id: String? = null,
+        val name: String? = null,
+        val arguments: String? = null,
     ) : ChatStreamEvent
 
     /** 服务端给出的 `finish_reason`（`stop`/`length`/`aborted`/...），流结束前到达。 */

@@ -2,6 +2,13 @@ package com.zcw.chatai.data.model
 
 enum class Role { USER, ASSISTANT, SYSTEM }
 
+/** 模型请求的一次函数调用（`arguments` 是原始 JSON 字符串）。 */
+data class ToolCall(
+    val id: String,
+    val name: String,
+    val arguments: String,
+)
+
 /** 出站请求里的 role 字面量（OpenAI 兼容格式一律小写）。 */
 val Role.wire: String
     get() = name.lowercase()

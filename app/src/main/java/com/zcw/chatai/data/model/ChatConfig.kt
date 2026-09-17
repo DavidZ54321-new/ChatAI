@@ -23,4 +23,8 @@ data class ChatConfig(
     val includeUsage: Boolean = true,
     val historyImageLimit: Int = 2,
     val extraParams: String? = null,
+    /** 本回合是否注入 web_search/web_fetch 工具。 */
+    val webSearchEnabled: Boolean = false,
+    /** Agent 最多几步工具调用。 */
+    val maxAgentSteps: Int = 5,
 )

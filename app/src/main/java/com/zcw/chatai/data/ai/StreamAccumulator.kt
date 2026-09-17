@@ -68,6 +68,8 @@ class StreamAccumulator(
 
             is ChatStreamEvent.Finished -> finishReason = event.reason
 
+            is ChatStreamEvent.ToolCallDelta -> Unit
+
             ChatStreamEvent.Completed -> Unit
         }
         if (grew) {

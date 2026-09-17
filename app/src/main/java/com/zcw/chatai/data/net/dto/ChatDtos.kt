@@ -4,6 +4,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 
 val chatJson: Json = Json {
     ignoreUnknownKeys = true
@@ -20,14 +21,43 @@ data class ChatCompletionRequest(
     @SerialName("reasoning_effort") val reasoningEffort: String? = null,
     @SerialName("max_tokens") val maxTokens: Int? = null,
     @SerialName("stream_options") val streamOptions: StreamOptions? = null,
+    val tools: List<ChatTool>? = null,
+    @SerialName("tool_choice") val toolChoice: JsonElement? = null,
 )
 
 @Serializable
 data class StreamOptions(@SerialName("include_usage") val includeUsage: Boolean = true)
 
+@Serializable
+data class ChatTool(val type: String = "function", val function: FunctionSpec)
+
+@Serializable
+data class FunctionSpec(
+    val name: String,
+    val description: String,
+    val parameters: JsonObject,
+    val strict: Boolean? = null,
+)
+
 /** `content` 是联合类型：纯文本为 JSON 字符串，带图片时为内容块数组。 */
 @Serializable
-data class RequestMessage(val role: String, val content: JsonElement)
+data class RequestMessage(
+    val role: String,
+    val content: JsonElement? = null,
+    @SerialName("tool_call_id") val toolCallId: String? = null,
+    @SerialName("tool_calls") val toolCalls: List<RequestToolCall>? = null,
+    @SerialName("reasoning_content") val reasoningContent: String? = null,
+)
+
+@Serializable
+data class RequestToolCall(
+    val id: String,
+    val type: String = "function",
+    val function: RequestFunctionCall,
+)
+
+@Serializable
+data class RequestFunctionCall(val name: String, val arguments: String)
 
 @Serializable
 data class ChatCompletionChunk(
@@ -48,7 +78,19 @@ data class ChunkDelta(
     val role: String? = null,
     val content: String? = null,
     @SerialName("reasoning_content") val reasoningContent: String? = null,
+    @SerialName("tool_calls") val toolCalls: List<ToolCallDelta>? = null,
 )
+
+@Serializable
+data class ToolCallDelta(
+    val index: Int = 0,
+    val id: String? = null,
+    val type: String? = null,
+    val function: FunctionDelta? = null,
+)
+
+@Serializable
+data class FunctionDelta(val name: String? = null, val arguments: String? = null)
 
 @Serializable
 data class Usage(

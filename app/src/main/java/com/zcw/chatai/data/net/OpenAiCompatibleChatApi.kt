@@ -5,8 +5,12 @@ import com.zcw.chatai.data.net.dto.ApiErrorEnvelope
 import com.zcw.chatai.data.net.dto.ChatCompletionChunk
 import com.zcw.chatai.data.net.dto.ChatCompletionRequest
 import com.zcw.chatai.data.net.dto.ChatRequestBody
+import com.zcw.chatai.data.net.dto.ChatTool
+import com.zcw.chatai.data.net.dto.FunctionSpec
 import com.zcw.chatai.data.net.dto.ModelList
+import com.zcw.chatai.data.net.dto.RequestFunctionCall
 import com.zcw.chatai.data.net.dto.RequestMessage
+import com.zcw.chatai.data.net.dto.RequestToolCall
 import com.zcw.chatai.data.net.dto.StreamOptions
 import com.zcw.chatai.data.net.dto.chatJson
 import java.util.concurrent.TimeUnit
@@ -19,6 +23,11 @@ import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
 import okhttp3.MediaType
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.HttpUrl
@@ -124,13 +133,32 @@ class OpenAiCompatibleChatApi(
                 messages.forEach { message ->
                     // 图片只能出现在 user/tool 消息里，其它角色一律降级为纯文本。
                     val images = if (message.role == ROLE_USER) message.images else emptyList()
-                    add(RequestMessage(message.role, ChatRequestBody.content(message.content, images)))
+                    add(
+                        RequestMessage(
+                            role = message.role,
+                            content = if (message.toolCalls.isNotEmpty() && message.content.isEmpty()) {
+                                null
+                            } else {
+                                ChatRequestBody.content(message.content, images)
+                            },
+                            toolCallId = message.toolCallId,
+                            toolCalls = message.toolCalls.takeIf { it.isNotEmpty() }?.map {
+                                RequestToolCall(
+                                    id = it.id,
+                                    function = RequestFunctionCall(name = it.name, arguments = it.arguments),
+                                )
+                            },
+                            reasoningContent = message.reasoning,
+                        ),
+                    )
                 }
             },
             temperature = config.temperature,
             reasoningEffort = config.reasoningEffort?.takeIf { it.isNotBlank() },
             maxTokens = config.maxTokens,
             streamOptions = if (config.includeUsage) StreamOptions(includeUsage = true) else null,
+            tools = if (config.webSearchEnabled) listOf(searchToolSpec(), fetchToolSpec()) else null,
+            toolChoice = if (config.webSearchEnabled) JsonPrimitive("auto") else null,
         )
         val body = ChatRequestBody.encode(json, payload, config.extraParams)
         return Request.Builder()
@@ -194,6 +222,16 @@ class OpenAiCompatibleChatApi(
                 choice.finishReason?.let { reason ->
                     scope.trySend(ChatStreamEvent.Finished(reason))
                 }
+                delta?.toolCalls?.forEach { tc ->
+                    scope.trySend(
+                        ChatStreamEvent.ToolCallDelta(
+                            index = tc.index,
+                            id = tc.id,
+                            name = tc.function?.name,
+                            arguments = tc.function?.arguments,
+                        ),
+                    )
+                }
             }
             chunk.usage?.let { usage ->
                 scope.trySend(
@@ -240,3 +278,27 @@ class OpenAiCompatibleChatApi(
             .build()
     }
 }
+
+private fun searchToolSpec() = ChatTool(
+    function = FunctionSpec(
+        name = "web_search",
+        description = "Search the web for current information.",
+        parameters = buildJsonObject {
+            put("type", "object")
+            putJsonObject("properties") { putJsonObject("query") { put("type", "string") } }
+            put("required", JsonArray(listOf(JsonPrimitive("query"))))
+        },
+    ),
+)
+
+private fun fetchToolSpec() = ChatTool(
+    function = FunctionSpec(
+        name = "web_fetch",
+        description = "Fetch the full text of one http(s) URL.",
+        parameters = buildJsonObject {
+            put("type", "object")
+            putJsonObject("properties") { putJsonObject("url") { put("type", "string") } }
+            put("required", JsonArray(listOf(JsonPrimitive("url"))))
+        },
+    ),
+)
