@@ -80,15 +80,18 @@
 
 ### 4.3 Web 工具（新增包 `data/web/`）
 
-- `WebSource.kt`：`data class WebSource(url, title?, snippet?, publishedAt?)`。
+- `data/model/ToolSource.kt`：领域模型，web 层与 UI 共用 ——
+  `data class ToolSource(url, title?, snippet?, publishedAt?)`、
+  `data class ToolResult(status: ToolStatus, detail: String, sources: List<ToolSource>, text: String)`、
+  `enum class ToolStatus { RUNNING, OK, FAILED }`。
 - `WebSearchProvider.kt`：
   ```kotlin
   interface WebSearchProvider {
       val id: String
-      fun available(): Boolean
-      suspend fun search(query: String, maxResults: Int): WebSearchResult
+      fun available(config: ChatConfig): Boolean
+      suspend fun search(query: String, maxResults: Int, config: ChatConfig): WebSearchResult
   }
-  data class WebSearchResult(val answer: String?, val sources: List<WebSource>)
+  data class WebSearchResult(val answer: String?, val sources: List<ToolSource>)
   ```
 - `DeepSeekNativeSearchProvider.kt`（默认实现）
   - 端点：`EndpointUrl.anthropicMessages(config.baseUrl)`。
@@ -108,9 +111,10 @@
     - `web_search_tool_result.content[]` 里 `web_search_result` → `sources`（url/title；`page_age`→`publishedAt`；`snippet` 取同回的 citation `cited_text`，没有则为 null）；
     - `server_tool_use` → 记录实际搜索 query（用于展示）。
   - **DSML 防御**：强制 `tool_choice`（已缓解已知漏出）；另加 `stripDsmlMarkup(text)` 兜底剥离 `<｜｜DSML｜｜…>`（全角竖线 U+FF5C），剥离后为空则回退 `"No results found."`。
-  - `available()`：key 非空、baseUrl 可解析、host 为 DeepSeek（`api.deepseek.com` 或用户配置的 DeepSeek 兼容基址）。
+  - `available(config)`：key 非空且 baseUrl 能解析出 Anthropic Messages 端点即视为可用（host 不限，兼容自建/代理基址；调用失败时工具返回可读错误，模型可继续）。
 - `WebFetcher.kt` / `HttpWebFetcher.kt`
-  - OkHttp GET，浏览器 UA + `Accept-Language`。
+  - 构造函数 `client` / `hostPolicy` / `maxBytes` / `maxChars` 全部可注入：`hostPolicy` 默认拒绝非公网地址，单测传 `{ true }` 以配合 MockWebServer（localhost）。
+  - OkHttp GET，浏览器 UA + `Accept-Language`；关闭自动重定向（3xx 作为结果返回）。
   - 安全：只允许 `http`/`https`；解析 IP 后拒绝 loopback/私网/link-local；同源重定向跟随上限（跨源不自动跟）；超时 15s；`Content-Length` 与流式读取双重上限（≤200 KB）；content-type 白名单（text/html、text/plain、application/json、application/xhtml+xml）。
   - 转文本：Jsoup 去掉 `script/style/noscript/svg/nav/footer` 后，按块级元素保留换行输出纯文本（纯函数 `HtmlToText`，JVM 单测）。
   - 输出 `WebFetchResult(url, statusCode, text, truncated)`；非 2xx 也是结果，不抛异常。
@@ -121,6 +125,7 @@
 ### 4.4 Agent 回路
 
 - `data/ChatRepository.kt`
+  - 构造函数新增可注入的 `searchProvider: WebSearchProvider?`、`webFetcher: WebFetcher`，便于测试与装配。
   - `runStream`（单趟）升级为 `runAgentTurn`（有界循环，`maxSteps` 默认 5、上限 8）。
   - 每一「模型步」= 一条 `role=ASSISTANT` 消息行；每一步的 `tool_calls` 存该行。工具结果 = `role=TOOL` 消息行。
   - 循环：
@@ -137,13 +142,14 @@
 
 - `data/db/MessageEntity.kt`：新增 `tool_calls TEXT`（JSON）、`tool_call_id TEXT`（均可空）。
 - `data/db/ConversationEntity.kt`：新增 `web_search_enabled INTEGER NOT NULL DEFAULT 0`。
-- `data/model/Message.kt`：`Role` 增加 `TOOL`；`Message` 增加 `toolCalls: List<ToolCall>`、`toolCallId: String?`。
+- `data/model/Message.kt`：`Role` 增加 `TOOL`；`Message` 增加 `toolCalls: List<ToolCall>`、`toolCallId: String?`、`toolResult: ToolResult?`。
 - `data/model/Conversation.kt`：增加 `webSearchEnabled: Boolean`。
 - `data/db/Mappers.kt`：`tool_calls` 用 JSON 编码（新增 `ToolCallCodec`，仿 `AttachmentCodec`）；`roleFromString` 支持 `"tool"`。
 - `data/db/Migrations.kt`：`MIGRATION_3_4`：
   ```sql
   ALTER TABLE messages ADD COLUMN tool_calls TEXT;
   ALTER TABLE messages ADD COLUMN tool_call_id TEXT;
+  ALTER TABLE messages ADD COLUMN tool_result TEXT;
   ALTER TABLE conversations ADD COLUMN web_search_enabled INTEGER NOT NULL DEFAULT 0;
   ```
 - `data/db/AppDatabase.kt`：`version = 4`，注册 `MIGRATION_3_4`。
@@ -177,7 +183,7 @@
 - `data/model/ChatConfig.kt`：增加 `webSearchEnabled: Boolean = false`（请求期决定是否注入 tools；本身不落 DataStore）。
 - `data/prefs/SettingsRepository.kt`：`chatConfig()` 保持厂商中立默认；会话级开关从 `ConversationEntity` 读，`resolveConfig` 合并（优先级同 model/systemPrompt 覆盖）。
 - 🌐 开关**按会话记住**：写 `conversations.web_search_enabled`。
-- 中立性护栏：baseUrl 非 DeepSeek 且未配置第三方 provider 时，🌐 置灰并提示「当前服务商未配置联网搜索后端」，不静默失败。
+- 可用性护栏：`searchProvider.available(config)` 为 false（无 key / Base URL 无效）时，🌐 置灰并提示「联网搜索不可用：请先在设置里填写 API Key」，不静默失败。
 
 ## 5. 依赖
 
