@@ -7,6 +7,8 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 
 @Immutable
@@ -35,7 +37,28 @@ data class ChatTypography(
     val code: TextStyle,
     val messageBody: TextStyle,
 ) {
+    /**
+     * 正文字号随视窗宽度缩放；视窗未测量（Unspecified/0）时退回默认字号。
+     * 与消息图片缩略图一样，比例相对视窗，旋转/分屏时观感一致。
+     */
+    fun forWindowWidth(windowWidth: Dp): ChatTypography {
+        if (!windowWidth.isSpecified || windowWidth.value <= 0f) return this
+        val bodySize = windowWidth.value * BODY_TEXT_FRACTION
+        return copy(
+            messageBody = messageBody.copy(
+                fontSize = bodySize.sp,
+                lineHeight = (bodySize * BODY_LINE_HEIGHT_RATIO).sp,
+            ),
+        )
+    }
+
     companion object {
+        /** 正文字号 = 视窗宽度的 4.5%。 */
+        const val BODY_TEXT_FRACTION = 0.045f
+
+        /** 正文行高 / 字号（沿用 29sp / 18sp 的比例）。 */
+        const val BODY_LINE_HEIGHT_RATIO = 29f / 18f
+
         val Default = ChatTypography(
             code = TextStyle(
                 fontFamily = MonoCode,

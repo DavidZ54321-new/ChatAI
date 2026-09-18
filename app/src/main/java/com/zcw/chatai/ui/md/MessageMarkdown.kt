@@ -26,12 +26,16 @@ import androidx.compose.ui.unit.sp
 import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.compose.elements.MarkdownHighlightedCodeBlock
 import com.mikepenz.markdown.compose.elements.MarkdownHighlightedCodeFence
+import com.mikepenz.markdown.compose.elements.MarkdownTable
+import com.mikepenz.markdown.compose.elements.MarkdownTableHeader
+import com.mikepenz.markdown.compose.elements.MarkdownTableRow
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.m3.markdownColor
 import com.mikepenz.markdown.m3.markdownTypography
 import com.mikepenz.markdown.model.MarkdownAnnotator
 import com.mikepenz.markdown.model.markdownAnimations
 import com.mikepenz.markdown.model.markdownAnnotator
+import com.mikepenz.markdown.model.markdownDimens
 import com.mikepenz.markdown.model.rememberMarkdownState
 import com.zcw.chatai.ui.md.latex.MathFormula
 import com.zcw.chatai.ui.md.latex.appendInlineMath
@@ -39,6 +43,15 @@ import com.zcw.chatai.ui.theme.ChatTheme
 import dev.snipme.highlights.Highlights
 import dev.snipme.highlights.model.SyntaxThemes
 import org.intellij.markdown.MarkdownTokenTypes
+
+/**
+ * 表格单元格的固定宽度：2 列就会超过手机气泡宽度，触发库的
+ * `horizontalScroll + requiredWidth` 横向滚动；格内文字换行显示全文。
+ */
+private val TableCellWidth = 220.dp
+
+/** 表格字号相对正文的比例：表格是辅助信息，不抢正文视觉权重。 */
+private const val TableTextScale = 0.8f
 
 @Composable
 fun MessageMarkdown(content: String, modifier: Modifier = Modifier) {
@@ -98,6 +111,10 @@ private fun MarkdownBlock(text: String) {
             list = body,
             ordered = body,
             bullet = body,
+            table = body.copy(
+                fontSize = body.fontSize * TableTextScale,
+                lineHeight = body.lineHeight * TableTextScale,
+            ),
             textLink = TextLinkStyles(
                 style = SpanStyle(
                     color = scheme.primary,
@@ -106,8 +123,34 @@ private fun MarkdownBlock(text: String) {
             ),
         ),
         modifier = Modifier.fillMaxWidth(),
+        dimens = markdownDimens(tableCellWidth = TableCellWidth),
         annotator = remember(mathStrings) { inlineMathAnnotator(mathStrings) },
         components = markdownComponents(
+            table = { model ->
+                MarkdownTable(
+                    content = model.content,
+                    node = model.node,
+                    style = model.typography.table,
+                    headerBlock = { content, header, tableWidth, style ->
+                        MarkdownTableHeader(
+                            content = content,
+                            header = header,
+                            tableWidth = tableWidth,
+                            style = style,
+                            maxLines = Int.MAX_VALUE,
+                        )
+                    },
+                    rowBlock = { content, row, tableWidth, style ->
+                        MarkdownTableRow(
+                            content = content,
+                            header = row,
+                            tableWidth = tableWidth,
+                            style = style,
+                            maxLines = Int.MAX_VALUE,
+                        )
+                    },
+                )
+            },
             codeBlock = {
                 MarkdownHighlightedCodeBlock(
                     content = it.content,

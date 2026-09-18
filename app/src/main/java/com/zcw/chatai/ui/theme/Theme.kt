@@ -6,6 +6,8 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalWindowInfo
 
 private val LightScheme = lightColorScheme(
     primary = Coral,
@@ -90,9 +92,14 @@ fun ChatAITheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit,
 ) {
+    // 正文等视觉尺寸相对视窗，而不是写死 sp：分屏/折叠/旋转时观感一致。
+    val windowWidth = LocalWindowInfo.current.containerDpSize.width
+    val chatTypography = remember(windowWidth) {
+        ChatTypography.Default.forWindowWidth(windowWidth)
+    }
     CompositionLocalProvider(
         LocalChatColors provides if (darkTheme) DarkChatColors else LightChatColors,
-        LocalChatTypography provides ChatTypography.Default,
+        LocalChatTypography provides chatTypography,
     ) {
         MaterialTheme(
             colorScheme = if (darkTheme) DarkScheme else LightScheme,
