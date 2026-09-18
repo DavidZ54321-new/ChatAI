@@ -8,6 +8,10 @@ import com.zcw.chatai.data.media.AttachmentStore
 import com.zcw.chatai.data.net.ChatApi
 import com.zcw.chatai.data.net.OpenAiCompatibleChatApi
 import com.zcw.chatai.data.prefs.SettingsRepository
+import com.zcw.chatai.data.web.DeepSeekNativeSearchProvider
+import com.zcw.chatai.data.web.HttpWebFetcher
+import com.zcw.chatai.data.web.WebFetcher
+import com.zcw.chatai.data.web.WebSearchProvider
 import com.zcw.chatai.util.MainThreadWatchdog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -27,12 +31,18 @@ class ChatAiApp : Application() {
 
     val attachmentStore: AttachmentStore by lazy { AttachmentStore(this) }
 
+    val webSearchProvider: WebSearchProvider by lazy { DeepSeekNativeSearchProvider() }
+
+    val webFetcher: WebFetcher by lazy { HttpWebFetcher() }
+
     val chatRepository: ChatRepository by lazy {
         ChatRepository(
             db = database,
             settingsRepository = settingsRepository,
             api = chatApi,
             attachmentStore = attachmentStore,
+            searchProvider = webSearchProvider,
+            webFetcher = webFetcher,
         )
     }
 
