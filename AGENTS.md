@@ -11,14 +11,15 @@
 ```
 ChatAiApp (Application)  →  懒加载单例：AppDatabase / SettingsRepository / ChatApi / ChatRepository
 MainActivity             →  ChatAITheme + 主题模式 + 路由（Chat ↔ Settings）
-data/model               →  Conversation / Message / ChatConfig / Attachment / ConversationTitle
-data/db                  →  Room 2（schema v3）：ConversationEntity / MessageEntity / DAO / Mappers / Migrations
-data/ai                  →  纯逻辑（可 JVM 单测）：ContextBuilder / StreamAccumulator / ReasoningPreview / ReasoningDuration
+data/model               →  Conversation / Message / ChatConfig / Attachment / ToolSource / ConversationTitle
+data/db                  →  Room 2（schema v4）：ConversationEntity / MessageEntity / DAO / Mappers / Migrations / ToolCallCodec
+data/ai                  →  纯逻辑（可 JVM 单测）：ContextBuilder / StreamAccumulator / ToolCallAccumulator / AgentLoop / ReasoningPreview / ReasoningDuration
 data/prefs               →  SettingsRepository（DataStore，key 只存本机）
 data/net                 →  ChatApi 接口 + OpenAiCompatibleChatApi（okhttp-sse + callbackFlow）
+data/web                 →  联网工具：WebSearchProvider / DeepSeekNativeSearchProvider（Anthropic web_search）/ WebFetcher / HttpWebFetcher / HtmlToText / WebTools
 data/media               →  图片压缩与私有目录存储（ImageCompressor / AttachmentStore）
-data/ChatRepository      →  唯一业务入口：落库 → 组上下文 → 流式 → 节流写回
-ui/chat                  →  ChatScreen / ChatViewModel / ChatUiState / Composer / MessageItems / ReasoningBlock / Attachments / ChatMetrics
+data/ChatRepository      →  唯一业务入口：落库 → 组上下文 → 有界 Agent 循环（流式 → 工具 → 再流式）
+ui/chat                  →  ChatScreen / ChatViewModel / ChatUiState / Composer / MessageItems / ReasoningBlock / ToolCallBlock / Attachments / ChatMetrics
 ui/drawer                →  ConversationDrawer
 ui/settings              →  SettingsScreen / SettingsViewModel
 ui/md                    →  MessageMarkdown（mikepenz）+ LatexSplitter + latex/（vendored Kai，Apache-2.0）
@@ -46,8 +47,9 @@ ui/theme                 →  设计系统（Color / ChatColors / Type / Theme /
 .\gradlew.bat lint                 # AGP default; no formatter or typecheck task is configured
 ```
 
-单测全是 JVM 测试（164 个）：网络层用 MockWebServer，其余是纯函数（错误映射、压缩尺寸、
-能力表、LaTeX 分段、Markdown 行内公式、思考摘要/耗时格式化、视觉度量、Room 映射往返）。
+单测全是 JVM 测试（246 个）：网络层用 MockWebServer，其余是纯函数（错误映射、压缩尺寸、
+能力表、LaTeX 分段、Markdown 行内公式、思考摘要/耗时格式化、视觉度量、Room 映射往返、
+工具调用累加/编解码、Agent 决策、HTML→文本、搜索响应解析）。
 
 ## AGP 9 DSL — differs from most examples you'll find
 
@@ -92,6 +94,14 @@ in the build script — keep it that way.
 - 流式：每个 chunk 只带 1~2 个字符、`content: null` 与 `reasoning_content: null` 交替出现，
   **usage 挂在最后一个带 `finish_reason` 的 chunk 上**（不是单独一块），以 `data: [DONE]` 收尾。
 - `GET /models` 是标准 OpenAI 端点（实测返回两个模型），设置页的「拉取模型列表/测试连接」用它。
+
+**联网搜索只在 Anthropic 兼容面**（`https://api.deepseek.com/anthropic/v1/messages`）：用服务端工具
+`{"type":"web_search_20250305","name":"web_search","max_uses":N}`，回 `server_tool_use` +
+`web_search_tool_result` 内容块。OpenAI 兼容面**拒绝** `web_search` 工具类型（`unknown variant`），
+主对话回路仍走 OpenAI 面 + 标准 function calling（`tools`/`tool_calls`），搜索只是被调用的一个函数。
+Anthropic 面有已知 bug：会把 `<｜｜DSML｜｜tool_calls>…`（`｜` = U+FF5C 全角竖线）漏进正文，务必
+`tool_choice` 强制只调搜索 + 客户端兜底剥离（见 `DeepSeekSearchParser.stripDsmlMarkup`，纯字符串、无 Regex）。
+Anthropic 面的 `available()` 不限制 host，兼容自建/转发代理基址。
 
 设计原则：**不为任何厂商特制**。线上只用标准交集（`image_url` data URL、`reasoning_effort`、
 `stream_options`）；厂商差异靠数据消化（预设基址表、模型能力表 `ModelCapabilities`、
@@ -165,6 +175,14 @@ Gotchas that cost real debugging time:
   改成跨行折叠空白（`ReasoningPreview`），行结构再怪也能出有意义的句子。
 - **错误信息要区分原因**。okhttp 的 header 校验失败（例如 API Key 里混进中文）曾经被报成
   「Base URL 无效」。URL 用 `toHttpUrlOrNull()` 单独校验，其余组装失败报「请求参数无效：<原因>」。
+- **带 `tool_calls` 的 assistant 回合必须回传 `reasoning_content`**，否则思考模式 400。所以
+  `ContextBuilder` 只在 assistant 且 `toolCalls` 非空时才带 `reasoning`（普通回合不回传，避免污染上下文）。
+- **每个 assistant `tool_calls` 都必须有配对的 `role=tool` 应答**，否则服务端 400。窗口截断会切出
+  孤立 TOOL 行（`ContextBuilder` 用 `dropWhile` 去掉开头的 TOOL），崩溃窗口的缺失应答由
+  `ChatRepository.reconcileUnansweredToolCalls` 补占位。空白工具结果也必须以占位文本保留，不能丢行。
+- **schema v3→v4 的迁移没有 instrumented 测试**（仓库全是 JVM 测试，未接 `room-testing`）。纯增量列，
+  已用导出的 `app/schemas/.../4.json` 人工核对；后续再加列时优先补一个 `MigrationTestHelper` 测试，
+  或按下面「查设备上的库」用 `PRAGMA table_info` 手工验。
 
 ## 用模拟器联调真接口（宿主机挂了会做 TLS 拦截的代理时）
 
