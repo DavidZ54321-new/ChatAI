@@ -1,19 +1,30 @@
 package com.zcw.chatai.ui.md
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
@@ -23,6 +34,8 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.mikepenz.markdown.compose.LocalReferenceLinkHandler
+import com.mikepenz.markdown.compose.components.MarkdownComponentModel
 import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.compose.elements.MarkdownHighlightedCodeBlock
 import com.mikepenz.markdown.compose.elements.MarkdownHighlightedCodeFence
@@ -37,6 +50,11 @@ import com.mikepenz.markdown.model.markdownAnimations
 import com.mikepenz.markdown.model.markdownAnnotator
 import com.mikepenz.markdown.model.markdownDimens
 import com.mikepenz.markdown.model.rememberMarkdownState
+import com.mikepenz.markdown.utils.resolveImageAlt
+import com.mikepenz.markdown.utils.resolveImageLink
+import com.zcw.chatai.ui.chat.ChatMetrics
+import com.zcw.chatai.ui.chat.RemoteImage
+import com.zcw.chatai.ui.chat.RemoteImagePreviewDialog
 import com.zcw.chatai.ui.md.latex.MathFormula
 import com.zcw.chatai.ui.md.latex.appendInlineMath
 import com.zcw.chatai.ui.theme.ChatTheme
@@ -55,14 +73,65 @@ private const val TableTextScale = 0.8f
 
 @Composable
 fun MessageMarkdown(content: String, modifier: Modifier = Modifier) {
-    val segments = remember(content) { LatexSplitter.split(content) }
+    val segments = remember(content) { ImageRowSplitter.split(content) }
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         for (segment in segments) {
             when (segment) {
-                is MdSegment.Markdown -> MarkdownBlock(segment.text)
-                is MdSegment.BlockMath -> BlockMathView(segment.latex)
+                is ContentSegment.Markdown -> LatexContent(segment.text)
+                is ContentSegment.ImageRow -> MarkdownImageRow(segment.images)
             }
         }
+    }
+}
+
+/** 块级公式仍在 Markdown 片段内部单独分段渲染。 */
+@Composable
+private fun LatexContent(text: String) {
+    val segments = remember(text) { LatexSplitter.split(text) }
+    for (segment in segments) {
+        when (segment) {
+            is MdSegment.Markdown -> MarkdownBlock(segment.text)
+            is MdSegment.BlockMath -> BlockMathView(segment.latex)
+        }
+    }
+}
+
+/**
+ * 连续紧挨的网图排成一行，超出视窗横向滑动（与块级公式同一种浏览方式）。
+ * 单张高度取视窗宽 42%，点开走全屏预览。
+ */
+@Composable
+private fun MarkdownImageRow(images: List<MarkdownImageRef>) {
+    val windowWidth = LocalWindowInfo.current.containerDpSize.width
+    val imageHeight = ChatMetrics.markdownImageHeight(windowWidth)
+    val maxWidth = ChatMetrics.markdownImageMaxWidth(windowWidth)
+    var preview by remember { mutableStateOf<MarkdownImageRef?>(null) }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        images.forEach { image ->
+            RemoteImage(
+                url = image.url,
+                contentDescription = image.alt,
+                maxEdge = 1024,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .height(imageHeight)
+                    .widthIn(min = ChatMetrics.MARKDOWN_IMAGE_MIN_WIDTH, max = maxWidth)
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable { preview = image },
+            )
+        }
+    }
+    preview?.let { image ->
+        RemoteImagePreviewDialog(
+            url = image.url,
+            title = image.alt,
+            onDismiss = { preview = null },
+        )
     }
 }
 
@@ -167,8 +236,42 @@ private fun MarkdownBlock(text: String) {
                     showHeader = true,
                 )
             },
+            // 正文里的网图（如文搜图返回的 markdown 图片）走统一的远程加载器。
+            // 库的默认 image/inlineImage 都依赖 Coil 风格的 transformer（没接就什么都不画），
+            // 且 URL 必须从 AST 节点解析（model.content 是整段 markdown，不是链接）。
+            image = { model -> MarkdownNetworkImage(model) },
+            inlineImage = { model -> MarkdownNetworkImage(model) },
         ),
         animations = markdownAnimations(animateTextSize = { this }),
+    )
+}
+
+@Composable
+private fun MarkdownNetworkImage(model: MarkdownComponentModel) {
+    // inline 图片路径：model.content 直接就是链接；
+    // 块级图片路径：URL 在 AST 节点里（content 是整段 markdown，节点偏移只对它成立）。
+    // 两种形态都要兼容，且解析失败不能崩。
+    val direct = model.content.trim().takeIf {
+        it.startsWith("http://") || it.startsWith("https://")
+    }
+    val handler = LocalReferenceLinkHandler.current
+    val link = direct ?: runCatching {
+        model.node.resolveImageLink(model.content, handler)
+    }.getOrNull()
+    ?: return
+    val alt = if (direct != null) {
+        null
+    } else {
+        runCatching { model.node.resolveImageAlt(model.content) }.getOrNull()
+    }
+    RemoteImage(
+        url = link,
+        contentDescription = alt,
+        maxEdge = 1280,
+        contentScale = ContentScale.Fit,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp)),
     )
 }
 

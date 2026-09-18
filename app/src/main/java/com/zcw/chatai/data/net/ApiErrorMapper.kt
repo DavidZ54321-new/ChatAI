@@ -15,16 +15,24 @@ object ApiErrorMapper {
             status == 400 && detail != null && isImageRelated(detail) ->
                 "该模型可能不支持图片，或图片格式/尺寸不受支持：$detail"
 
+            status == 400 && detail != null && isVideoRelated(detail) ->
+                "该模型可能不支持视频输入，或视频格式/大小不受支持：$detail"
+
             // 历史里工具应答缺失/错序导致的 400。组装层已能自动修复，重试即可。
             status == 400 && detail != null && isToolPairingRelated(detail) ->
                 "对话记录里的工具调用缺少应答（已自动修复），请重试：$detail"
 
             status == 400 -> detail ?: "请求格式有误（400）"
-            status == 401 -> "API Key 无效或已过期，请到设置里检查"
+            // 网关把「模型不支持 OpenAI 兼容面」也报成 401（实测 OpenCode Go 的 Grok/GPT），
+            // 不能一律说成 API Key 问题。
+            status == 401 && detail != null && isUnsupportedFormat(detail) ->
+                "该模型不支持当前接口格式（OpenAI 兼容面）：$detail"
+            status == 401 -> detail?.let { "API Key 无效或已过期：$it" }
+                ?: "API Key 无效或已过期，请到设置里检查"
             status == 402 -> "账户余额不足，请充值后重试"
             status == 403 -> detail ?: "没有访问权限（403）"
             status == 404 -> "接口不存在（404），请检查 Base URL 是否填写正确"
-            status == 413 -> "请求体过大，请减少图片数量或降低图片精度"
+            status == 413 -> "请求体过大，请减少图片/视频数量或降低图片精度"
             status == 422 -> "服务端不接受该参数：${detail ?: "参数错误（422）"}"
             status == 429 -> "请求过于频繁或已达速率上限，请稍后重试"
             status == 500 -> "服务端出错了（500），请稍后重试"
@@ -38,6 +46,20 @@ object ApiErrorMapper {
     fun isImageRelated(detail: String): Boolean {
         val lower = detail.lowercase()
         return "image" in lower || "图片" in detail || "vision" in lower
+    }
+
+    /** 视频相关的 400（例如 `video format is not supported` / 「不支持视频输入」）。 */
+    fun isVideoRelated(detail: String): Boolean {
+        val lower = detail.lowercase()
+        return "video" in lower || "视频" in detail
+    }
+
+    /** 模型/接口格式不匹配（例如 `Model grok-4.6 is not supported for format oa-compat`）。 */
+    fun isUnsupportedFormat(detail: String): Boolean {
+        val lower = detail.lowercase()
+        return "not supported for format" in lower ||
+            "unsupported model" in lower ||
+            "does not support" in lower
     }
 
     /** 工具应答缺失/错序导致的 400（`insufficient tool messages following tool_calls message`）。 */

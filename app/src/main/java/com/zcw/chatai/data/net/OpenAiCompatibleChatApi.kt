@@ -23,6 +23,8 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
 import okhttp3.MediaType
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.HttpUrl
@@ -53,9 +55,14 @@ class OpenAiCompatibleChatApi(
             ?: throw ChatApiException("请先在设置中填写 Base URL")
         val request = Request.Builder()
             .url(url)
+            .header("User-Agent", USER_AGENT)
             .apply {
                 if (config.apiKey.isNotEmpty()) {
                     header("Authorization", "Bearer ${config.apiKey}")
+                }
+                // Go 之类网关要求稳定会话头，缺了直接 400（实测）。
+                if (config.sendSessionHeader) {
+                    header("x-opencode-session", config.sessionId?.takeIf { it.isNotBlank() } ?: FALLBACK_SESSION)
                 }
             }
             .get()
@@ -64,12 +71,9 @@ class OpenAiCompatibleChatApi(
             client.newCall(request).execute().use { response ->
                 val body = response.body.string()
                 if (!response.isSuccessful) {
-                    val message = try {
-                        json.decodeFromString(ApiErrorEnvelope.serializer(), body).error.message
-                    } catch (t: Exception) {
-                        null
-                    }
-                    throw ChatApiException(ApiErrorMapper.httpError(response.code, message ?: body))
+                    throw ChatApiException(
+                        ApiErrorMapper.httpError(response.code, errorMessage(body) ?: body),
+                    )
                 }
                 val ids = try {
                     json.decodeFromString(ModelList.serializer(), body).data.map { it.id }
@@ -119,6 +123,7 @@ class OpenAiCompatibleChatApi(
         config: ChatConfig,
         messages: List<ChatRequestMessage>,
     ): Request {
+        val tools = WebTools.specsFor(config.enabledTools)
         val payload = ChatCompletionRequest(
             model = config.model,
             messages = buildList {
@@ -126,15 +131,16 @@ class OpenAiCompatibleChatApi(
                     add(RequestMessage("system", ChatRequestBody.content(config.systemPrompt, emptyList())))
                 }
                 messages.forEach { message ->
-                    // 图片只能出现在 user/tool 消息里，其它角色一律降级为纯文本。
+                    // 图片与视频只能出现在 user 消息里，其它角色一律降级为纯文本。
                     val images = if (message.role == ROLE_USER) message.images else emptyList()
+                    val videos = if (message.role == ROLE_USER) message.videos else emptyList()
                     add(
                         RequestMessage(
                             role = message.role,
                             content = if (message.toolCalls.isNotEmpty() && message.content.isEmpty()) {
                                 null
                             } else {
-                                ChatRequestBody.content(message.content, images)
+                                ChatRequestBody.content(message.content, images, videos)
                             },
                             toolCallId = message.toolCallId,
                             toolCalls = message.toolCalls.takeIf { it.isNotEmpty() }?.map {
@@ -152,16 +158,25 @@ class OpenAiCompatibleChatApi(
             reasoningEffort = config.reasoningEffort?.takeIf { it.isNotBlank() },
             maxTokens = config.maxTokens,
             streamOptions = if (config.includeUsage) StreamOptions(includeUsage = true) else null,
-            tools = if (config.webSearchEnabled) WebTools.specs() else null,
-            toolChoice = if (config.webSearchEnabled) JsonPrimitive("auto") else null,
+            tools = tools.takeIf { it.isNotEmpty() },
+            toolChoice = if (tools.isNotEmpty()) JsonPrimitive("auto") else null,
         )
         val body = ChatRequestBody.encode(json, payload, config.extraParams)
+        val usesOssMedia = messages.any { message -> message.videos.any { it.isOss } }
         return Request.Builder()
             .url(url)
             .header("Accept", "text/event-stream")
+            .header("User-Agent", USER_AGENT)
             .apply {
                 if (config.apiKey.isNotEmpty()) {
                     header("Authorization", "Bearer ${config.apiKey}")
+                }
+                if (config.sendSessionHeader) {
+                    header("x-opencode-session", config.sessionId?.takeIf { it.isNotBlank() } ?: FALLBACK_SESSION)
+                }
+                // 仅当本请求真的带 oss:// 视频时才加解析头，不给普通请求带厂商专有头。
+                if (usesOssMedia) {
+                    header("X-DashScope-OssResourceResolve", "enable")
                 }
             }
             .post(body.toRequestBody(JSON_MEDIA_TYPE))
@@ -174,15 +189,30 @@ class OpenAiCompatibleChatApi(
         } catch (t: Exception) {
             null
         }
-        val apiMessage = body?.let { text ->
-            try {
-                json.decodeFromString(ApiErrorEnvelope.serializer(), text).error.message
-            } catch (t: Exception) {
-                null
-            }
-        }
-        val detail = apiMessage?.takeIf { it.isNotBlank() } ?: body
+        val detail = body?.let { messageOrNull(it) } ?: body
         return ApiErrorMapper.httpError(response.code, detail)
+    }
+
+    /**
+     * 错误体里取可读 message：优先标准 `{"error":{"message"}}`，
+     * 兜底顶层 `{"message"}`（部分网关的校验错误是这样）。
+     */
+    private fun errorMessage(body: String): String? = messageOrNull(body)
+
+    private fun messageOrNull(body: String?): String? {
+        if (body.isNullOrBlank()) return null
+        val envelope = try {
+            json.decodeFromString(ApiErrorEnvelope.serializer(), body).error.message
+        } catch (t: Exception) {
+            null
+        }
+        if (!envelope.isNullOrBlank()) return envelope
+        return try {
+            val root = json.parseToJsonElement(body).jsonObject
+            (root["message"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+        } catch (t: Exception) {
+            null
+        }
     }
 
     private inner class StreamListener(
@@ -264,6 +294,13 @@ class OpenAiCompatibleChatApi(
         private const val ROLE_USER = "user"
         private const val ROLE_ASSISTANT = "assistant"
         private const val DONE_DATA = "[DONE]"
+
+        /** 客户端标识（Go 等网关要求客户端自报身份，别用通用 SDK 名）。 */
+        const val USER_AGENT = "ChatAI/1.0"
+
+        /** 会话头缺失时的兜底值（模型列表等无会话上下文的请求用）。 */
+        const val FALLBACK_SESSION = "chatai"
+
         private val JSON_MEDIA_TYPE: MediaType = "application/json".toMediaType()
 
         fun defaultClient(): OkHttpClient = OkHttpClient.Builder()

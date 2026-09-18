@@ -31,6 +31,15 @@ class ChatMetricsTest {
     }
 
     @Test
+    fun markdownImageRowSizesFollowViewportWidth() {
+        // Pixel 6a：411dp 视窗 → 高 172.62dp、单张最大宽 328.8dp。
+        assertEquals(172.62f, ChatMetrics.markdownImageHeight(411.dp).value, 0.001f)
+        assertEquals(328.8f, ChatMetrics.markdownImageMaxWidth(411.dp).value, 0.001f)
+        assertEquals(1.dp, ChatMetrics.markdownImageHeight(0.dp))
+        assertEquals(1.dp, ChatMetrics.markdownImageMaxWidth(0.dp))
+    }
+
+    @Test
     fun degenerateWindowStillGivesPositiveSize() {
         assertEquals(1.dp, ChatMetrics.thumbnailSide(0.dp))
         val tinyTop = ChatMetrics.topDissolve(0.dp, 0.dp)

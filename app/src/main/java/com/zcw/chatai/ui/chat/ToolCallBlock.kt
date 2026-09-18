@@ -1,6 +1,7 @@
 package com.zcw.chatai.ui.chat
 
 import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -8,6 +9,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.Icon
@@ -16,26 +20,32 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.zcw.chatai.data.model.SearchedImage
+import com.zcw.chatai.data.model.ToolKind
 import com.zcw.chatai.data.model.ToolResult
 import com.zcw.chatai.data.model.ToolStatus
+import com.zcw.chatai.ui.theme.ChatTheme
 
 /**
- * 一次工具调用的内联可折叠块：标题 + 查询/URL + 来源列表。
+ * 一次工具调用的内联可折叠块：标题 + 查询/URL + 来源列表（图搜则是缩略图网格）。
  * 折叠模式沿用 [ReasoningBlock]：无背景、无边框，就是正文上方的一行。
  */
 @Composable
 fun ToolCallBlock(result: ToolResult, modifier: Modifier = Modifier) {
     val scheme = MaterialTheme.colorScheme
     var expanded by rememberSaveable { mutableStateOf(false) }
-    val isFetch = result.detail.startsWith("http") || result.detail.startsWith("正在抓取")
-    val title = if (isFetch) "网页抓取" else "联网搜索"
+    var preview by remember { mutableStateOf<SearchedImage?>(null) }
+    val title = toolTitle(result)
     Column(modifier = modifier.fillMaxWidth().animateContentSize()) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -77,6 +87,28 @@ fun ToolCallBlock(result: ToolResult, modifier: Modifier = Modifier) {
             )
         }
         if (expanded) {
+            if (result.images.isNotEmpty()) {
+                LazyRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 8.dp, top = 4.dp, bottom = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    items(items = result.images, key = { it.url }) { image ->
+                        RemoteImage(
+                            url = image.url,
+                            contentDescription = image.title.ifBlank { "搜索结果图片" },
+                            maxEdge = 512,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .size(92.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(ChatTheme.colors.surfaceSoft)
+                                .clickable { preview = image },
+                        )
+                    }
+                }
+            }
             result.sources.forEach { source ->
                 Text(
                     text = source.title ?: source.url,
@@ -99,4 +131,20 @@ fun ToolCallBlock(result: ToolResult, modifier: Modifier = Modifier) {
             }
         }
     }
+    preview?.let { image ->
+        RemoteImagePreviewDialog(
+            url = image.url,
+            title = image.title.takeIf { it.isNotBlank() },
+            onDismiss = { preview = null },
+        )
+    }
+}
+
+private fun toolTitle(result: ToolResult): String = when (result.kind) {
+    ToolKind.FETCH -> "网页抓取"
+    ToolKind.IMAGE_SEARCH -> "文搜图"
+    ToolKind.IMAGE_SIMILAR -> "以图搜图"
+    // 旧数据没有 kind：沿用升级前的启发式（抓取行的 detail 是 URL / 「正在抓取」）。
+    ToolKind.SEARCH ->
+        if (result.detail.startsWith("http") || result.detail.startsWith("正在抓取")) "网页抓取" else "联网搜索"
 }

@@ -11,4 +11,6 @@ data class Conversation(
     val messageCount: Int,
     val isPinned: Boolean,
     val webSearchEnabled: Boolean = false,
+    /** 绑定的供应商 id；决定用哪套连接配置与原生工具。空串 = 跟随当前激活供应商。 */
+    val providerId: String = "",
 )

@@ -2,6 +2,7 @@ package com.zcw.chatai.data
 
 import androidx.room.withTransaction
 import com.zcw.chatai.data.ai.AgentLoop
+import com.zcw.chatai.data.ai.AttachmentRetention
 import com.zcw.chatai.data.ai.ContextBuilder
 import com.zcw.chatai.data.ai.StreamAccumulator
 import com.zcw.chatai.data.ai.ToolCallAccumulator
@@ -15,7 +16,9 @@ import com.zcw.chatai.data.db.toModel
 import com.zcw.chatai.data.media.AttachmentLimits
 import com.zcw.chatai.data.media.AttachmentStore
 import com.zcw.chatai.data.media.ImageCodec
+import com.zcw.chatai.data.media.VideoUploadCoordinator
 import com.zcw.chatai.data.model.Attachment
+import com.zcw.chatai.data.model.AttachmentKind
 import com.zcw.chatai.data.model.ChatConfig
 import com.zcw.chatai.data.model.Conversation
 import com.zcw.chatai.data.model.ConversationTitle
@@ -23,14 +26,21 @@ import com.zcw.chatai.data.model.Message
 import com.zcw.chatai.data.model.MessageStatus
 import com.zcw.chatai.data.model.Role
 import com.zcw.chatai.data.model.ToolCall
+import com.zcw.chatai.data.model.ToolKind
 import com.zcw.chatai.data.model.ToolResult
 import com.zcw.chatai.data.model.ToolStatus
 import com.zcw.chatai.data.net.ApiErrorMapper
 import com.zcw.chatai.data.net.ChatApi
 import com.zcw.chatai.data.net.ChatApiException
+import com.zcw.chatai.data.net.ChatRequestVideo
 import com.zcw.chatai.data.net.ChatStreamEvent
+import com.zcw.chatai.data.prefs.ChatSettings
 import com.zcw.chatai.data.prefs.SettingsRepository
+import com.zcw.chatai.data.prefs.toChatConfig
+import com.zcw.chatai.data.provider.ProviderCatalog
+import com.zcw.chatai.data.provider.ToolBackendResolver
 import com.zcw.chatai.data.web.HttpWebFetcher
+import com.zcw.chatai.data.web.ImageSearchProvider
 import com.zcw.chatai.data.web.WebFetcher
 import com.zcw.chatai.data.web.WebSearchProvider
 import com.zcw.chatai.data.web.WebTools
@@ -100,7 +110,12 @@ class ChatRepository(
     private val settingsRepository: SettingsRepository,
     private val api: ChatApi,
     private val attachmentStore: AttachmentStore,
-    private val searchProvider: WebSearchProvider? = null,
+    /** 按供应商 id 选搜索后端；会话绑定哪个供应商就用哪个。 */
+    private val searchProviders: Map<String, WebSearchProvider> = emptyMap(),
+    /** 按供应商 id 选图搜后端（文搜图/以图搜图）。 */
+    private val imageProviders: Map<String, ImageSearchProvider> = emptyMap(),
+    /** 视频附件解析器（内联/上传/崩溃恢复）；未注入时视频消息会给出可读错误。 */
+    private val videoUploadCoordinator: VideoUploadCoordinator? = null,
     private val webFetcher: WebFetcher = HttpWebFetcher(),
     private val turnForeground: TurnForeground = TurnForeground.NoOp,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
@@ -119,6 +134,11 @@ class ChatRepository(
     private val _errors = MutableStateFlow<RepoError?>(null)
 
     val errors: StateFlow<RepoError?> = _errors.asStateFlow()
+
+    /** 视频上传进度（会话 → 一行提示）；非空时 UI 显示「正在上传视频…」。 */
+    private val _videoUploads = MutableStateFlow<Map<String, String>>(emptyMap())
+
+    val videoUploads: StateFlow<Map<String, String>> = _videoUploads.asStateFlow()
 
     fun consumeError() {
         _errors.value = null
@@ -171,19 +191,21 @@ class ChatRepository(
 
     suspend fun createConversation(model: String? = null): String {
         val settings = settingsRepository.settings.first()
+        val entry = settings.activeProvider
         val id = newId()
         val timestamp = nowMs()
         db.conversationDao().upsert(
             ConversationEntity(
                 id = id,
                 title = ConversationTitle.FALLBACK,
-                model = model?.takeIf { it.isNotBlank() } ?: settings.model,
+                model = model?.takeIf { it.isNotBlank() } ?: entry.model,
                 systemPrompt = null,
                 createdAt = timestamp,
                 updatedAt = timestamp,
                 lastMessagePreview = "",
                 messageCount = 0,
                 isPinned = false,
+                providerId = settings.activeProviderId,
             ),
         )
         return id
@@ -408,24 +430,194 @@ class ChatRepository(
     }
 
     private suspend fun startAssistant(conversationId: String) {
-        val config = resolveConfig(conversationId)
-        val toolsUsable = config.webSearchEnabled &&
-            searchProvider?.available(config.baseUrl, config.apiKey) == true
+        val settings = settingsRepository.settings.first()
+        val config = resolveConfig(settings, conversationId) ?: return
+        // 工具后端与主对话供应商解耦（借道）：搜索/图搜各自的供应商与模型。
+        val toolContexts = toolBackendContexts(settings, config)
+        // 预检门禁：所有会出站的视频先归位（内联/复用/上传），全部成功才发请求。
+        val resolvedVideos = resolvePendingVideos(conversationId, config) ?: return
         try {
-            runAgentTurn(conversationId, config.copy(webSearchEnabled = toolsUsable))
+            runAgentTurn(
+                conversationId = conversationId,
+                config = config.copy(enabledTools = resolveEnabledTools(config, toolContexts)),
+                resolvedVideos = resolvedVideos,
+                toolContexts = toolContexts,
+            )
         } finally {
             // 回合收尾（含取消）也落定一次：不把缺应答的 tool_calls 留给下一条消息。
             withContext(NonCancellable) { reconcileUnansweredToolCalls(conversationId) }
         }
     }
 
-    private suspend fun resolveConfig(conversationId: String): ChatConfig {
-        val base = settingsRepository.chatConfig().first()
+    /** 工具后端（借道）的运行时上下文：供应商 id + 它自己的请求配置（含模型）。 */
+    private data class ToolBackendContexts(
+        val text: ToolBackend?,
+        val image: ToolBackend?,
+    ) {
+        data class ToolBackend(val providerId: String, val config: ChatConfig)
+    }
+
+    private fun toolBackendContexts(settings: ChatSettings, config: ChatConfig): ToolBackendContexts {
+        val ids = ToolBackendResolver.resolve(
+            providers = settings.providers,
+            activeProviderId = settings.activeProviderId,
+            conversationProviderId = config.providerId,
+            preferredSearchProviderId = settings.searchProviderId,
+        )
+        fun backend(id: String?): ToolBackendContexts.ToolBackend? = id?.let { providerId ->
+            settings.providers[providerId]?.let { entry ->
+                ToolBackendContexts.ToolBackend(
+                    providerId = providerId,
+                    config = settings.toChatConfig(providerId).copy(
+                        baseUrl = entry.baseUrl,
+                        apiKey = entry.apiKey,
+                        model = entry.model,
+                    ),
+                )
+            }
+        }
+        return ToolBackendContexts(text = backend(ids.textProviderId), image = backend(ids.imageProviderId))
+    }
+
+    /**
+     * 本回合注入哪些工具：🌐 开着才注入；按**工具后端**（不是会话供应商）的可用性拼名单。
+     * 搜文字、图搜、抓取三者独立，任何一个后端不可用都不影响其余工具。
+     */
+    private fun resolveEnabledTools(config: ChatConfig, contexts: ToolBackendContexts): List<String> {
+        if (!config.webSearchEnabled) return emptyList()
+        val textAvailable = contexts.text?.let { backend ->
+            searchProviders[backend.providerId]?.available(backend.config.baseUrl, backend.config.apiKey) == true
+        } == true
+        val imageAvailable = contexts.image?.let { backend ->
+            imageProviders[backend.providerId]?.available(backend.config.baseUrl, backend.config.apiKey) == true
+        } == true
+        if (!textAvailable && !imageAvailable) return emptyList()
+        return buildList {
+            if (textAvailable) add(WebTools.SEARCH)
+            if (imageAvailable) {
+                add(WebTools.SEARCH_IMAGES)
+                add(WebTools.FIND_SIMILAR_IMAGES)
+            }
+            // 抓取是纯客户端实现：既然已经开了联网工具，就一并提供。
+            add(WebTools.FETCH)
+        }
+    }
+
+    /**
+     * 预检门禁：本回合会出站的所有视频先归位（内联/复用/上传），全部成功才返回。
+     * 任一步失败 → 落一条 ERROR 助手消息（**不发请求**），重试/重新生成会续传。
+     */
+    private suspend fun resolvePendingVideos(
+        conversationId: String,
+        config: ChatConfig,
+    ): Map<String, ChatRequestVideo>? {
+        val coordinator = videoUploadCoordinator
+        if (coordinator == null) {
+            val hasVideo = db.messageDao().getByConversation(conversationId)
+                .any { entity -> AttachmentCodec.decode(entity.attachments).any { it.kind == AttachmentKind.VIDEO } }
+            if (!hasVideo) return emptyMap()
+            failTurn(conversationId, "当前版本不支持视频输入")
+            return null
+        }
+        val messages = db.messageDao().getByConversation(conversationId).map { it.toModel() }
+        val kept = AttachmentRetention.keptMessageIds(messages, config.historyImageLimit)
+        val videoMessages = messages.filter { message ->
+            message.id in kept && message.attachments.any { it.kind == AttachmentKind.VIDEO }
+        }
+        if (videoMessages.isEmpty()) return emptyMap()
+        // 能力门禁：会话绑定的供应商不支持视频时，UI 本不该给出视频入口；
+        // 这里兜底（例如切换过激活供应商/改过绑定），不发注定 400 的请求。
+        if (!ProviderCatalog.supportsVideo(config.providerId)) {
+            failTurn(
+                conversationId,
+                "当前供应商「${ProviderCatalog.displayName(config.providerId)}」不支持视频输入，请切换供应商或移除视频",
+            )
+            return null
+        }
+
+        val total = videoMessages.sumOf { message ->
+            message.attachments.count { it.kind == AttachmentKind.VIDEO }
+        }
+        var done = 0
+        val resolved = HashMap<String, ChatRequestVideo>()
+        try {
+            _videoUploads.update { it + (conversationId to "正在处理视频 0/$total…") }
+            for (message in videoMessages) {
+                var current = message.attachments
+                for (original in message.attachments.filter { it.kind == AttachmentKind.VIDEO }) {
+                    val attachment = current.firstOrNull { it.id == original.id } ?: continue
+                    done++
+                    _videoUploads.update { it + (conversationId to "正在处理视频 $done/$total…") }
+                    val (wire, updated) = coordinator.resolve(config, attachment) { pending ->
+                        current = current.replaceAttachment(attachment.id, pending)
+                        db.messageDao().updateAttachments(message.id, AttachmentCodec.encode(current), nowMs())
+                    }
+                    resolved[attachment.id] = wire
+                    if (updated != attachment) {
+                        current = current.replaceAttachment(attachment.id, updated)
+                        db.messageDao().updateAttachments(message.id, AttachmentCodec.encode(current), nowMs())
+                    }
+                }
+            }
+            return resolved
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (t: Throwable) {
+            failTurn(conversationId, t.message?.takeIf { it.isNotBlank() } ?: "视频处理失败")
+            return null
+        } finally {
+            _videoUploads.update { it - conversationId }
+        }
+    }
+
+    private fun List<Attachment>.replaceAttachment(id: String, updated: Attachment): List<Attachment> =
+        map { if (it.id == id) updated else it }
+
+    /** 预检失败：落一条可见的 ERROR 助手消息（消息还在，用户可直接重试）。 */
+    private suspend fun failTurn(conversationId: String, text: String) {
+        val timestamp = nowMs()
+        db.messageDao().upsert(
+            MessageEntity(
+                id = newId(),
+                conversationId = conversationId,
+                role = Role.ASSISTANT.name,
+                content = "",
+                status = MessageStatus.ERROR.name,
+                errorMessage = "$text（消息已保留，可直接重试）",
+                reasoningContent = null,
+                seq = db.messageDao().nextSeq(conversationId),
+                model = null,
+                promptTokens = null,
+                completionTokens = null,
+                createdAt = timestamp,
+                updatedAt = timestamp,
+            ),
+        )
+        refreshSummary(conversationId)
+    }
+
+    /**
+     * 会话的请求配置：连接参数按会话绑定的供应商取，生成参数仍是全局。
+     * 供应商已被删除 → 给可读错误并返回 null（不向错误端点发请求）。
+     */
+    private suspend fun resolveConfig(settings: ChatSettings, conversationId: String): ChatConfig? {
         val conversation = db.conversationDao().getById(conversationId)
+        val providerId = conversation?.providerId?.takeIf { it.isNotBlank() }
+            ?: settings.activeProviderId
+        if (providerId !in settings.providers) {
+            _errors.value = RepoError(
+                conversationId,
+                "该会话绑定的供应商「${ProviderCatalog.displayName(providerId)}」已被删除，请到设置里重新配置",
+            )
+            return null
+        }
+        val base = settings.toChatConfig(providerId)
         return base.copy(
             model = conversation?.model?.takeIf { it.isNotBlank() } ?: base.model,
             systemPrompt = conversation?.systemPrompt?.takeIf { it.isNotBlank() } ?: base.systemPrompt,
             webSearchEnabled = conversation?.webSearchEnabled == true,
+            // 网关要求稳定会话 id（Go 实测缺了 400）；用会话 id 最自然。
+            sessionId = conversationId,
         )
     }
 
@@ -444,7 +636,12 @@ class ChatRepository(
      * 有界 Agent 循环：每一步一条 assistant 消息；模型要工具就串行执行、落 TOOL 行、再流式。
      * 预算耗尽时先执行完最后一批工具（保持历史合法），再不带工具强制收尾。
      */
-    private suspend fun runAgentTurn(conversationId: String, config: ChatConfig) {
+    private suspend fun runAgentTurn(
+        conversationId: String,
+        config: ChatConfig,
+        resolvedVideos: Map<String, ChatRequestVideo>,
+        toolContexts: ToolBackendContexts,
+    ) {
         reconcileUnansweredToolCalls(conversationId)
         var steps = 0
         while (true) {
@@ -473,19 +670,20 @@ class ChatRepository(
             val outcome = streamOnce(
                 conversationId = conversationId,
                 messageId = messageId,
-                config = if (forceFinal) config.copy(webSearchEnabled = false) else config,
+                config = if (forceFinal) config.copy(enabledTools = emptyList()) else config,
                 history = history,
+                resolvedVideos = resolvedVideos,
             )
             if (outcome.failed) return
             val decision = AgentLoop.decide(outcome.finishReason, outcome.toolCalls, steps, config.maxAgentSteps)
             when (decision) {
                 is AgentLoop.Decision.Continue -> {
-                    executeTools(conversationId, config, decision.toolCalls)
+                    executeTools(conversationId, config, decision.toolCalls, toolContexts)
                     steps++
                 }
 
                 AgentLoop.Decision.ForceFinal -> {
-                    executeTools(conversationId, config, outcome.toolCalls)
+                    executeTools(conversationId, config, outcome.toolCalls, toolContexts)
                     steps++
                 }
 
@@ -504,11 +702,17 @@ class ChatRepository(
         messageId: String,
         config: ChatConfig,
         history: List<Message>,
+        resolvedVideos: Map<String, ChatRequestVideo>,
     ): TurnOutcome {
         val messages = withContext(Dispatchers.IO) {
-            ContextBuilder.build(history, config.historyImageLimit) { attachment ->
-                attachmentStore.toRequestImage(attachment, config.imageDetail)
-            }
+            ContextBuilder.build(
+                history = history,
+                imageLimit = config.historyImageLimit,
+                imageProvider = { attachment ->
+                    attachmentStore.toRequestImage(attachment, config.imageDetail)
+                },
+                videoProvider = { attachment -> resolvedVideos[attachment.id] },
+            )
         }
         // 计时从这里开始（含首 token 延迟），和 UI 上「已深度思考」的口径一致。
         val accumulator = StreamAccumulator(startedAt = elapsedMs())
@@ -574,7 +778,12 @@ class ChatRepository(
         )
     }
 
-    private suspend fun executeTools(conversationId: String, config: ChatConfig, calls: List<ToolCall>) {
+    private suspend fun executeTools(
+        conversationId: String,
+        config: ChatConfig,
+        calls: List<ToolCall>,
+        toolContexts: ToolBackendContexts,
+    ) {
         for (call in calls) {
             val toolMessageId = newId()
             val timestamp = nowMs()
@@ -601,7 +810,7 @@ class ChatRepository(
             )
             var cancellation: CancellationException? = null
             val result = try {
-                runTool(call, config)
+                runTool(conversationId, call, toolContexts)
             } catch (c: CancellationException) {
                 cancellation = c
                 ToolResult(status = ToolStatus.FAILED, detail = call.name, text = TOOL_CANCELLED_TEXT)
@@ -622,38 +831,108 @@ class ChatRepository(
         }
     }
 
-    private suspend fun runTool(call: ToolCall, config: ChatConfig): ToolResult = when (call.name) {
+    private suspend fun runTool(
+        conversationId: String,
+        call: ToolCall,
+        toolContexts: ToolBackendContexts,
+    ): ToolResult = when (call.name) {
         WebTools.SEARCH -> {
             val query = WebTools.queryOf(call.arguments)
-                ?: return ToolResult(ToolStatus.FAILED, call.name, text = "缺少搜索词")
-            val provider = searchProvider
-                ?: return ToolResult(ToolStatus.FAILED, query, text = "未配置联网搜索后端")
-            val result = provider.search(query, WebTools.DEFAULT_MAX_RESULTS, config)
+                ?: return ToolResult(ToolStatus.FAILED, call.name, text = "缺少搜索词", kind = ToolKind.SEARCH)
+            val backend = toolContexts.text
+                ?: return ToolResult(ToolStatus.FAILED, query, text = "未配置联网搜索后端", kind = ToolKind.SEARCH)
+            val provider = searchProviders[backend.providerId]
+                ?: return ToolResult(ToolStatus.FAILED, query, text = "未配置联网搜索后端", kind = ToolKind.SEARCH)
+            val result = provider.search(query, WebTools.DEFAULT_MAX_RESULTS, backend.config)
             ToolResult(
                 status = ToolStatus.OK,
                 detail = query,
                 sources = result.sources,
                 text = WebTools.formatSearchResult(query, result),
+                kind = ToolKind.SEARCH,
             )
         }
 
         WebTools.FETCH -> {
             val url = WebTools.urlOf(call.arguments)
-                ?: return ToolResult(ToolStatus.FAILED, call.name, text = "缺少 URL")
+                ?: return ToolResult(ToolStatus.FAILED, call.name, text = "缺少 URL", kind = ToolKind.FETCH)
             val result = webFetcher.fetch(url)
             ToolResult(
                 status = if (result.statusCode in 200..299) ToolStatus.OK else ToolStatus.FAILED,
                 detail = url,
                 text = WebTools.formatFetchResult(result),
+                kind = ToolKind.FETCH,
+            )
+        }
+
+        WebTools.SEARCH_IMAGES -> {
+            val query = WebTools.queryOf(call.arguments)
+                ?: return ToolResult(ToolStatus.FAILED, call.name, text = "缺少搜索词", kind = ToolKind.IMAGE_SEARCH)
+            val backend = toolContexts.image
+                ?: return ToolResult(ToolStatus.FAILED, query, text = "未配置图搜后端（需要通义千问）", kind = ToolKind.IMAGE_SEARCH)
+            val provider = imageProviders[backend.providerId]
+                ?: return ToolResult(ToolStatus.FAILED, query, text = "未配置图搜后端（需要通义千问）", kind = ToolKind.IMAGE_SEARCH)
+            val outcome = provider.searchByText(query, WebTools.DEFAULT_IMAGE_RESULTS, backend.config)
+            ToolResult(
+                status = ToolStatus.OK,
+                detail = query,
+                text = WebTools.formatImageSearchResult(query, outcome.images),
+                kind = ToolKind.IMAGE_SEARCH,
+                images = outcome.images,
+            )
+        }
+
+        WebTools.FIND_SIMILAR_IMAGES -> {
+            val backend = toolContexts.image
+                ?: return ToolResult(
+                    ToolStatus.FAILED,
+                    "以图搜图",
+                    text = "未配置图搜后端（需要通义千问）",
+                    kind = ToolKind.IMAGE_SIMILAR,
+                )
+            val provider = imageProviders[backend.providerId]
+                ?: return ToolResult(
+                    ToolStatus.FAILED,
+                    "以图搜图",
+                    text = "未配置图搜后端（需要通义千问）",
+                    kind = ToolKind.IMAGE_SIMILAR,
+                )
+            val dataUrl = latestImageDataUrl(conversationId)
+                ?: return ToolResult(
+                    ToolStatus.FAILED,
+                    "以图搜图",
+                    text = "当前会话里没有可用的图片，请先发送一张图片",
+                    kind = ToolKind.IMAGE_SIMILAR,
+                )
+            val outcome = provider.searchByImage(dataUrl, null, WebTools.DEFAULT_IMAGE_RESULTS, backend.config)
+            ToolResult(
+                status = ToolStatus.OK,
+                detail = "以图搜图",
+                text = WebTools.formatImageSearchResult("以图搜图", outcome.images),
+                kind = ToolKind.IMAGE_SIMILAR,
+                images = outcome.images,
             )
         }
 
         else -> ToolResult(ToolStatus.FAILED, call.name, text = "未知工具：${call.name}")
     }
 
+    /** 会话里最近一张用户图片的内联 data URL（以图搜图的输入）；没有则 null。 */
+    private suspend fun latestImageDataUrl(conversationId: String): String? {
+        val attachment = db.messageDao().getByConversation(conversationId)
+            .asReversed()
+            .asSequence()
+            .flatMap { it.toModel().attachments.asSequence() }
+            .firstOrNull { it.kind == AttachmentKind.IMAGE }
+            ?: return null
+        return attachmentStore.toRequestImage(attachment, null)?.dataUrl
+    }
+
     private fun activityLabel(call: ToolCall): String = when (call.name) {
         WebTools.SEARCH -> "正在联网搜索：${WebTools.queryOf(call.arguments).orEmpty()}"
         WebTools.FETCH -> "正在抓取网页：${WebTools.urlOf(call.arguments).orEmpty()}"
+        WebTools.SEARCH_IMAGES -> "正在搜索图片：${WebTools.queryOf(call.arguments).orEmpty()}"
+        WebTools.FIND_SIMILAR_IMAGES -> "正在以图搜图…"
         else -> "正在调用 ${call.name}"
     }
 
@@ -720,8 +999,9 @@ class ChatRepository(
 
     /** 中断占位的可读标签：搜索显示词、抓取显示 URL，其余显示工具名。 */
     private fun interruptedDetail(call: ToolCall): String = when (call.name) {
-        WebTools.SEARCH -> WebTools.queryOf(call.arguments) ?: call.name
+        WebTools.SEARCH, WebTools.SEARCH_IMAGES -> WebTools.queryOf(call.arguments) ?: call.name
         WebTools.FETCH -> WebTools.urlOf(call.arguments) ?: call.name
+        WebTools.FIND_SIMILAR_IMAGES -> "以图搜图"
         else -> call.name
     }
 

@@ -5,11 +5,17 @@ import android.content.pm.ApplicationInfo
 import com.zcw.chatai.data.ChatRepository
 import com.zcw.chatai.data.db.AppDatabase
 import com.zcw.chatai.data.media.AttachmentStore
+import com.zcw.chatai.data.media.VideoUploadCoordinator
 import com.zcw.chatai.data.net.ChatApi
+import com.zcw.chatai.data.net.DashScopeUpload
 import com.zcw.chatai.data.net.OpenAiCompatibleChatApi
 import com.zcw.chatai.data.prefs.SettingsRepository
+import com.zcw.chatai.data.provider.ProviderCatalog
 import com.zcw.chatai.data.web.DeepSeekNativeSearchProvider
 import com.zcw.chatai.data.web.HttpWebFetcher
+import com.zcw.chatai.data.web.ImageSearchProvider
+import com.zcw.chatai.data.web.QwenImageSearchProvider
+import com.zcw.chatai.data.web.QwenWebSearchProvider
 import com.zcw.chatai.data.web.WebFetcher
 import com.zcw.chatai.data.web.WebSearchProvider
 import com.zcw.chatai.util.MainThreadWatchdog
@@ -31,9 +37,26 @@ class ChatAiApp : Application() {
 
     val attachmentStore: AttachmentStore by lazy { AttachmentStore(this) }
 
-    val webSearchProvider: WebSearchProvider by lazy { DeepSeekNativeSearchProvider() }
+    /** 按供应商选搜索后端：DeepSeek 走 Anthropic 兼容面，Qwen 走 Responses 原生工具。 */
+    val webSearchProviders: Map<String, WebSearchProvider> by lazy {
+        mapOf(
+            ProviderCatalog.DEEPSEEK to DeepSeekNativeSearchProvider(),
+            ProviderCatalog.QWEN to QwenWebSearchProvider(),
+        )
+    }
+
+    /** 图搜后端（文搜图/以图搜图）：目前只有 Qwen 的 Responses 原生工具。 */
+    val imageSearchProviders: Map<String, ImageSearchProvider> by lazy {
+        mapOf(ProviderCatalog.QWEN to QwenImageSearchProvider())
+    }
 
     val webFetcher: WebFetcher by lazy { HttpWebFetcher() }
+
+    val dashScopeUpload: DashScopeUpload by lazy { DashScopeUpload() }
+
+    val videoUploadCoordinator: VideoUploadCoordinator by lazy {
+        VideoUploadCoordinator(attachmentStore, dashScopeUpload)
+    }
 
     val chatRepository: ChatRepository by lazy {
         ChatRepository(
@@ -41,7 +64,9 @@ class ChatAiApp : Application() {
             settingsRepository = settingsRepository,
             api = chatApi,
             attachmentStore = attachmentStore,
-            searchProvider = webSearchProvider,
+            searchProviders = webSearchProviders,
+            imageProviders = imageSearchProviders,
+            videoUploadCoordinator = videoUploadCoordinator,
             webFetcher = webFetcher,
             turnForeground = ChatTurnForeground(this),
         )

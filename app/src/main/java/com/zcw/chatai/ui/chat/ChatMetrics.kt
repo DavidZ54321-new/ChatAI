@@ -27,10 +27,25 @@ object ChatMetrics {
     /** [FloatingTopControls]：上下 6.dp padding + 44.dp 按钮。 */
     val TOP_BAR_CONTENT: Dp = 56.dp
 
+    /** markdown 图行里单张图的高度 = 视窗宽 42%（与块级公式一样横向滚动）。 */
+    const val MARKDOWN_IMAGE_HEIGHT_FRACTION = 0.42f
+
+    /** 图行里单张图的最大宽度 = 视窗宽 80%（超宽的一行只能滑一张）。 */
+    const val MARKDOWN_IMAGE_MAX_WIDTH_FRACTION = 0.8f
+
+    /** 加载占位的最小宽度，避免行内出现「什么都没有」的空档。 */
+    val MARKDOWN_IMAGE_MIN_WIDTH: Dp = 120.dp
+
     data class DissolveBand(val height: Dp, val opaqueStop: Float)
 
     fun thumbnailSide(windowWidth: Dp): Dp =
         (windowWidth * THUMB_FRACTION).coerceAtLeast(1.dp)
+
+    fun markdownImageHeight(windowWidth: Dp): Dp =
+        (windowWidth * MARKDOWN_IMAGE_HEIGHT_FRACTION).coerceAtLeast(1.dp)
+
+    fun markdownImageMaxWidth(windowWidth: Dp): Dp =
+        (windowWidth * MARKDOWN_IMAGE_MAX_WIDTH_FRACTION).coerceAtLeast(1.dp)
 
     fun topDissolve(windowHeight: Dp, statusBar: Dp): DissolveBand {
         val tail = (windowHeight * TOP_DISSOLVE_TAIL_FRACTION).coerceAtLeast(1.dp)

@@ -17,6 +17,24 @@ class ApiErrorMapperTest {
         assertTrue(ApiErrorMapper.httpError(404, null).contains("Base URL"))
     }
 
+    /** 回归：网关把「模型不支持 OpenAI 兼容面」也报成 401（实测 OpenCode Go 的 Grok）。 */
+    @Test
+    fun doesNotBlameApiKeyForUnsupportedModelFormat() {
+        val message = ApiErrorMapper.httpError(
+            401,
+            "Model grok-4.6 is not supported for format oa-compat",
+        )
+        assertTrue(message, message.contains("不支持当前接口格式"))
+        assertFalse(message, message.contains("API Key 无效"))
+    }
+
+    @Test
+    fun keepsDetailForRealUnauthorized() {
+        val message = ApiErrorMapper.httpError(401, "Authentication Fails, Your api key is invalid")
+        assertTrue(message, message.contains("API Key 无效"))
+        assertTrue(message, message.contains("Authentication Fails"))
+    }
+
     @Test
     fun keepsServerMessageForBadRequest() {
         val message = ApiErrorMapper.httpError(400, "model not found")
@@ -91,5 +109,18 @@ class ApiErrorMapperTest {
         assertTrue(ApiErrorMapper.isImageRelated("Image in system message is unsupported"))
         assertTrue(ApiErrorMapper.isImageRelated("图片格式不受支持"))
         assertFalse(ApiErrorMapper.isImageRelated("invalid api key"))
+    }
+
+    @Test
+    fun flagsVideoRelatedBadRequest() {
+        val message = ApiErrorMapper.httpError(400, "The video format is not supported for this model")
+        assertTrue(message, message.contains("不支持视频"))
+    }
+
+    @Test
+    fun detectsVideoRelatedMessages() {
+        assertTrue(ApiErrorMapper.isVideoRelated("unsupported video format"))
+        assertTrue(ApiErrorMapper.isVideoRelated("不支持视频输入"))
+        assertFalse(ApiErrorMapper.isVideoRelated("invalid api key"))
     }
 }

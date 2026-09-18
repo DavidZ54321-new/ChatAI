@@ -9,13 +9,13 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.zcw.chatai.data.model.ChatConfig
+import com.zcw.chatai.data.provider.ProviderCatalog
+import com.zcw.chatai.data.provider.ProviderConfigCodec
+import com.zcw.chatai.data.provider.ProviderEntry
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
 enum class ThemeMode { SYSTEM, LIGHT, DARK }
-
-/** 图片能力：AUTO 用启发式表判断，其余为用户手动覆盖。 */
-enum class VisionOverride { AUTO, SUPPORTED, UNSUPPORTED }
 
 /** 思考强度：标准 `reasoning_effort` 字段；FOLLOW_DEFAULT 表示不发送该字段。 */
 enum class ReasoningEffort(val wire: String?) {
@@ -33,10 +33,15 @@ enum class ImageDetail(val wire: String?) {
     HIGH("high"),
 }
 
+/**
+ * 连接配置按供应商分表（[providers] + [activeProviderId]），生成参数保持全局。
+ * 旧版本的单套 baseUrl/apiKey/model 会在首次读取时懒迁移进 [providers]。
+ */
 data class ChatSettings(
-    val baseUrl: String,
-    val apiKey: String,
-    val model: String,
+    val providers: Map<String, ProviderEntry>,
+    val activeProviderId: String,
+    /** 联网搜索后端（null = 跟随会话，见 `ToolBackendResolver`）。 */
+    val searchProviderId: String?,
     val systemPrompt: String,
     val temperature: Double?,
     val reasoningEffort: ReasoningEffort,
@@ -45,18 +50,29 @@ data class ChatSettings(
     val includeUsage: Boolean,
     val historyImageLimit: Int,
     val extraParams: String,
-    val visionOverride: VisionOverride,
     val themeMode: ThemeMode,
 ) {
+    /** 激活供应商；表意外为空时给一个安全空条目（请求层会给出可读报错）。 */
+    val activeProvider: ProviderEntry
+        get() = providers[activeProviderId]
+            ?: providers.values.firstOrNull()
+            ?: ProviderEntry(baseUrl = "", apiKey = "", model = "")
+
     companion object {
         const val DEFAULT_BASE_URL = "https://api.deepseek.com/v1"
         const val DEFAULT_MODEL = "deepseek-flash"
         const val DEFAULT_HISTORY_IMAGE_LIMIT = 2
 
         val Default = ChatSettings(
-            baseUrl = DEFAULT_BASE_URL,
-            apiKey = "",
-            model = DEFAULT_MODEL,
+            providers = mapOf(
+                ProviderCatalog.DEEPSEEK to ProviderEntry(
+                    baseUrl = DEFAULT_BASE_URL,
+                    apiKey = "",
+                    model = DEFAULT_MODEL,
+                ),
+            ),
+            activeProviderId = ProviderCatalog.DEEPSEEK,
+            searchProviderId = null,
             systemPrompt = "",
             temperature = null,
             reasoningEffort = ReasoningEffort.FOLLOW_DEFAULT,
@@ -65,10 +81,33 @@ data class ChatSettings(
             includeUsage = true,
             historyImageLimit = DEFAULT_HISTORY_IMAGE_LIMIT,
             extraParams = "",
-            visionOverride = VisionOverride.AUTO,
             themeMode = ThemeMode.SYSTEM,
         )
     }
+}
+
+/**
+ * 按供应商解析出一次请求的配置；[providerId] 不在表里时回退到激活供应商
+ * （会话绑定了已删除的供应商时，由调用方先做存在性检查并给出可读错误）。
+ */
+fun ChatSettings.toChatConfig(providerId: String = activeProviderId): ChatConfig {
+    val entry = providers[providerId] ?: activeProvider
+    return ChatConfig(
+        baseUrl = entry.baseUrl,
+        apiKey = entry.apiKey,
+        model = entry.model,
+        systemPrompt = systemPrompt,
+        temperature = temperature,
+        reasoningEffort = reasoningEffort.wire,
+        maxTokens = maxTokens,
+        imageDetail = imageDetail.wire,
+        includeUsage = includeUsage,
+        historyImageLimit = historyImageLimit,
+        extraParams = extraParams.ifBlank { null },
+        providerId = providerId,
+        sendSessionHeader = ProviderCatalog.byId(providerId)?.sendSessionHeader == true,
+        webSearchEnabled = false,
+    )
 }
 
 private val Context.dataStore by preferencesDataStore(name = "settings")
@@ -79,27 +118,19 @@ class SettingsRepository(context: Context) {
 
     val settings: Flow<ChatSettings> = store.data.map { it.toChatSettings() }
 
-    fun chatConfig(): Flow<ChatConfig> = settings.map { settings ->
-        ChatConfig(
-            baseUrl = settings.baseUrl,
-            apiKey = settings.apiKey,
-            model = settings.model,
-            systemPrompt = settings.systemPrompt,
-            temperature = settings.temperature,
-            reasoningEffort = settings.reasoningEffort.wire,
-            maxTokens = settings.maxTokens,
-            imageDetail = settings.imageDetail.wire,
-            includeUsage = settings.includeUsage,
-            historyImageLimit = settings.historyImageLimit,
-            extraParams = settings.extraParams.ifBlank { null },
-            webSearchEnabled = false,
-        )
+    fun chatConfig(providerId: String? = null): Flow<ChatConfig> = settings.map { current ->
+        current.toChatConfig(providerId ?: current.activeProviderId)
     }
 
+    /**
+     * 保存整张供应商配置表 + 全部生成参数；[activeProviderId] 同时被设为激活。
+     * 整表落盘：设置页里改过但当前没在编辑的供应商条目也一并保住（不再只存选中的那一条）。
+     * 一次 edit 落盘，避免半保存状态。
+     */
     suspend fun updateConfig(
-        baseUrl: String,
-        apiKey: String,
-        model: String,
+        providers: Map<String, ProviderEntry>,
+        activeProviderId: String,
+        searchProviderId: String?,
         systemPrompt: String,
         temperature: Double?,
         reasoningEffort: ReasoningEffort,
@@ -108,12 +139,11 @@ class SettingsRepository(context: Context) {
         includeUsage: Boolean,
         historyImageLimit: Int,
         extraParams: String,
-        visionOverride: VisionOverride,
     ) {
         store.edit { prefs ->
-            prefs[KEY_BASE_URL] = baseUrl
-            prefs[KEY_API_KEY] = apiKey
-            prefs[KEY_MODEL] = model
+            prefs[KEY_PROVIDERS] = ProviderConfigCodec.encode(providers)
+            prefs[KEY_ACTIVE_PROVIDER] = activeProviderId
+            if (searchProviderId.isNullOrBlank()) prefs.remove(KEY_SEARCH_PROVIDER) else prefs[KEY_SEARCH_PROVIDER] = searchProviderId
             prefs[KEY_SYSTEM_PROMPT] = systemPrompt
             if (temperature == null) prefs.remove(KEY_TEMPERATURE) else prefs[KEY_TEMPERATURE] = temperature
             prefs[KEY_REASONING_EFFORT] = reasoningEffort.name
@@ -122,7 +152,6 @@ class SettingsRepository(context: Context) {
             prefs[KEY_INCLUDE_USAGE] = includeUsage
             prefs[KEY_HISTORY_IMAGE_LIMIT] = historyImageLimit
             prefs[KEY_EXTRA_PARAMS] = extraParams
-            prefs[KEY_VISION_OVERRIDE] = visionOverride.name
         }
     }
 
@@ -132,29 +161,42 @@ class SettingsRepository(context: Context) {
         }
     }
 
-    private fun Preferences.toChatSettings(): ChatSettings = ChatSettings(
-        baseUrl = this[KEY_BASE_URL] ?: ChatSettings.DEFAULT_BASE_URL,
-        apiKey = this[KEY_API_KEY].orEmpty(),
-        model = this[KEY_MODEL] ?: ChatSettings.DEFAULT_MODEL,
-        systemPrompt = this[KEY_SYSTEM_PROMPT].orEmpty(),
-        temperature = this[KEY_TEMPERATURE],
-        reasoningEffort = this[KEY_REASONING_EFFORT].toEnum(ReasoningEffort.FOLLOW_DEFAULT),
-        maxTokens = this[KEY_MAX_TOKENS],
-        imageDetail = this[KEY_IMAGE_DETAIL].toEnum(ImageDetail.FOLLOW_DEFAULT),
-        includeUsage = this[KEY_INCLUDE_USAGE] ?: true,
-        historyImageLimit = this[KEY_HISTORY_IMAGE_LIMIT] ?: ChatSettings.DEFAULT_HISTORY_IMAGE_LIMIT,
-        extraParams = this[KEY_EXTRA_PARAMS].orEmpty(),
-        visionOverride = this[KEY_VISION_OVERRIDE].toEnum(VisionOverride.AUTO),
-        themeMode = this[KEY_THEME_MODE].toEnum(ThemeMode.SYSTEM),
-    )
+    /** 懒迁移：`providers_json` 缺失/非法时，用旧平铺 key 合成一张初始表（不主动回写）。 */
+    private fun Preferences.toChatSettings(): ChatSettings {
+        val providers = ProviderConfigCodec.decode(this[KEY_PROVIDERS]).ifEmpty {
+            ProviderConfigCodec.fromLegacy(
+                baseUrl = this[KEY_BASE_URL].orEmpty(),
+                apiKey = this[KEY_API_KEY].orEmpty(),
+                model = this[KEY_MODEL].orEmpty(),
+            )
+        }
+        val active = this[KEY_ACTIVE_PROVIDER]
+            ?.takeIf { id -> id in providers }
+            ?: providers.keys.firstOrNull()
+            ?: ProviderCatalog.DEEPSEEK
+        return ChatSettings(
+            providers = providers,
+            activeProviderId = active,
+            searchProviderId = this[KEY_SEARCH_PROVIDER]?.takeIf { it.isNotBlank() },
+            systemPrompt = this[KEY_SYSTEM_PROMPT].orEmpty(),
+            temperature = this[KEY_TEMPERATURE],
+            reasoningEffort = this[KEY_REASONING_EFFORT].toEnum(ReasoningEffort.FOLLOW_DEFAULT),
+            maxTokens = this[KEY_MAX_TOKENS],
+            imageDetail = this[KEY_IMAGE_DETAIL].toEnum(ImageDetail.FOLLOW_DEFAULT),
+            includeUsage = this[KEY_INCLUDE_USAGE] ?: true,
+            historyImageLimit = this[KEY_HISTORY_IMAGE_LIMIT] ?: ChatSettings.DEFAULT_HISTORY_IMAGE_LIMIT,
+            extraParams = this[KEY_EXTRA_PARAMS].orEmpty(),
+            themeMode = this[KEY_THEME_MODE].toEnum(ThemeMode.SYSTEM),
+        )
+    }
 
     private inline fun <reified T : Enum<T>> String?.toEnum(fallback: T): T =
         enumValues<T>().firstOrNull { it.name == this } ?: fallback
 
     private companion object {
-        val KEY_BASE_URL = stringPreferencesKey("base_url")
-        val KEY_API_KEY = stringPreferencesKey("api_key")
-        val KEY_MODEL = stringPreferencesKey("model")
+        val KEY_PROVIDERS = stringPreferencesKey("providers_json")
+        val KEY_ACTIVE_PROVIDER = stringPreferencesKey("active_provider")
+        val KEY_SEARCH_PROVIDER = stringPreferencesKey("search_provider")
         val KEY_SYSTEM_PROMPT = stringPreferencesKey("system_prompt")
         val KEY_TEMPERATURE = doublePreferencesKey("temperature")
         val KEY_REASONING_EFFORT = stringPreferencesKey("reasoning_effort")
@@ -163,7 +205,11 @@ class SettingsRepository(context: Context) {
         val KEY_INCLUDE_USAGE = booleanPreferencesKey("include_usage")
         val KEY_HISTORY_IMAGE_LIMIT = intPreferencesKey("history_image_limit")
         val KEY_EXTRA_PARAMS = stringPreferencesKey("extra_params")
-        val KEY_VISION_OVERRIDE = stringPreferencesKey("vision_override")
         val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
+
+        /** 旧版本单配置 key：只在懒迁移时读，不再写入。 */
+        val KEY_BASE_URL = stringPreferencesKey("base_url")
+        val KEY_API_KEY = stringPreferencesKey("api_key")
+        val KEY_MODEL = stringPreferencesKey("model")
     }
 }

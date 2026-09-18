@@ -3,4 +3,8 @@
     <cache-path
         name="captures"
         path="captures/" />
+    <!-- 附件目录里的视频：预览时交给系统播放器读（只读授权）。 -->
+    <files-path
+        name="attachments"
+        path="attachments/" />
 </paths>

@@ -46,7 +46,8 @@ import com.zcw.chatai.ChatAiApp
 import com.zcw.chatai.data.prefs.ImageDetail
 import com.zcw.chatai.data.prefs.ReasoningEffort
 import com.zcw.chatai.data.prefs.ThemeMode
-import com.zcw.chatai.data.prefs.VisionOverride
+import com.zcw.chatai.data.provider.ProviderCatalog
+import com.zcw.chatai.data.provider.ProviderEntry
 import com.zcw.chatai.ui.theme.ChatTheme
 
 @Composable
@@ -103,12 +104,21 @@ fun SettingsScreen(
                 .padding(horizontal = 18.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
+            SectionTitle("服务商")
+            ChipFlow(
+                options = ProviderCatalog.presets.map { it.id to it.displayName },
+                selected = state.activeProviderId,
+                onSelect = viewModel::selectProvider,
+            )
+            ProviderNote(state.activeProviderId)
+
             SectionTitle("接口")
             Field(
                 label = "Base URL",
                 value = state.baseUrl,
                 onValueChange = { value -> viewModel.update { it.copy(baseUrl = value) } },
-                placeholder = "https://api.deepseek.com/v1",
+                placeholder = ProviderCatalog.byId(state.activeProviderId)?.defaultBaseUrl?.takeIf { it.isNotBlank() }
+                    ?: "https://…",
                 keyboardType = KeyboardType.Uri,
             )
             Field(
@@ -123,7 +133,8 @@ fun SettingsScreen(
                 label = "模型",
                 value = state.model,
                 onValueChange = { value -> viewModel.update { it.copy(model = value) } },
-                placeholder = "deepseek-flash",
+                placeholder = ProviderCatalog.byId(state.activeProviderId)?.defaultModel?.takeIf { it.isNotBlank() }
+                    ?: "model-name",
             )
             if (state.models.isNotEmpty()) {
                 ChipFlow(
@@ -146,6 +157,22 @@ fun SettingsScreen(
                     )
                 }
             }
+
+            SectionTitle("工具")
+            ChoiceRow(
+                label = "联网搜索后端",
+                hint = "这些工具经对应供应商的 API 执行，与当前对话模型无关（借道），按次计费；" +
+                    "跟随会话 = 会话供应商支持就用它，否则回退到已配置的供应商",
+                options = buildList {
+                    add(null to "跟随会话")
+                    ProviderCatalog.presets
+                        .filter { it.caps.textSearch && state.providers.containsKey(it.id) }
+                        .forEach { add(it.id to it.displayName) }
+                },
+                selected = state.searchProviderId,
+                onSelect = { value -> viewModel.update { it.copy(searchProviderId = value) } },
+            )
+            ImageSearchStatus(providers = state.providers)
 
             SectionTitle("生成")
             Field(
@@ -203,13 +230,6 @@ fun SettingsScreen(
                 ),
                 selected = state.historyImageLimit,
                 onSelect = { value -> viewModel.update { it.copy(historyImageLimit = value) } },
-            )
-            ChoiceRow(
-                label = "视觉能力判断",
-                hint = "自动 = 按模型名启发式提示；不支持图片的模型会静默忽略图片",
-                options = VisionOverride.entries.map { it to it.label() },
-                selected = state.visionOverride,
-                onSelect = { value -> viewModel.update { it.copy(visionOverride = value) } },
             )
 
             SectionTitle("外观")
@@ -296,10 +316,39 @@ private fun ImageDetail.label(): String = when (this) {
     ImageDetail.HIGH -> "高清"
 }
 
-private fun VisionOverride.label(): String = when (this) {
-    VisionOverride.AUTO -> "自动"
-    VisionOverride.SUPPORTED -> "支持图片"
-    VisionOverride.UNSUPPORTED -> "不支持图片"
+@Composable
+private fun ProviderNote(providerId: String) {
+    val text = when (providerId) {
+        ProviderCatalog.QWEN ->
+            "通义千问：联网搜索/文搜图/图搜图走 Responses API（搜索 4 元/千次、文搜图 24 元/千次、" +
+                "图搜图 48 元/千次）；视频 ≤5MB 内联发送，更大的自动走免费临时上传（48 小时有效）。"
+        ProviderCatalog.DEEPSEEK ->
+            "DeepSeek：联网搜索走 Anthropic 兼容面，暂不支持视频。"
+        ProviderCatalog.OPENCODE_GO ->
+            "OpenCode Go：聚合网关（订阅制）。DeepSeek/GLM/Kimi/Qwen 等走 OpenAI 兼容面可用；" +
+                "Grok/GPT/Muse 仅支持 Responses 面，本应用暂不可用；不支持视频。"
+        else ->
+            "自定义端点：使用标准 OpenAI 兼容接口；连接与密钥只存在本机。"
+    }
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+    )
+}
+
+@Composable
+private fun ImageSearchStatus(providers: Map<String, ProviderEntry>) {
+    val qwenConfigured = providers.containsKey(ProviderCatalog.QWEN)
+    Text(
+        text = if (qwenConfigured) {
+            "文搜图 / 图搜图：通义千问（已配置，自动随 🌐 开关可用）"
+        } else {
+            "文搜图 / 图搜图：未配置通义千问，暂不可用（去「服务商」添加）"
+        },
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+    )
 }
 
 private fun ThemeMode.label(): String = when (this) {

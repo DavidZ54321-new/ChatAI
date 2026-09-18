@@ -5,13 +5,15 @@ import com.zcw.chatai.data.model.MessageStatus
 import com.zcw.chatai.data.model.Role
 import com.zcw.chatai.data.model.ToolResult
 
-/** 消息里一张图：缩略图给气泡，原图给全屏预览。 */
+/** 消息里一张图/一个视频：缩略图给气泡，原文件给全屏预览/播放器。 */
 data class MessageImage(
     val id: String,
     val thumbnailPath: String,
     val fullPath: String,
     val width: Int,
     val height: Int,
+    val isVideo: Boolean = false,
+    val durationMs: Long? = null,
 )
 
 /** 待发送附件（已落私有目录，发送成功前可撤回并删文件）。 */
@@ -44,6 +46,8 @@ data class ChatUiState(
     val conversationId: String? = null,
     val title: String = "新对话",
     val model: String = "",
+    /** 会话绑定的供应商 id（决定模型列表与能力提示）。 */
+    val providerId: String = "",
     val messages: List<ChatMessageItem> = emptyList(),
     val isStreaming: Boolean = false,
     val streamingMessageId: String? = null,
@@ -55,6 +59,10 @@ data class ChatUiState(
     val notice: String? = null,
     val webSearchEnabled: Boolean = false,
     val webSearchAvailable: Boolean = true,
+    /** 会话绑定的供应商是否支持视频输入（决定附件面板里是否出现「选择视频」）。 */
+    val videoInputAvailable: Boolean = false,
+    /** 视频上传/解析中的一行提示；null 表示没有进行中的视频处理。 */
+    val videoUploadNotice: String? = null,
 ) {
     val canSend: Boolean
         get() = (input.isNotBlank() || pending.isNotEmpty()) && !isTurnActive

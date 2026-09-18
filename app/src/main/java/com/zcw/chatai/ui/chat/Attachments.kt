@@ -2,6 +2,8 @@ package com.zcw.chatai.ui.chat
 
 import android.content.ContentValues
 import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.Environment
@@ -12,6 +14,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -23,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -49,6 +53,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.core.content.FileProvider
+import com.zcw.chatai.data.media.ImageCodec
+import com.zcw.chatai.data.media.VideoMetadata
 import com.zcw.chatai.ui.theme.ChatTheme
 import java.io.File
 import kotlin.math.roundToInt
@@ -79,12 +86,42 @@ private fun decodeSampled(path: String, maxEdge: Int): ImageBitmap? = try {
     null
 }
 
+/** 视频首帧：`MediaMetadataRetriever` 抽真帧（不放大），失败退回 360 缩略图。 */
+@Composable
+private fun rememberVideoFrame(fullPath: String, thumbnailPath: String, maxEdge: Int): ImageBitmap? {
+    val bitmap by produceState<ImageBitmap?>(initialValue = null, fullPath, thumbnailPath, maxEdge) {
+        value = withContext(Dispatchers.IO) {
+            decodeVideoFrame(fullPath, maxEdge) ?: decodeSampled(thumbnailPath, maxEdge)
+        }
+    }
+    return bitmap
+}
+
+private fun decodeVideoFrame(path: String, maxEdge: Int): ImageBitmap? = try {
+    val frame = VideoMetadata.firstFrame(File(path))
+    if (frame == null) {
+        null
+    } else {
+        val size = ImageCodec.computeTargetSize(frame.width, frame.height, maxEdge)
+        val scaled = if (size.width == frame.width && size.height == frame.height) {
+            frame
+        } else {
+            Bitmap.createScaledBitmap(frame, size.width, size.height, true).also { frame.recycle() }
+        }
+        scaled.asImageBitmap()
+    }
+} catch (t: Throwable) {
+    null
+}
+
 @Composable
 fun AttachmentThumbnail(
     path: String,
     size: Dp,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    isVideo: Boolean = false,
+    durationMs: Long? = null,
 ) {
     val colors = ChatTheme.colors
     // 按实际显示尺寸解码：82dp 的缩略图没必要解 400px 的位图（多图时差别很明显）。
@@ -102,11 +139,53 @@ fun AttachmentThumbnail(
         if (image != null) {
             Image(
                 bitmap = image,
-                contentDescription = "图片",
+                contentDescription = if (isVideo) "视频" else "图片",
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
             )
         }
+        if (isVideo) {
+            Box(
+                modifier = Modifier
+                    .size(26.dp)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(Color.Black.copy(alpha = 0.45f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.PlayArrow,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+            durationMs?.let { duration ->
+                Text(
+                    text = formatDuration(duration),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(4.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color.Black.copy(alpha = 0.55f))
+                        .padding(horizontal = 4.dp, vertical = 1.dp),
+                )
+            }
+        }
+    }
+}
+
+/** 时长显示：<1 分钟 → `0:07`，其余 → `1:23`；超过 1 小时 → `1:02:03`。 */
+internal fun formatDuration(ms: Long): String {
+    val totalSeconds = (ms / 1000).coerceAtLeast(0)
+    val hours = totalSeconds / 3600
+    val minutes = (totalSeconds % 3600) / 60
+    val seconds = totalSeconds % 60
+    return if (hours > 0) {
+        "%d:%02d:%02d".format(hours, minutes, seconds)
+    } else {
+        "%d:%02d".format(minutes, seconds)
     }
 }
 
@@ -130,6 +209,8 @@ fun MessageImageRow(
                 path = image.thumbnailPath,
                 size = side,
                 onClick = { onOpen(image) },
+                isVideo = image.isVideo,
+                durationMs = image.durationMs,
             )
         }
     }
@@ -225,6 +306,96 @@ fun ImagePreviewDialog(
     }
 }
 
+/** 视频预览：首帧大图 + 时长 + 「用系统播放器打开」（应用私有目录要经 FileProvider 授权）。 */
+@Composable
+fun VideoPreviewDialog(
+    image: MessageImage,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    val bitmap = rememberVideoFrame(image.fullPath, image.thumbnailPath, maxEdge = 1280)
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.94f)),
+        ) {
+            val current = bitmap
+            if (current != null) {
+                Image(
+                    bitmap = current,
+                    contentDescription = "视频首帧",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize().padding(12.dp),
+                )
+            }
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                image.durationMs?.let { duration ->
+                    Text(
+                        text = formatDuration(duration),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color.White,
+                    )
+                }
+                Text(
+                    text = "用系统播放器打开",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = Color.White,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(Color.White.copy(alpha = 0.16f))
+                        .clickable { openWithSystemPlayer(context, image.fullPath) }
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(16.dp)
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(Color.White.copy(alpha = 0.16f))
+                    .clickable(onClick = onDismiss),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Close,
+                    contentDescription = "关闭",
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+        }
+    }
+}
+
+private fun openWithSystemPlayer(context: Context, path: String): Boolean = try {
+    val file = File(path)
+    if (!file.isFile) {
+        false
+    } else {
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "video/mp4")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
+        true
+    }
+} catch (t: Throwable) {
+    false
+}
+
 private fun saveToGallery(context: Context, path: String): Boolean = try {
     val source = File(path)
     if (!source.isFile) {
@@ -271,6 +442,8 @@ fun PendingAttachmentStrip(
                     path = item.thumbnailPath,
                     size = 64.dp,
                     onClick = {},
+                    isVideo = item.attachment.kind == com.zcw.chatai.data.model.AttachmentKind.VIDEO,
+                    durationMs = item.attachment.durationMs,
                 )
                 Box(
                     modifier = Modifier

@@ -1,5 +1,6 @@
 package com.zcw.chatai.data.web
 
+import com.zcw.chatai.data.model.SearchedImage
 import com.zcw.chatai.data.model.ToolSource
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -10,8 +11,26 @@ import org.junit.Test
 class WebToolsTest {
 
     @Test
-    fun specsExposeBothFunctions() {
-        assertEquals(listOf("web_search", "web_fetch"), WebTools.specs().map { it.function.name })
+    fun specsExposeAllFunctions() {
+        assertEquals(
+            listOf("web_search", "web_fetch", "search_images", "find_similar_images"),
+            WebTools.specs().map { it.function.name },
+        )
+    }
+
+    @Test
+    fun specsForSelectsByEnabledToolNames() {
+        assertEquals(
+            listOf("web_search", "web_fetch"),
+            WebTools.specsFor(listOf(WebTools.FETCH, WebTools.SEARCH)).map { it.function.name },
+        )
+        assertEquals(
+            listOf("search_images", "find_similar_images"),
+            WebTools.specsFor(listOf(WebTools.SEARCH_IMAGES, WebTools.FIND_SIMILAR_IMAGES))
+                .map { it.function.name },
+        )
+        assertTrue(WebTools.specsFor(emptyList()).isEmpty())
+        assertTrue(WebTools.specsFor(listOf("unknown_tool")).isEmpty())
     }
 
     @Test
@@ -79,5 +98,26 @@ class WebToolsTest {
     fun marksShortTextWhenFetcherReportsTruncation() {
         val text = WebTools.formatFetchResult(WebFetchResult("https://a", 200, "short", truncated = true))
         assertTrue(text, text.contains("[content truncated]"))
+    }
+
+    @Test
+    fun formatsImageSearchResultWithMarkdownHint() {
+        val text = WebTools.formatImageSearchResult(
+            "科技感封面",
+            listOf(
+                SearchedImage(1, "封面 A", "https://img.example/a.jpg"),
+                SearchedImage(2, "", "https://img.example/b.jpg"),
+            ),
+        )
+        assertTrue(text, text.contains("科技感封面"))
+        assertTrue(text, text.contains("https://img.example/a.jpg"))
+        assertTrue(text, text.contains("markdown"))
+        assertTrue("无标题时退回 image 占位", text.contains("- image — https://img.example/b.jpg"))
+    }
+
+    @Test
+    fun formatsEmptyImageSearchResult() {
+        val text = WebTools.formatImageSearchResult("x", emptyList())
+        assertTrue(text, text.contains("No images found"))
     }
 }

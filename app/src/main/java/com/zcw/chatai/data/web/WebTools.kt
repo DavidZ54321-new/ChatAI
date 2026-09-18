@@ -1,5 +1,6 @@
 package com.zcw.chatai.data.web
 
+import com.zcw.chatai.data.model.SearchedImage
 import com.zcw.chatai.data.model.ToolSource
 import com.zcw.chatai.data.net.dto.ChatTool
 import com.zcw.chatai.data.net.dto.FunctionSpec
@@ -23,18 +24,28 @@ data class WebFetchResult(
     val truncated: Boolean,
 )
 
-/** 模型可见的两个工具：schema、参数解析、结果文本格式化。 */
+/** 模型可见的工具：schema、参数解析、结果文本格式化。 */
 object WebTools {
 
     const val SEARCH = "web_search"
     const val FETCH = "web_fetch"
+    const val SEARCH_IMAGES = "search_images"
+    const val FIND_SIMILAR_IMAGES = "find_similar_images"
     const val DEFAULT_MAX_RESULTS = 5
+    const val DEFAULT_IMAGE_RESULTS = 10
     const val MAX_FETCH_CHARS = 20_000
     const val MAX_SEARCH_ANSWER_CHARS = 8_000
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
-    fun specs(): List<ChatTool> = listOf(searchSpec(), fetchSpec())
+    fun specs(): List<ChatTool> = listOf(searchSpec(), fetchSpec(), searchImagesSpec(), findSimilarImagesSpec())
+
+    /** 按本回合允许的工具名单挑选 schema（顺序稳定，便于测试）。 */
+    fun specsFor(names: List<String>): List<ChatTool> {
+        if (names.isEmpty()) return emptyList()
+        val wanted = names.toSet()
+        return specs().filter { it.function.name in wanted }
+    }
 
     fun queryOf(arguments: String): String? = stringArg(arguments, "query")
 
@@ -82,6 +93,19 @@ object WebTools {
         return header + body + note
     }
 
+    /** 图搜结果给模型：图片 URL 列表 + 在正文里直接用 markdown 图片的提示。 */
+    fun formatImageSearchResult(query: String, images: List<SearchedImage>): String {
+        if (images.isEmpty()) return "No images found for \"$query\"."
+        val builder = StringBuilder()
+        builder.append("Image search results for \"").append(query).append("\":\n")
+        images.forEach { image ->
+            builder.append("- ").append(image.title.ifBlank { "image" })
+            builder.append(" — ").append(image.url).append("\n")
+        }
+        builder.append("Use the relevant URLs in your answer as markdown images: ![title](url).")
+        return builder.toString()
+    }
+
     private fun searchSpec() = ChatTool(
         function = FunctionSpec(
             name = SEARCH,
@@ -113,6 +137,39 @@ object WebTools {
                     }
                 }
                 put("required", JsonArray(listOf(JsonPrimitive("url"))))
+                put("additionalProperties", false)
+            },
+        ),
+    )
+
+    private fun searchImagesSpec() = ChatTool(
+        function = FunctionSpec(
+            name = SEARCH_IMAGES,
+            description = "Search the web for images matching a text description (text-to-image search). " +
+                "Use it when the user asks to find images, pictures, wallpapers or visual references.",
+            parameters = buildJsonObject {
+                put("type", "object")
+                putJsonObject("properties") {
+                    putJsonObject("query") {
+                        put("type", "string")
+                        put("description", "Image search query, e.g. '科技感 PPT 封面背景'.")
+                    }
+                }
+                put("required", JsonArray(listOf(JsonPrimitive("query"))))
+                put("additionalProperties", false)
+            },
+        ),
+    )
+
+    private fun findSimilarImagesSpec() = ChatTool(
+        function = FunctionSpec(
+            name = FIND_SIMILAR_IMAGES,
+            description = "Search the web for images visually similar to the most recent image the user " +
+                "sent in this conversation (image-to-image search). Only call it when the conversation " +
+                "already contains a user image; it always uses that image, no arguments needed.",
+            parameters = buildJsonObject {
+                put("type", "object")
+                putJsonObject("properties") {}
                 put("additionalProperties", false)
             },
         ),

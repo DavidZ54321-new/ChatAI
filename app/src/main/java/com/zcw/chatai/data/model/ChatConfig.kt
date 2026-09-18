@@ -1,5 +1,7 @@
 package com.zcw.chatai.data.model
 
+import com.zcw.chatai.data.provider.ProviderCatalog
+
 /**
  * 一次请求的全部可配置项。字段全部保持**厂商中立**：
  *
@@ -25,6 +27,17 @@ data class ChatConfig(
     val extraParams: String? = null,
     /** 本回合是否注入 web_search/web_fetch 工具。 */
     val webSearchEnabled: Boolean = false,
+    /**
+     * 本回合实际注入的工具名单（`WebTools` 的常量）。
+     * 由仓库层按供应商能力与后端可用性算好，网络层只负责按名单组装 schema。
+     */
+    val enabledTools: List<String> = emptyList(),
     /** Agent 最多几步工具调用。 */
     val maxAgentSteps: Int = 5,
+    /** 本回合绑定哪个供应商（决定搜索/图搜后端与文件上传路由）。 */
+    val providerId: String = ProviderCatalog.DEEPSEEK,
+    /** 网关要求的稳定会话 id（配合 [sendSessionHeader]，Go 实测缺了直接 400）。 */
+    val sessionId: String? = null,
+    /** 是否发送会话头（由供应商预设决定，见 `ProviderPreset.sendSessionHeader`）。 */
+    val sendSessionHeader: Boolean = false,
 )

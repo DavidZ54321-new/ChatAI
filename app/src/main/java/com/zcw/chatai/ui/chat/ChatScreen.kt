@@ -12,6 +12,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
@@ -75,6 +76,7 @@ fun ChatScreen(
     onOpenSettings: () -> Unit,
     onOpenDrawer: () -> Unit,
     onAddImage: (Uri) -> Unit,
+    onAddVideo: (Uri) -> Unit,
     onRemoveAttachment: (String) -> Unit,
     onModelClick: () -> Unit,
     onToggleWebSearch: () -> Unit,
@@ -106,6 +108,10 @@ fun ChatScreen(
     val pickImages = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(8),
     ) { uris -> uris.forEach(onAddImage) }
+
+    val pickVideo = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia(),
+    ) { uri -> uri?.let(onAddVideo) }
 
     val notifyPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -273,22 +279,32 @@ fun ChatScreen(
                 .onGloballyPositioned { composerRect.value = it.boundsInParent() }
                 .onSizeChanged { composerHeight = it.height },
         ) {
-            Composer(
-                value = state.input,
-                onValueChange = onInputChange,
-                model = state.model,
-                isTurnActive = state.isTurnActive,
-                canSend = state.canSend,
-                pending = state.pending,
-                onSend = { sendKeepingAlive() },
-                onStop = onStop,
-                onAddImage = { attachOpen = true },
-                onRemoveAttachment = onRemoveAttachment,
-                onModelClick = onModelClick,
-                webSearchEnabled = state.webSearchEnabled,
-                webSearchAvailable = state.webSearchAvailable,
-                onToggleWebSearch = onToggleWebSearch,
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                state.videoUploadNotice?.let { uploading ->
+                    Text(
+                        text = uploading,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = colors.accentAmber,
+                        modifier = Modifier.padding(start = 4.dp),
+                    )
+                }
+                Composer(
+                    value = state.input,
+                    onValueChange = onInputChange,
+                    model = state.model,
+                    isTurnActive = state.isTurnActive,
+                    canSend = state.canSend,
+                    pending = state.pending,
+                    onSend = { sendKeepingAlive() },
+                    onStop = onStop,
+                    onAddImage = { attachOpen = true },
+                    onRemoveAttachment = onRemoveAttachment,
+                    onModelClick = onModelClick,
+                    webSearchEnabled = state.webSearchEnabled,
+                    webSearchAvailable = state.webSearchAvailable,
+                    onToggleWebSearch = onToggleWebSearch,
+                )
+            }
         }
         val notice = state.notice
         if (notice != null) {
@@ -362,12 +378,27 @@ fun ChatScreen(
                     if (uri != null) takePicture.launch(uri)
                 },
             )
+            if (state.videoInputAvailable) {
+                SheetAction(
+                    label = "选择视频（MP4）",
+                    onClick = {
+                        attachOpen = false
+                        pickVideo.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly),
+                        )
+                    },
+                )
+            }
         }
     }
 
     val preview = previewTarget
     if (preview != null) {
-        ImagePreviewDialog(image = preview, onDismiss = { previewTarget = null })
+        if (preview.isVideo) {
+            VideoPreviewDialog(image = preview, onDismiss = { previewTarget = null })
+        } else {
+            ImagePreviewDialog(image = preview, onDismiss = { previewTarget = null })
+        }
     }
 }
 

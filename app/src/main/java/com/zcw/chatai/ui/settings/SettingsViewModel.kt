@@ -11,7 +11,9 @@ import com.zcw.chatai.data.prefs.ImageDetail
 import com.zcw.chatai.data.prefs.ReasoningEffort
 import com.zcw.chatai.data.prefs.SettingsRepository
 import com.zcw.chatai.data.prefs.ThemeMode
-import com.zcw.chatai.data.prefs.VisionOverride
+import com.zcw.chatai.data.prefs.toChatConfig
+import com.zcw.chatai.data.provider.ProviderCatalog
+import com.zcw.chatai.data.provider.ProviderEntry
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,6 +28,10 @@ class SettingsViewModel(
 ) : ViewModel() {
 
     data class FormState(
+        val providers: Map<String, ProviderEntry> = emptyMap(),
+        val activeProviderId: String = ProviderCatalog.DEEPSEEK,
+        /** 联网搜索后端；null = 跟随会话。 */
+        val searchProviderId: String? = null,
         val baseUrl: String = "",
         val apiKey: String = "",
         val model: String = "",
@@ -37,7 +43,6 @@ class SettingsViewModel(
         val includeUsage: Boolean = true,
         val historyImageLimit: Int = ChatSettings.DEFAULT_HISTORY_IMAGE_LIMIT,
         val extraParams: String = "",
-        val visionOverride: VisionOverride = VisionOverride.AUTO,
         val themeMode: ThemeMode = ThemeMode.SYSTEM,
         val loaded: Boolean = false,
         val models: List<String> = emptyList(),
@@ -79,10 +84,14 @@ class SettingsViewModel(
     init {
         viewModelScope.launch {
             val settings = settingsRepository.settings.first()
+            val entry = settings.activeProvider
             form.value = FormState(
-                baseUrl = settings.baseUrl,
-                apiKey = settings.apiKey,
-                model = settings.model,
+                providers = settings.providers,
+                activeProviderId = settings.activeProviderId,
+                searchProviderId = settings.searchProviderId,
+                baseUrl = entry.baseUrl,
+                apiKey = entry.apiKey,
+                model = entry.model,
                 systemPrompt = settings.systemPrompt,
                 temperature = settings.temperature?.toString().orEmpty(),
                 reasoningEffort = settings.reasoningEffort,
@@ -91,7 +100,6 @@ class SettingsViewModel(
                 includeUsage = settings.includeUsage,
                 historyImageLimit = settings.historyImageLimit,
                 extraParams = settings.extraParams,
-                visionOverride = settings.visionOverride,
                 themeMode = settings.themeMode,
                 loaded = true,
             )
@@ -102,6 +110,38 @@ class SettingsViewModel(
         form.value = transform(form.value)
     }
 
+    /**
+     * 切换正在编辑的供应商：当前表单值先塞回内存表（未保存也不丢），
+     * 再载入目标供应商；真正的落盘发生在 [save]。
+     */
+    fun selectProvider(id: String) {
+        val current = form.value
+        if (id == current.activeProviderId) return
+        val stash = current.providers + (
+            current.activeProviderId to ProviderEntry(
+                baseUrl = current.baseUrl.trim(),
+                apiKey = current.apiKey.trim(),
+                model = current.model.trim(),
+            )
+            )
+        val preset = ProviderCatalog.byId(id)
+        val target = stash[id] ?: ProviderEntry(
+            baseUrl = preset?.defaultBaseUrl.orEmpty(),
+            apiKey = "",
+            model = preset?.defaultModel.orEmpty(),
+        )
+        form.value = current.copy(
+            providers = stash + (id to target),
+            activeProviderId = id,
+            baseUrl = target.baseUrl,
+            apiKey = target.apiKey,
+            model = target.model,
+            models = emptyList(),
+            status = null,
+            error = null,
+        )
+    }
+
     fun setThemeMode(mode: ThemeMode) {
         form.value = form.value.copy(themeMode = mode)
         viewModelScope.launch { settingsRepository.updateThemeMode(mode) }
@@ -110,11 +150,18 @@ class SettingsViewModel(
     fun save() {
         val current = form.value
         if (!current.canSave) return
+        val entry = ProviderEntry(
+            baseUrl = current.baseUrl.trim(),
+            apiKey = current.apiKey.trim(),
+            model = current.model.trim(),
+        )
+        // 整表落盘：把当前编辑值写回表里，其它供应商保留（含切走时暂存的未保存修改）。
+        val providers = current.providers + (current.activeProviderId to entry)
         viewModelScope.launch {
             settingsRepository.updateConfig(
-                baseUrl = current.baseUrl.trim(),
-                apiKey = current.apiKey.trim(),
-                model = current.model.trim(),
+                providers = providers,
+                activeProviderId = current.activeProviderId,
+                searchProviderId = current.searchProviderId,
                 systemPrompt = current.systemPrompt,
                 temperature = current.temperature.trim().toDoubleOrNull(),
                 reasoningEffort = current.reasoningEffort,
@@ -123,9 +170,8 @@ class SettingsViewModel(
                 includeUsage = current.includeUsage,
                 historyImageLimit = current.historyImageLimit,
                 extraParams = current.extraParams.trim(),
-                visionOverride = current.visionOverride,
             )
-            form.value = form.value.copy(status = "已保存")
+            form.value = form.value.copy(providers = providers, status = "已保存")
         }
     }
 
@@ -134,10 +180,13 @@ class SettingsViewModel(
         val current = form.value
         viewModelScope.launch {
             form.value = form.value.copy(busy = true, status = null, error = null)
-            val config = settingsRepository.chatConfig().first().copy(
-                baseUrl = current.baseUrl.trim(),
-                apiKey = current.apiKey.trim(),
-            )
+            val config = settingsRepository.settings.first()
+                .toChatConfig(current.activeProviderId)
+                .copy(
+                    baseUrl = current.baseUrl.trim(),
+                    apiKey = current.apiKey.trim(),
+                    model = current.model.trim(),
+                )
             runCatching { chatApi.listModels(config) }
                 .onSuccess { models ->
                     form.value = form.value.copy(

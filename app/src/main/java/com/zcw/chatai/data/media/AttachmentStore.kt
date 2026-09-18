@@ -3,9 +3,11 @@ package com.zcw.chatai.data.media
 import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
+import android.provider.OpenableColumns
 import com.zcw.chatai.data.model.Attachment
 import com.zcw.chatai.data.model.AttachmentKind
 import com.zcw.chatai.data.net.ChatRequestImage
+import com.zcw.chatai.data.net.ChatRequestVideo
 import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
@@ -69,6 +71,94 @@ class AttachmentStore(private val context: Context) {
         }
     }
 
+    /**
+     * 导入视频：原样复制 mp4（不转码），用 `MediaMetadataRetriever` 读时长并抽首帧做缩略图。
+     * 只收 mp4（Qwen 视频输入的格式要求），超限/不可读给出可读错误。
+     */
+    suspend fun importVideo(
+        conversationId: String,
+        uri: Uri,
+        id: String = UUID.randomUUID().toString(),
+    ): Attachment = withContext(Dispatchers.IO) {
+        if (!isMp4(uri)) throw AttachmentException("目前只支持 MP4 视频")
+        val mime = MIME_MP4
+        val relativePath = "$DIR/$conversationId/$id.mp4"
+        val target = File(context.filesDir, relativePath)
+        target.parentFile?.mkdirs()
+        try {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                target.outputStream().use { output -> input.copyTo(output) }
+            } ?: throw AttachmentException("无法读取这个视频（文件已损坏或权限不足）")
+        } catch (t: AttachmentException) {
+            throw t
+        } catch (t: Throwable) {
+            target.delete()
+            throw AttachmentException("无法读取这个视频（文件已损坏或权限不足）", t)
+        }
+        if (target.length() <= 0L) {
+            target.delete()
+            throw AttachmentException("视频文件为空")
+        }
+        if (target.length() > AttachmentLimits.MAX_VIDEO_BYTES) {
+            val mb = AttachmentLimits.MAX_VIDEO_BYTES / 1024 / 1024
+            target.delete()
+            throw AttachmentException("视频超过 ${mb} MB 上限，请先压缩或剪短")
+        }
+        val info = VideoMetadata.read(target)
+        val frame = VideoMetadata.firstFrame(target)
+        val frameWidth = frame?.width ?: info?.width ?: 0
+        val frameHeight = frame?.height ?: info?.height ?: 0
+        if (frame != null) {
+            val thumbSize = ImageCodec.computeTargetSize(frame.width, frame.height, ImageCodec.THUMB_EDGE)
+            val thumb = Bitmap.createScaledBitmap(frame, thumbSize.width, thumbSize.height, true)
+            try {
+                ImageCompressor.write(thumb, ImageCodec.MIME_JPEG, thumbnailOf(relativePath))
+            } finally {
+                if (thumb !== frame) thumb.recycle()
+                frame.recycle()
+            }
+        }
+        Attachment(
+            id = id,
+            kind = AttachmentKind.VIDEO,
+            relativePath = relativePath,
+            mimeType = mime,
+            width = frameWidth,
+            height = frameHeight,
+            sizeBytes = target.length(),
+            durationMs = info?.durationMs,
+        )
+    }
+
+    private fun isMp4(uri: Uri): Boolean {
+        val type = runCatching { context.contentResolver.getType(uri) }.getOrNull()
+        if (type == MIME_MP4) return true
+        val name = runCatching {
+            context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+                ?.use { cursor ->
+                    if (cursor.moveToFirst()) cursor.getString(0) else null
+                }
+        }.getOrNull()
+        return name?.endsWith(".mp4", ignoreCase = true) == true
+    }
+
+    /** 视频原文件字节（内联 base64 或上传路由用）。 */
+    fun videoBytes(attachment: Attachment): ByteArray? {
+        val file = fileOf(attachment)
+        if (!file.isFile) return null
+        return try {
+            file.readBytes().takeIf { it.isNotEmpty() }
+        } catch (t: Exception) {
+            null
+        }
+    }
+
+    /** 内联视频：整文件 base64 data URL（小于阈值的视频走这条路，无需上传）。 */
+    fun toRequestVideo(attachment: Attachment): ChatRequestVideo? {
+        val bytes = videoBytes(attachment) ?: return null
+        return ChatRequestVideo(url = ImageCodec.toDataUrl(attachment.mimeType, bytes), isOss = false)
+    }
+
     fun fileOf(attachment: Attachment): File = File(context.filesDir, attachment.relativePath)
 
     fun thumbnailOf(attachment: Attachment): File = thumbnailOf(attachment.relativePath)
@@ -125,5 +215,6 @@ class AttachmentStore(private val context: Context) {
 
     companion object {
         const val DIR = "attachments"
+        const val MIME_MP4 = "video/mp4"
     }
 }

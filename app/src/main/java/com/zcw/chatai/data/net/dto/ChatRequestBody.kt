@@ -1,6 +1,7 @@
 package com.zcw.chatai.data.net.dto
 
 import com.zcw.chatai.data.net.ChatRequestImage
+import com.zcw.chatai.data.net.ChatRequestVideo
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -41,8 +42,12 @@ object ChatRequestBody {
         return json.encodeToString(JsonObject.serializer(), merged)
     }
 
-    fun content(text: String, images: List<ChatRequestImage>): JsonElement {
-        if (images.isEmpty()) return JsonPrimitive(text)
+    fun content(
+        text: String,
+        images: List<ChatRequestImage>,
+        videos: List<ChatRequestVideo> = emptyList(),
+    ): JsonElement {
+        if (images.isEmpty() && videos.isEmpty()) return JsonPrimitive(text)
         return buildJsonArray {
             if (text.isNotEmpty()) {
                 add(
@@ -59,6 +64,16 @@ object ChatRequestBody {
                         putJsonObject("image_url") {
                             put("url", image.dataUrl)
                             image.detail?.takeIf { it.isNotBlank() }?.let { put("detail", it) }
+                        }
+                    },
+                )
+            }
+            videos.forEach { video ->
+                add(
+                    buildJsonObject {
+                        put("type", "video_url")
+                        putJsonObject("video_url") {
+                            put("url", video.url)
                         }
                     },
                 )

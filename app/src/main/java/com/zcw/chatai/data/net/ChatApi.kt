@@ -13,12 +13,14 @@ interface ChatApi {
 
 /**
  * 一条出站消息。纯文本消息在请求体里仍然编码成 JSON 字符串（最兼容），
- * 只有 [images] 非空时才编码成内容块数组。
+ * 只有 [images]/[videos] 非空时才编码成内容块数组。
  */
 data class ChatRequestMessage(
     val role: String,
     val content: String,
     val images: List<ChatRequestImage> = emptyList(),
+    /** 视频块（仅 user 角色会真正编码）。 */
+    val videos: List<ChatRequestVideo> = emptyList(),
     /** assistant 消息携带的工具调用（重发历史时用）。 */
     val toolCalls: List<ToolCall> = emptyList(),
     /** `role=tool` 结果消息对应的调用 id。 */
@@ -31,6 +33,15 @@ data class ChatRequestMessage(
 data class ChatRequestImage(
     val dataUrl: String,
     val detail: String? = null,
+)
+
+/**
+ * 视频部件：小文件内联 data URL，大文件是云端的 `oss://` 临时 URL。
+ * [isOss] 为 true 时请求需要带厂商的 OSS 解析头（由网络层按需添加）。
+ */
+data class ChatRequestVideo(
+    val url: String,
+    val isOss: Boolean = false,
 )
 
 sealed interface ChatStreamEvent {

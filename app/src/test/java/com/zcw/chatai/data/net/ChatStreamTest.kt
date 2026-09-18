@@ -11,6 +11,7 @@ import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Before
@@ -317,10 +318,11 @@ class ChatStreamTest {
     }
 
     @Test
-    fun omitsToolsWhenWebSearchDisabled() = runBlocking {
+    fun omitsToolsWhenNoToolsEnabled() = runBlocking {
         server.enqueue(eventStream(deltaEvent("ok") + DONE_EVENT))
 
-        collectEvents(config().copy(webSearchEnabled = false))
+        // 开关（webSearchEnabled）只决定「是否允许工具」，真正注入哪些由 enabledTools 名单决定。
+        collectEvents(config().copy(webSearchEnabled = true))
 
         val payload = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS)).body.readUtf8()
         assertFalse(payload, payload.contains("\"tools\""))
@@ -328,15 +330,21 @@ class ChatStreamTest {
     }
 
     @Test
-    fun injectsWebToolsWhenEnabled() = runBlocking {
+    fun injectsOnlyEnabledToolSpecs() = runBlocking {
         server.enqueue(eventStream(deltaEvent("ok") + DONE_EVENT))
 
-        collectEvents(config().copy(webSearchEnabled = true))
+        collectEvents(
+            config().copy(
+                enabledTools = listOf("web_search", "web_fetch", "search_images", "find_similar_images"),
+            ),
+        )
 
         val payload = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS)).body.readUtf8()
         assertTrue(payload, payload.contains("\"tools\""))
         assertTrue(payload, payload.contains("\"web_search\""))
         assertTrue(payload, payload.contains("\"web_fetch\""))
+        assertTrue(payload, payload.contains("\"search_images\""))
+        assertTrue(payload, payload.contains("\"find_similar_images\""))
         assertTrue(payload, payload.contains("\"tool_choice\":\"auto\""))
     }
 
@@ -376,6 +384,29 @@ class ChatStreamTest {
         systemPrompt = "",
         temperature = 0.7,
     )
+
+    @Test
+    fun sendsClientUserAgentAndOmitsSessionHeaderByDefault() = runBlocking {
+        server.enqueue(eventStream(deltaEvent("ok") + DONE_EVENT))
+        collectEvents(config())
+        val recorded = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+        assertEquals("ChatAI/1.0", recorded.getHeader("User-Agent"))
+        assertNull(recorded.getHeader("x-opencode-session"))
+    }
+
+    @Test
+    fun sendsSessionHeaderWhenProviderRequiresIt() = runBlocking {
+        server.enqueue(eventStream(deltaEvent("ok") + DONE_EVENT))
+        collectEvents(config().copy(sendSessionHeader = true, sessionId = "conv-1"))
+        val recorded = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+        assertEquals("conv-1", recorded.getHeader("x-opencode-session"))
+
+        // 没有会话上下文（模型列表/测试连接）时用兜底值，Go 网关缺头会 400。
+        server.enqueue(eventStream(deltaEvent("ok") + DONE_EVENT))
+        collectEvents(config().copy(sendSessionHeader = true, sessionId = null))
+        val fallback = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+        assertEquals("chatai", fallback.getHeader("x-opencode-session"))
+    }
 
     private fun requestMessages(): List<ChatRequestMessage> = listOf(ChatRequestMessage("user", "你好"))
 

@@ -65,6 +65,10 @@ interface MessageDao {
     @Query("UPDATE messages SET tool_calls = :toolCalls, updated_at = :updatedAt WHERE id = :id")
     suspend fun updateToolCalls(id: String, toolCalls: String?, updatedAt: Long)
 
+    /** 回写附件元数据（视频上传日志/远端的 URL 会随上传过程更新）。 */
+    @Query("UPDATE messages SET attachments = :attachments, updated_at = :updatedAt WHERE id = :id")
+    suspend fun updateAttachments(id: String, attachments: String?, updatedAt: Long)
+
     @Query("UPDATE messages SET content = :content, tool_result = :toolResult, updated_at = :updatedAt WHERE id = :id")
     suspend fun updateToolResultContent(id: String, content: String, toolResult: String?, updatedAt: Long)
 

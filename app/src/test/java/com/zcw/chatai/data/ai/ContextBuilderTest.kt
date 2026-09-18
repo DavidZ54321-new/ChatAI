@@ -9,6 +9,7 @@ import com.zcw.chatai.data.model.ToolCall
 import com.zcw.chatai.data.model.ToolResult
 import com.zcw.chatai.data.model.ToolStatus
 import com.zcw.chatai.data.net.ChatRequestImage
+import com.zcw.chatai.data.net.ChatRequestVideo
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -18,6 +19,8 @@ import org.junit.Test
 class ContextBuilderTest {
 
     private val image = ChatRequestImage(dataUrl = "data:image/jpeg;base64,AAAA")
+
+    private val video = ChatRequestVideo(url = "oss://dashscope-instant/x/v.mp4", isOss = true)
 
     private fun imageProvider(attachment: Attachment): ChatRequestImage? =
         if (attachment.relativePath.endsWith("missing.jpg")) null else image
@@ -114,7 +117,7 @@ class ContextBuilderTest {
             message(id = "a1", role = Role.ASSISTANT, content = "", toolCalls = calls, reasoningContent = "想"),
             message(id = "t1", role = Role.TOOL, content = "结果", toolCallId = "call_1"),
         )
-        val built = ContextBuilder.build(messages, imageLimit = 0) { null }
+        val built = ContextBuilder.build(messages, imageLimit = 0, imageProvider = { null })
         assertEquals(listOf("assistant", "tool"), built.map { it.role })
         assertEquals(calls, built[0].toolCalls)
         assertEquals("想", built[0].reasoning)
@@ -124,7 +127,7 @@ class ContextBuilderTest {
     @Test
     fun plainAssistantDoesNotEchoReasoning() {
         val messages = listOf(message(id = "a1", role = Role.ASSISTANT, content = "答案", reasoningContent = "想"))
-        val built = ContextBuilder.build(messages, imageLimit = 0) { null }
+        val built = ContextBuilder.build(messages, imageLimit = 0, imageProvider = { null })
         assertNull(built.single().reasoning)
     }
 
@@ -142,7 +145,7 @@ class ContextBuilderTest {
             add(message(id = "t0", role = Role.TOOL, content = "结果", toolCallId = "call_1"))
             repeat(39) { add(message(id = "u$it", role = Role.USER, content = "内容$it")) }
         }
-        val built = ContextBuilder.build(history, imageLimit = 0) { null }
+        val built = ContextBuilder.build(history, imageLimit = 0, imageProvider = { null })
         assertEquals(ContextBuilder.MAX_MESSAGES - 1, built.size)
         assertFalse(built.first().role == "tool")
         assertTrue(built.none { it.role == "tool" })
@@ -165,7 +168,7 @@ class ContextBuilderTest {
                 toolResult = ToolResult(status = ToolStatus.OK, detail = "d", text = ""),
             ),
         )
-        val built = ContextBuilder.build(messages, imageLimit = 0) { null }
+        val built = ContextBuilder.build(messages, imageLimit = 0, imageProvider = { null })
         assertEquals(2, built.size)
         assertEquals("真实结果", built[1].content)
     }
@@ -187,7 +190,7 @@ class ContextBuilderTest {
                 toolResult = ToolResult(status = ToolStatus.OK, detail = "d", text = ""),
             ),
         )
-        val built = ContextBuilder.build(messages, imageLimit = 0) { null }
+        val built = ContextBuilder.build(messages, imageLimit = 0, imageProvider = { null })
         assertEquals(listOf("assistant", "tool"), built.map { it.role })
         assertEquals("call_1", built[1].toolCallId)
         assertTrue(built[1].content.isNotBlank())
@@ -210,7 +213,7 @@ class ContextBuilderTest {
             message(id = "u1", role = Role.USER, content = "你继续"),
             message(id = "t2", role = Role.TOOL, content = "结果2", toolCallId = "call_2"),
         )
-        val built = ContextBuilder.build(messages, imageLimit = 0) { null }
+        val built = ContextBuilder.build(messages, imageLimit = 0, imageProvider = { null })
         assertEquals(listOf("assistant", "tool", "tool", "user"), built.map { it.role })
         assertEquals(listOf("call_1", "call_2"), built.filter { it.role == "tool" }.map { it.toolCallId })
         assertEquals("结果2", built[2].content)
@@ -232,7 +235,7 @@ class ContextBuilderTest {
             message(id = "t1", role = Role.TOOL, content = "结果1", toolCallId = "call_1"),
             message(id = "u1", role = Role.USER, content = "你继续"),
         )
-        val built = ContextBuilder.build(messages, imageLimit = 0) { null }
+        val built = ContextBuilder.build(messages, imageLimit = 0, imageProvider = { null })
         assertEquals(listOf("assistant", "tool", "tool", "user"), built.map { it.role })
         assertEquals("call_2", built[2].toolCallId)
         assertEquals(ContextBuilder.TOOL_EMPTY, built[2].content)
@@ -245,7 +248,7 @@ class ContextBuilderTest {
             message(id = "t1", role = Role.TOOL, content = "孤儿", toolCallId = "call_x"),
             message(id = "a1", role = Role.ASSISTANT, content = "回答"),
         )
-        val built = ContextBuilder.build(messages, imageLimit = 0) { null }
+        val built = ContextBuilder.build(messages, imageLimit = 0, imageProvider = { null })
         assertEquals(listOf("user", "assistant"), built.map { it.role })
     }
 
@@ -260,10 +263,87 @@ class ContextBuilderTest {
                 reasoningContent = "",
             ),
         )
-        val built = ContextBuilder.build(messages, imageLimit = 0) { null }
+        val built = ContextBuilder.build(messages, imageLimit = 0, imageProvider = { null })
         // 缺应答的 tool_call 会合成占位应答，但 assistant 本体的空思考不回传。
         assertEquals(listOf("assistant", "tool"), built.map { it.role })
         assertNull(built.first().reasoning)
+    }
+
+    @Test
+    fun videoOnlyMessageIsEncodedAsVideoBlock() {
+        val history = listOf(
+            message(
+                "u1",
+                Role.USER,
+                "看看这个视频",
+                attachments = listOf(videoAttachment("v1")),
+            ),
+        )
+        val built = ContextBuilder.build(
+            history,
+            imageLimit = 2,
+            imageProvider = { null },
+            videoProvider = { video },
+        )
+        assertEquals(listOf(video), built.single().videos)
+        assertTrue(built.single().images.isEmpty())
+        assertEquals("看看这个视频", built.single().content)
+    }
+
+    @Test
+    fun olderVideoIsDemotedToVideoPlaceholder() {
+        val history = listOf(
+            message("u1", Role.USER, "第一个视频", attachments = listOf(videoAttachment("v1"))),
+            message("a1", Role.ASSISTANT, "看到了"),
+            message("u2", Role.USER, "第二个视频", attachments = listOf(videoAttachment("v2"))),
+            message("a2", Role.ASSISTANT, "嗯"),
+            message("u3", Role.USER, "第三个视频", attachments = listOf(videoAttachment("v3"))),
+        )
+        val built = ContextBuilder.build(
+            history,
+            imageLimit = 2,
+            imageProvider = { null },
+            videoProvider = { video },
+        )
+        assertTrue(built.first().videos.isEmpty())
+        assertTrue(built.first().content, built.first().content.contains(ContextBuilder.VIDEO_OMITTED))
+        assertEquals(1, built[2].videos.size)
+        assertEquals(1, built[4].videos.size)
+    }
+
+    @Test
+    fun missingVideoFileBecomesUnavailablePlaceholder() {
+        val history = listOf(
+            message("u1", Role.USER, "视频丢了", attachments = listOf(videoAttachment("v1"))),
+        )
+        val built = ContextBuilder.build(
+            history,
+            imageLimit = 2,
+            imageProvider = { null },
+            videoProvider = { null },
+        )
+        assertTrue(built.single().videos.isEmpty())
+        assertTrue(built.single().content.contains(ContextBuilder.VIDEO_MISSING))
+    }
+
+    @Test
+    fun imageAndVideoInOneMessageAreBothEncoded() {
+        val history = listOf(
+            message(
+                "u1",
+                Role.USER,
+                "图文视频",
+                attachments = listOf(attachment("a1", "attachments/c/a1.jpg"), videoAttachment("v1")),
+            ),
+        )
+        val built = ContextBuilder.build(
+            history,
+            imageLimit = 2,
+            imageProvider = { image },
+            videoProvider = { video },
+        )
+        assertEquals(1, built.single().images.size)
+        assertEquals(1, built.single().videos.size)
     }
 
     private fun attachment(id: String, path: String) = Attachment(
@@ -274,6 +354,17 @@ class ContextBuilderTest {
         width = 100,
         height = 100,
         sizeBytes = 1000,
+    )
+
+    private fun videoAttachment(id: String) = Attachment(
+        id = id,
+        kind = AttachmentKind.VIDEO,
+        relativePath = "attachments/c/$id.mp4",
+        mimeType = "video/mp4",
+        width = 320,
+        height = 240,
+        sizeBytes = 6L * 1024 * 1024,
+        durationMs = 3_000,
     )
 
     private fun message(

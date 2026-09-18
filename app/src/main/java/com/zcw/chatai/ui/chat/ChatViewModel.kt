@@ -12,11 +12,15 @@ import com.zcw.chatai.data.StreamingMessage
 import com.zcw.chatai.data.media.AttachmentLimits
 import com.zcw.chatai.data.media.AttachmentStore
 import com.zcw.chatai.data.model.Attachment
+import com.zcw.chatai.data.model.AttachmentKind
 import com.zcw.chatai.data.model.Conversation
 import com.zcw.chatai.data.model.Message
 import com.zcw.chatai.data.model.MessageStatus
 import com.zcw.chatai.data.model.Role
 import com.zcw.chatai.data.prefs.SettingsRepository
+import com.zcw.chatai.data.provider.ProviderCatalog
+import com.zcw.chatai.data.provider.ToolBackendResolver
+import com.zcw.chatai.data.web.ImageSearchProvider
 import com.zcw.chatai.data.web.WebSearchProvider
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -35,7 +39,10 @@ class ChatViewModel(
     private val repository: ChatRepository,
     private val attachmentStore: AttachmentStore,
     settingsRepository: SettingsRepository,
-    private val searchProvider: WebSearchProvider? = null,
+    /** 按供应商 id 选搜索后端（可用性提示用）。 */
+    private val searchProviders: Map<String, WebSearchProvider> = emptyMap(),
+    /** 按供应商 id 选图搜后端（可用性提示用）。 */
+    private val imageProviders: Map<String, ImageSearchProvider> = emptyMap(),
 ) : ViewModel() {
 
     private val input = MutableStateFlow("")
@@ -60,20 +67,41 @@ class ChatViewModel(
         notice,
         settingsRepository.settings,
     ) { text, pend, note, settings ->
+        val entry = settings.activeProvider
+        // 工具后端与主对话供应商解耦（借道）：可用性只看后端配置，不看会话模型。
+        val backendIds = ToolBackendResolver.resolve(
+            providers = settings.providers,
+            activeProviderId = settings.activeProviderId,
+            conversationProviderId = null,
+            preferredSearchProviderId = settings.searchProviderId,
+        )
+        val textAvailable = backendIds.textProviderId?.let { providerId ->
+            settings.providers[providerId]?.let { providerEntry ->
+                searchProviders[providerId]?.available(providerEntry.baseUrl, providerEntry.apiKey)
+            }
+        } == true
+        val imageAvailable = backendIds.imageProviderId?.let { providerId ->
+            settings.providers[providerId]?.let { providerEntry ->
+                imageProviders[providerId]?.available(providerEntry.baseUrl, providerEntry.apiKey)
+            }
+        } == true
+
         ComposerSnapshot(
             input = text,
             pending = pend,
             notice = note,
-            defaultModel = settings.model,
-            webSearchAvailable = searchProvider?.available(settings.baseUrl, settings.apiKey) == true,
+            defaultModel = entry.model,
+            webSearchAvailable = textAvailable || imageAvailable,
+            activeProviderId = settings.activeProviderId,
         )
     }
 
     private val turnFlow = combine(
         repository.streaming,
         repository.busyConversations,
-    ) { streaming, busy ->
-        TurnSnapshot(streaming = streaming, busy = busy)
+        repository.videoUploads,
+    ) { streaming, busy, uploads ->
+        TurnSnapshot(streaming = streaming, busy = busy, videoUploads = uploads)
     }
 
     val state: StateFlow<ChatUiState> = combine(
@@ -115,7 +143,8 @@ class ChatViewModel(
 
     fun addAttachment(uri: Uri) {
         viewModelScope.launch {
-            if (pending.value.size >= AttachmentLimits.MAX_IMAGES) {
+            val imageCount = pending.value.count { it.attachment.kind == AttachmentKind.IMAGE }
+            if (imageCount >= AttachmentLimits.MAX_IMAGES) {
                 notice.value = "最多只能发送 ${AttachmentLimits.MAX_IMAGES} 张图片"
                 return@launch
             }
@@ -136,6 +165,27 @@ class ChatViewModel(
         val target = pending.value.firstOrNull { it.id == attachmentId } ?: return
         attachmentStore.delete(listOf(target.attachment))
         pending.value = pending.value.filterNot { it.id == attachmentId }
+    }
+
+    /** 导入视频：原样复制 mp4 + 抽首帧缩略图；超过数量/大小上限给可读提示。 */
+    fun addVideo(uri: Uri) {
+        viewModelScope.launch {
+            val videoCount = pending.value.count { it.attachment.kind == AttachmentKind.VIDEO }
+            if (videoCount >= AttachmentLimits.MAX_VIDEOS) {
+                notice.value = "最多只能发送 ${AttachmentLimits.MAX_VIDEOS} 个视频"
+                return@launch
+            }
+            val id = ensureConversation()
+            runCatching { attachmentStore.importVideo(id, uri) }
+                .onSuccess { attachment ->
+                    pending.value = pending.value + PendingAttachment(
+                        id = attachment.id,
+                        thumbnailPath = attachmentStore.thumbnailOf(attachment).absolutePath,
+                        attachment = attachment,
+                    )
+                }
+                .onFailure { t -> notice.value = t.message ?: "视频处理失败" }
+        }
     }
 
     fun consumeNotice() {
@@ -300,10 +350,14 @@ class ChatViewModel(
                 list
             }
         }
+        // 视频能不能发由**会话绑定的供应商**决定；迁移后的旧会话为空串 → 跟随激活供应商
+        // （与 ChatRepository.resolveConfig 同一条规则）。
+        val providerId = conversation?.providerId?.takeIf { it.isNotBlank() } ?: composer.activeProviderId
         return ChatUiState(
             conversationId = id,
             title = conversation?.title ?: "新对话",
             model = conversation?.model?.takeIf { it.isNotBlank() } ?: composer.defaultModel,
+            providerId = providerId,
             messages = items,
             isStreaming = activeStream != null,
             streamingMessageId = activeStream?.messageId,
@@ -314,6 +368,8 @@ class ChatViewModel(
             notice = composer.notice,
             webSearchEnabled = conversation?.webSearchEnabled == true,
             webSearchAvailable = composer.webSearchAvailable,
+            videoInputAvailable = ProviderCatalog.supportsVideo(providerId),
+            videoUploadNotice = id?.let { turn.videoUploads[it] },
         )
     }
 
@@ -337,6 +393,8 @@ class ChatViewModel(
                 fullPath = attachmentStore.fileOf(attachment).absolutePath,
                 width = attachment.width,
                 height = attachment.height,
+                isVideo = attachment.kind == AttachmentKind.VIDEO,
+                durationMs = attachment.durationMs,
             )
         },
         toolResult = toolResult,
@@ -345,6 +403,7 @@ class ChatViewModel(
     private data class TurnSnapshot(
         val streaming: Map<String, StreamingMessage>,
         val busy: Set<String>,
+        val videoUploads: Map<String, String>,
     )
 
     private data class ComposerSnapshot(
@@ -353,6 +412,7 @@ class ChatViewModel(
         val notice: String?,
         val defaultModel: String,
         val webSearchAvailable: Boolean,
+        val activeProviderId: String,
     )
 
     companion object {
@@ -360,9 +420,12 @@ class ChatViewModel(
             repository: ChatRepository,
             attachmentStore: AttachmentStore,
             settingsRepository: SettingsRepository,
-            searchProvider: WebSearchProvider? = null,
+            searchProviders: Map<String, WebSearchProvider> = emptyMap(),
+            imageProviders: Map<String, ImageSearchProvider> = emptyMap(),
         ): ViewModelProvider.Factory = viewModelFactory {
-            initializer { ChatViewModel(repository, attachmentStore, settingsRepository, searchProvider) }
+            initializer {
+                ChatViewModel(repository, attachmentStore, settingsRepository, searchProviders, imageProviders)
+            }
         }
     }
 }

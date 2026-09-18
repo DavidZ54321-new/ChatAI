@@ -31,4 +31,11 @@ data class ConversationEntity(
     val isPinned: Boolean,
     @ColumnInfo(name = "web_search_enabled", defaultValue = "0")
     val webSearchEnabled: Boolean = false,
+    /**
+     * 绑定的供应商 id（`ProviderCatalog` 的常量）；空串 = 跟随当前激活供应商
+     * （迁移后的旧会话没有绑定信息，见 `MIGRATION_4_5`）。
+     * SQL 默认值保留 'deepseek' 只为不动已导出的 v5 schema；运行时插入总是显式传值。
+     */
+    @ColumnInfo(name = "provider_id", defaultValue = "deepseek")
+    val providerId: String = "",
 )

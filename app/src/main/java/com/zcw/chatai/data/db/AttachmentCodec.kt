@@ -42,6 +42,12 @@ object AttachmentCodec {
         width = width,
         height = height,
         size = sizeBytes,
+        durationMs = durationMs,
+        remoteUrl = remoteUrl,
+        remoteModel = remoteModel,
+        remoteExpiresAt = remoteExpiresAt,
+        pendingKey = pendingKey,
+        pendingPolicy = pendingPolicy,
     )
 
     private fun AttachmentDto.toModel(): Attachment? {
@@ -55,6 +61,12 @@ object AttachmentCodec {
             width = width,
             height = height,
             sizeBytes = size,
+            durationMs = durationMs,
+            remoteUrl = remoteUrl,
+            remoteModel = remoteModel,
+            remoteExpiresAt = remoteExpiresAt,
+            pendingKey = pendingKey,
+            pendingPolicy = pendingPolicy,
         )
     }
 
@@ -70,4 +82,10 @@ private data class AttachmentDto(
     val width: Int = 0,
     val height: Int = 0,
     val size: Long = 0L,
+    val durationMs: Long? = null,
+    val remoteUrl: String? = null,
+    val remoteModel: String? = null,
+    val remoteExpiresAt: Long? = null,
+    val pendingKey: String? = null,
+    val pendingPolicy: String? = null,
 )

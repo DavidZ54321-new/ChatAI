@@ -55,6 +55,40 @@ class AttachmentCodecTest {
         assertTrue(decoded.single().mimeType.isNotBlank())
     }
 
+    @Test
+    fun roundTripsVideoAttachmentWithRemoteJournal() {
+        val original = listOf(
+            Attachment(
+                id = "v1",
+                kind = AttachmentKind.VIDEO,
+                relativePath = "attachments/c/v1.mp4",
+                mimeType = "video/mp4",
+                width = 320,
+                height = 240,
+                sizeBytes = 12_345_678,
+                durationMs = 9_500,
+                remoteUrl = "oss://dashscope-instant/x/v1.mp4",
+                remoteModel = "qwen3.8-max",
+                remoteExpiresAt = 1_800_000_000_000L,
+                pendingKey = "dashscope-instant/x/v1.mp4",
+                pendingPolicy = "{\"policy\":\"p\"}",
+            ),
+        )
+        assertEquals(original, AttachmentCodec.decode(AttachmentCodec.encode(original)))
+    }
+
+    @Test
+    fun legacyImageJsonWithoutVideoFieldsDecodesWithNulls() {
+        val raw = """[{"id":"a","kind":"IMAGE","path":"p.jpg","mime":"image/jpeg","width":1,"height":1,"size":2}]"""
+        val decoded = AttachmentCodec.decode(raw).single()
+        assertEquals(null, decoded.durationMs)
+        assertEquals(null, decoded.remoteUrl)
+        assertEquals(null, decoded.remoteModel)
+        assertEquals(null, decoded.remoteExpiresAt)
+        assertEquals(null, decoded.pendingKey)
+        assertEquals(null, decoded.pendingPolicy)
+    }
+
     private fun attachment(
         id: String,
         path: String,

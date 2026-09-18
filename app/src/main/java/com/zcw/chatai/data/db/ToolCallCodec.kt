@@ -1,6 +1,8 @@
 package com.zcw.chatai.data.db
 
+import com.zcw.chatai.data.model.SearchedImage
 import com.zcw.chatai.data.model.ToolCall
+import com.zcw.chatai.data.model.ToolKind
 import com.zcw.chatai.data.model.ToolResult
 import com.zcw.chatai.data.model.ToolSource
 import com.zcw.chatai.data.model.ToolStatus
@@ -57,6 +59,8 @@ object ToolCallCodec {
         detail = detail,
         sources = sources.map { SourceDto(it.url, it.title, it.snippet, it.publishedAt) },
         text = text,
+        kind = kind.name,
+        images = images.map { ImageDto(it.index, it.title, it.url) },
     )
 
     private fun ToolResultDto.toModel() = ToolResult(
@@ -65,6 +69,10 @@ object ToolCallCodec {
         sources = sources.filter { it.url.isNotBlank() }
             .map { ToolSource(it.url, it.title, it.snippet, it.publishedAt) },
         text = text,
+        // 旧数据没有 kind/images 字段：默认 SEARCH + 空列表，行为与升级前一致。
+        kind = ToolKind.entries.firstOrNull { it.name == kind } ?: ToolKind.SEARCH,
+        images = images.filter { it.url.isNotBlank() }
+            .map { SearchedImage(index = it.index, title = it.title, url = it.url) },
     )
 }
 
@@ -77,6 +85,15 @@ private data class ToolResultDto(
     val detail: String,
     val sources: List<SourceDto> = emptyList(),
     val text: String = "",
+    val kind: String = ToolKind.SEARCH.name,
+    val images: List<ImageDto> = emptyList(),
+)
+
+@Serializable
+private data class ImageDto(
+    val index: Int = 0,
+    val title: String = "",
+    val url: String,
 )
 
 @Serializable

@@ -52,3 +52,20 @@ val MIGRATION_3_4 = object : Migration(3, 4) {
         db.execSQL("ALTER TABLE conversations ADD COLUMN web_search_enabled INTEGER NOT NULL DEFAULT 0")
     }
 }
+
+/**
+ * v4 → v5：会话绑定供应商。
+ *
+ * - `conversations.provider_id`：写 `ProviderCatalog` 的稳定 id（deepseek/qwen/opencode-go/custom）。
+ *   旧版本只有一套**全局**连接配置，所以旧会话统一回填空串 = 跟随当前激活供应商
+ *   （`resolveConfig` 把空串解析成激活供应商，行为与旧版一致）。
+ *   不能写死 deepseek：旧配置可能是 Qwen/自建端点，写死会让这些会话打开就报「供应商已被删除」，
+ *   而 Room 迁移又读不到 DataStore，无法按基址推断。
+ * - 连接配置从 DataStore 的单套平铺 key 迁到 `providers_json`（懒迁移，见 SettingsRepository）。
+ */
+val MIGRATION_4_5 = object : Migration(4, 5) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE conversations ADD COLUMN provider_id TEXT NOT NULL DEFAULT 'deepseek'")
+        db.execSQL("UPDATE conversations SET provider_id = ''")
+    }
+}

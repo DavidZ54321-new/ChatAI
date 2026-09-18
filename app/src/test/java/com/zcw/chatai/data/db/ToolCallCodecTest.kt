@@ -1,6 +1,8 @@
 package com.zcw.chatai.data.db
 
+import com.zcw.chatai.data.model.SearchedImage
 import com.zcw.chatai.data.model.ToolCall
+import com.zcw.chatai.data.model.ToolKind
 import com.zcw.chatai.data.model.ToolResult
 import com.zcw.chatai.data.model.ToolSource
 import com.zcw.chatai.data.model.ToolStatus
@@ -124,8 +126,43 @@ class ToolCallCodecTest {
             ),
         )
         assertEquals(
-            """{"status":"OK","detail":"kotlin","sources":[{"url":"https://a","title":"A","snippet":"snippet","publishedAt":"2026-01-01"}],"text":"Search results"}""",
+            """{"status":"OK","detail":"kotlin","sources":[{"url":"https://a","title":"A","snippet":"snippet","publishedAt":"2026-01-01"}],"text":"Search results","kind":"SEARCH","images":[]}""",
             encoded,
         )
+    }
+
+    @Test
+    fun roundTripsImageSearchResult() {
+        val result = ToolResult(
+            status = ToolStatus.OK,
+            detail = "科技感封面",
+            text = "Image search results",
+            kind = ToolKind.IMAGE_SEARCH,
+            images = listOf(
+                SearchedImage(1, "封面 A", "https://img.example/a.jpg"),
+                SearchedImage(2, "封面 B", "https://img.example/b.jpg"),
+            ),
+        )
+        assertEquals(result, ToolCallCodec.decodeResult(ToolCallCodec.encodeResult(result)))
+    }
+
+    @Test
+    fun legacyResultWithoutKindAndImagesDecodesWithDefaults() {
+        // v4 及以前落库的行没有这两个字段：必须解出 SEARCH + 空列表，而不是整条丢弃。
+        val decoded = ToolCallCodec.decodeResult(
+            """{"status":"OK","detail":"https://a","sources":[{"url":"https://a"}],"text":"page"}""",
+        )
+        assertEquals(ToolStatus.OK, decoded?.status)
+        assertEquals(ToolKind.SEARCH, decoded?.kind)
+        assertTrue(decoded!!.images.isEmpty())
+    }
+
+    @Test
+    fun unknownKindFallsBackToSearchAndBlankImageUrlsAreDropped() {
+        val decoded = ToolCallCodec.decodeResult(
+            """{"status":"OK","detail":"d","kind":"FUTURE_KIND","images":[{"index":1,"title":"t","url":""},{"index":2,"title":"ok","url":"https://x"}]}""",
+        )
+        assertEquals(ToolKind.SEARCH, decoded?.kind)
+        assertEquals(listOf("https://x"), decoded?.images?.map { it.url })
     }
 }

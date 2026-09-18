@@ -226,4 +226,11 @@ class MappersTest {
         )
         assertEquals(conversation, conversation.toEntity().toModel())
     }
+
+    @Test
+    fun roundTripsConversationBoundProvider() {
+        val bound = conversation.copy(providerId = "qwen")
+        assertEquals(bound, bound.toEntity().toModel())
+        assertEquals("", conversation.toEntity().providerId)
+    }
 }

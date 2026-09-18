@@ -29,7 +29,8 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
             repository = app.chatRepository,
             attachmentStore = app.attachmentStore,
             settingsRepository = app.settingsRepository,
-            searchProvider = app.webSearchProvider,
+            searchProviders = app.webSearchProviders,
+            imageProviders = app.imageSearchProviders,
         ),
     )
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -71,6 +72,7 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
                 onOpenSettings = { showSettings = true },
                 onOpenDrawer = { scope.launch { drawerState.open() } },
                 onAddImage = viewModel::addAttachment,
+                onAddVideo = viewModel::addVideo,
                 onRemoveAttachment = viewModel::removeAttachment,
                 onModelClick = { showModelPicker = true },
                 onToggleWebSearch = viewModel::toggleWebSearch,
@@ -80,6 +82,7 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
         if (showModelPicker) {
             ModelPickerSheet(
                 currentModel = state.model,
+                providerId = state.providerId,
                 onDismiss = { showModelPicker = false },
                 onSelect = { model ->
                     viewModel.setModel(model)
