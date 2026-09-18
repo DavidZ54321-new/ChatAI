@@ -1,11 +1,14 @@
 package com.zcw.chatai.data
 
+import com.zcw.chatai.data.ai.AgentLoop
 import com.zcw.chatai.data.ai.ContextBuilder
 import com.zcw.chatai.data.ai.StreamAccumulator
+import com.zcw.chatai.data.ai.ToolCallAccumulator
 import com.zcw.chatai.data.db.AppDatabase
 import com.zcw.chatai.data.db.AttachmentCodec
 import com.zcw.chatai.data.db.ConversationEntity
 import com.zcw.chatai.data.db.MessageEntity
+import com.zcw.chatai.data.db.ToolCallCodec
 import com.zcw.chatai.data.db.toModel
 import com.zcw.chatai.data.media.AttachmentLimits
 import com.zcw.chatai.data.media.AttachmentStore
@@ -17,10 +20,18 @@ import com.zcw.chatai.data.model.ConversationTitle
 import com.zcw.chatai.data.model.Message
 import com.zcw.chatai.data.model.MessageStatus
 import com.zcw.chatai.data.model.Role
+import com.zcw.chatai.data.model.ToolCall
+import com.zcw.chatai.data.model.ToolResult
+import com.zcw.chatai.data.model.ToolStatus
 import com.zcw.chatai.data.net.ApiErrorMapper
 import com.zcw.chatai.data.net.ChatApi
 import com.zcw.chatai.data.net.ChatApiException
+import com.zcw.chatai.data.net.ChatStreamEvent
 import com.zcw.chatai.data.prefs.SettingsRepository
+import com.zcw.chatai.data.web.HttpWebFetcher
+import com.zcw.chatai.data.web.WebFetcher
+import com.zcw.chatai.data.web.WebSearchProvider
+import com.zcw.chatai.data.web.WebTools
 import android.os.SystemClock
 import android.util.Log
 import java.util.UUID
@@ -41,6 +52,9 @@ import kotlinx.coroutines.withContext
 
 /** 正在流式生成的消息（内容刻意不进数据库，等 checkpoint / 结束才写）。 */
 private const val TAG = "ChatRepository"
+
+/** 工具执行被中断（崩溃窗口兜底）时占位，保持 assistant 的 tool_calls 有应答。 */
+private const val INTERRUPTED_TOOL_TEXT = "[工具执行被中断，无返回内容]"
 
 data class StreamingMessage(
     val conversationId: String,
@@ -68,6 +82,8 @@ class ChatRepository(
     private val settingsRepository: SettingsRepository,
     private val api: ChatApi,
     private val attachmentStore: AttachmentStore,
+    private val searchProvider: WebSearchProvider? = null,
+    private val webFetcher: WebFetcher = HttpWebFetcher(),
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
     private val nowMs: () -> Long = System::currentTimeMillis,
     /** 量时长用的**单调**时钟：墙钟被改 / NTP 跳一下会让时长算出负数或离谱值。 */
@@ -89,6 +105,11 @@ class ChatRepository(
     }
 
     private var streamJob: Job? = null
+
+    /** 当前工具活动（如「正在联网搜索：xxx」）。独立于 [streaming]：assistant 步结束后 streaming 会被清空。 */
+    private val _activity = MutableStateFlow<String?>(null)
+
+    val activity: StateFlow<String?> = _activity.asStateFlow()
 
     /** 统一收口后台失败：日志留堆栈，界面只给一句人话。 */
     private fun reportError(t: Throwable, fallback: String) {
@@ -284,29 +305,10 @@ class ChatRepository(
 
     private suspend fun startAssistant(conversationId: String) {
         val config = resolveConfig(conversationId)
-        val timestamp = nowMs()
-        val messageId = newId()
-        db.messageDao().upsert(
-            MessageEntity(
-                id = messageId,
-                conversationId = conversationId,
-                role = Role.ASSISTANT.name,
-                content = "",
-                status = MessageStatus.STREAMING.name,
-                errorMessage = null,
-                reasoningContent = null,
-                seq = db.messageDao().nextSeq(conversationId),
-                model = config.model,
-                promptTokens = null,
-                completionTokens = null,
-                createdAt = timestamp,
-                updatedAt = timestamp,
-            ),
-        )
-        refreshSummary(conversationId)
-        val history = db.messageDao().getByConversation(conversationId).map { it.toModel() }
+        val toolsUsable = config.webSearchEnabled &&
+            searchProvider?.available(config.baseUrl, config.apiKey) == true
         streamJob = scope.launch {
-            runStream(conversationId, messageId, config, history)
+            runAgentTurn(conversationId, config.copy(webSearchEnabled = toolsUsable))
         }
     }
 
@@ -325,12 +327,74 @@ class ChatRepository(
         db.conversationDao().updateWebSearchEnabled(conversationId, enabled)
     }
 
-    private suspend fun runStream(
+    private data class TurnOutcome(
+        val finishReason: String?,
+        val toolCalls: List<ToolCall>,
+        val failed: Boolean,
+    )
+
+    /**
+     * 有界 Agent 循环：每一步一条 assistant 消息；模型要工具就串行执行、落 TOOL 行、再流式。
+     * 预算耗尽时先执行完最后一批工具（保持历史合法），再不带工具强制收尾。
+     */
+    private suspend fun runAgentTurn(conversationId: String, config: ChatConfig) {
+        reconcileUnansweredToolCalls(conversationId)
+        var steps = 0
+        while (true) {
+            val forceFinal = steps >= config.maxAgentSteps
+            val messageId = newId()
+            val timestamp = nowMs()
+            db.messageDao().upsert(
+                MessageEntity(
+                    id = messageId,
+                    conversationId = conversationId,
+                    role = Role.ASSISTANT.name,
+                    content = "",
+                    status = MessageStatus.STREAMING.name,
+                    errorMessage = null,
+                    reasoningContent = null,
+                    seq = db.messageDao().nextSeq(conversationId),
+                    model = config.model,
+                    promptTokens = null,
+                    completionTokens = null,
+                    createdAt = timestamp,
+                    updatedAt = timestamp,
+                ),
+            )
+            refreshSummary(conversationId)
+            val history = db.messageDao().getByConversation(conversationId).map { it.toModel() }
+            val outcome = streamOnce(
+                conversationId = conversationId,
+                messageId = messageId,
+                config = if (forceFinal) config.copy(webSearchEnabled = false) else config,
+                history = history,
+            )
+            if (outcome.failed) return
+            val decision = AgentLoop.decide(outcome.finishReason, outcome.toolCalls, steps, config.maxAgentSteps)
+            when (decision) {
+                is AgentLoop.Decision.Continue -> {
+                    executeTools(conversationId, config, decision.toolCalls)
+                    steps++
+                }
+
+                AgentLoop.Decision.ForceFinal -> {
+                    executeTools(conversationId, config, outcome.toolCalls)
+                    steps++
+                }
+
+                AgentLoop.Decision.Finish -> return
+            }
+            // 收尾步无论如何都结束，杜绝模型在没有工具时仍回 tool_calls 造成死循环。
+            if (forceFinal) return
+        }
+    }
+
+    private suspend fun streamOnce(
         conversationId: String,
         messageId: String,
         config: ChatConfig,
         history: List<Message>,
-    ) {
+    ): TurnOutcome {
         val messages = withContext(Dispatchers.IO) {
             ContextBuilder.build(history, config.historyImageLimit) { attachment ->
                 attachmentStore.toRequestImage(attachment, config.imageDetail)
@@ -338,12 +402,14 @@ class ChatRepository(
         }
         // 计时从这里开始（含首 token 延迟），和 UI 上「已深度思考」的口径一致。
         val accumulator = StreamAccumulator(startedAt = elapsedMs())
+        val toolCalls = ToolCallAccumulator()
         var status = MessageStatus.COMPLETE
         var errorMessage: String? = null
 
         _streaming.value = StreamingMessage(conversationId, messageId, "", "")
         try {
             api.stream(config, messages).collect { event ->
+                if (event is ChatStreamEvent.ToolCallDelta) toolCalls.accept(event)
                 val update = accumulator.accept(event, elapsedMs())
                 if (update.publish) {
                     _streaming.value = StreamingMessage(
@@ -376,8 +442,131 @@ class ChatRepository(
         } finally {
             withContext(NonCancellable) {
                 finalize(conversationId, messageId, accumulator, status, errorMessage)
+                val assembled = toolCalls.assemble()
+                if (assembled.isNotEmpty()) {
+                    db.messageDao().updateToolCalls(messageId, ToolCallCodec.encodeCalls(assembled), nowMs())
+                }
             }
         }
+        return TurnOutcome(
+            finishReason = accumulator.finishReason,
+            toolCalls = toolCalls.assemble(),
+            failed = status == MessageStatus.ERROR,
+        )
+    }
+
+    private suspend fun executeTools(conversationId: String, config: ChatConfig, calls: List<ToolCall>) {
+        for (call in calls) {
+            val toolMessageId = newId()
+            val timestamp = nowMs()
+            db.messageDao().upsert(
+                MessageEntity(
+                    id = toolMessageId,
+                    conversationId = conversationId,
+                    role = Role.TOOL.name,
+                    content = "",
+                    status = MessageStatus.COMPLETE.name,
+                    errorMessage = null,
+                    reasoningContent = null,
+                    seq = db.messageDao().nextSeq(conversationId),
+                    model = config.model,
+                    promptTokens = null,
+                    completionTokens = null,
+                    toolCallId = call.id,
+                    toolResult = ToolCallCodec.encodeResult(
+                        ToolResult(status = ToolStatus.RUNNING, detail = activityLabel(call)),
+                    ),
+                    createdAt = timestamp,
+                    updatedAt = timestamp,
+                ),
+            )
+            _activity.value = activityLabel(call)
+            val result = runCatching { runTool(call, config) }
+                .getOrElse {
+                    ToolResult(status = ToolStatus.FAILED, detail = call.name, text = it.message ?: "工具执行失败")
+                }
+            db.messageDao().updateToolResultContent(
+                id = toolMessageId,
+                content = result.text.ifBlank { result.detail },
+                toolResult = ToolCallCodec.encodeResult(result),
+                updatedAt = nowMs(),
+            )
+            refreshSummary(conversationId)
+        }
+        _activity.value = null
+    }
+
+    private suspend fun runTool(call: ToolCall, config: ChatConfig): ToolResult = when (call.name) {
+        WebTools.SEARCH -> {
+            val query = WebTools.queryOf(call.arguments)
+                ?: return ToolResult(ToolStatus.FAILED, call.name, text = "缺少搜索词")
+            val provider = searchProvider
+                ?: return ToolResult(ToolStatus.FAILED, query, text = "未配置联网搜索后端")
+            val result = provider.search(query, WebTools.DEFAULT_MAX_RESULTS, config)
+            ToolResult(
+                status = ToolStatus.OK,
+                detail = query,
+                sources = result.sources,
+                text = WebTools.formatSearchResult(query, result),
+            )
+        }
+
+        WebTools.FETCH -> {
+            val url = WebTools.urlOf(call.arguments)
+                ?: return ToolResult(ToolStatus.FAILED, call.name, text = "缺少 URL")
+            val result = webFetcher.fetch(url)
+            ToolResult(
+                status = if (result.statusCode in 200..299) ToolStatus.OK else ToolStatus.FAILED,
+                detail = url,
+                text = WebTools.formatFetchResult(result),
+            )
+        }
+
+        else -> ToolResult(ToolStatus.FAILED, call.name, text = "未知工具：${call.name}")
+    }
+
+    private fun activityLabel(call: ToolCall): String = when (call.name) {
+        WebTools.SEARCH -> "正在联网搜索：${WebTools.queryOf(call.arguments).orEmpty()}"
+        WebTools.FETCH -> "正在抓取网页：${WebTools.urlOf(call.arguments).orEmpty()}"
+        else -> "正在调用 ${call.name}"
+    }
+
+    /** 崩溃窗口兜底：assistant 已落 tool_calls 但 TOOL 行没写上时，补一条中断占位，避免下次请求 400。 */
+    private suspend fun reconcileUnansweredToolCalls(conversationId: String) {
+        val entities = db.messageDao().getByConversation(conversationId)
+        val answered = entities.filter { it.role == Role.TOOL.name }.mapNotNull { it.toolCallId }.toSet()
+        val unanswered = entities
+            .filter { it.role == Role.ASSISTANT.name }
+            .flatMap { ToolCallCodec.decodeCalls(it.toolCalls) }
+            .filter { it.id !in answered }
+            .distinctBy { it.id }
+        if (unanswered.isEmpty()) return
+        var seq = db.messageDao().nextSeq(conversationId)
+        val timestamp = nowMs()
+        unanswered.forEach { call ->
+            db.messageDao().upsert(
+                MessageEntity(
+                    id = newId(),
+                    conversationId = conversationId,
+                    role = Role.TOOL.name,
+                    content = INTERRUPTED_TOOL_TEXT,
+                    status = MessageStatus.COMPLETE.name,
+                    errorMessage = null,
+                    reasoningContent = null,
+                    seq = seq++,
+                    model = null,
+                    promptTokens = null,
+                    completionTokens = null,
+                    toolCallId = call.id,
+                    toolResult = ToolCallCodec.encodeResult(
+                        ToolResult(status = ToolStatus.FAILED, detail = call.name, text = INTERRUPTED_TOOL_TEXT),
+                    ),
+                    createdAt = timestamp,
+                    updatedAt = timestamp,
+                ),
+            )
+        }
+        refreshSummary(conversationId)
     }
 
     private suspend fun finalize(
@@ -421,7 +610,7 @@ class ChatRepository(
 
     private suspend fun refreshSummary(conversationId: String) {
         val messages = db.messageDao().getByConversation(conversationId)
-        val preview = messages.lastOrNull()?.toModel()?.let { message ->
+        val preview = messages.lastOrNull { it.role != Role.TOOL.name }?.toModel()?.let { message ->
             when {
                 message.content.isNotBlank() -> ConversationTitle.preview(message.content)
                 message.attachments.isNotEmpty() -> "［图片］"
