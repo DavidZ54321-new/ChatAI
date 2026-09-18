@@ -91,6 +91,7 @@ class ChatRepository(
     private val attachmentStore: AttachmentStore,
     private val searchProvider: WebSearchProvider? = null,
     private val webFetcher: WebFetcher = HttpWebFetcher(),
+    private val turnForeground: TurnForeground = TurnForeground.NoOp,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
     private val nowMs: () -> Long = System::currentTimeMillis,
     /** 量时长用的**单调**时钟：墙钟被改 / NTP 跳一下会让时长算出负数或离谱值。 */
@@ -230,14 +231,8 @@ class ChatRepository(
         AttachmentLimits.validate(attachments)?.let { return SendResult.Rejected(it) }
         if (turnJob?.isActive == true) return SendResult.Rejected("正在生成中，请先停止")
 
-        turnJob = scope.launch {
-            try {
-                startTurn(conversationId, trimmed, attachments)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (t: Throwable) {
-                reportError(t, "发送失败")
-            }
+        turnJob = launchTurn("发送失败") {
+            startTurn(conversationId, trimmed, attachments)
         }
         return SendResult.Started
     }
@@ -252,32 +247,26 @@ class ChatRepository(
      */
     fun regenerate(messageId: String): SendResult {
         if (turnJob?.isActive == true) stop()
-        turnJob = scope.launch {
-            try {
-                val entity = db.messageDao().getById(messageId)
-                    ?: return@launch
-                val message = entity.toModel()
-                // 从 TOOL 行触发时，按它所属的 assistant 回合整组截断。
-                val targetSeq = resolveTurnStart(message) ?: run {
-                    _errors.value = "只能重新生成回答"
-                    return@launch
-                }
-                val all = db.messageDao().getByConversation(message.conversationId)
-                // 除 [targetSeq] 起的整段外，还要带走「应答落在该点之后」的孤儿 assistant（见 ToolTurnGrouping）。
-                val orphans = ToolTurnGrouping.orphanAssistantSeqsBefore(all.map { it.toNode() }, targetSeq)
-                val victims = all.filter { it.seq >= targetSeq || it.seq in orphans }
-                attachmentStore.delete(victims.flatMap { it.toModel().attachments })
-                db.messageDao().deleteByIds(
-                    all.filter { it.seq in orphans }.map { it.id },
-                )
-                db.messageDao().deleteFrom(message.conversationId, targetSeq)
-                refreshSummary(message.conversationId)
-                startAssistant(message.conversationId)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (t: Throwable) {
-                reportError(t, "重新生成失败")
+        turnJob = launchTurn("重新生成失败") {
+            val entity = db.messageDao().getById(messageId)
+                ?: return@launchTurn
+            val message = entity.toModel()
+            // 从 TOOL 行触发时，按它所属的 assistant 回合整组截断。
+            val targetSeq = resolveTurnStart(message) ?: run {
+                _errors.value = "只能重新生成回答"
+                return@launchTurn
             }
+            val all = db.messageDao().getByConversation(message.conversationId)
+            // 除 [targetSeq] 起的整段外，还要带走「应答落在该点之后」的孤儿 assistant（见 ToolTurnGrouping）。
+            val orphans = ToolTurnGrouping.orphanAssistantSeqsBefore(all.map { it.toNode() }, targetSeq)
+            val victims = all.filter { it.seq >= targetSeq || it.seq in orphans }
+            attachmentStore.delete(victims.flatMap { it.toModel().attachments })
+            db.messageDao().deleteByIds(
+                all.filter { it.seq in orphans }.map { it.id },
+            )
+            db.messageDao().deleteFrom(message.conversationId, targetSeq)
+            refreshSummary(message.conversationId)
+            startAssistant(message.conversationId)
         }
         return SendResult.Started
     }
@@ -311,6 +300,25 @@ class ChatRepository(
     fun stop() {
         turnJob?.cancel()
         turnJob = null
+    }
+
+    /**
+     * 在调用线程（发送/重生成点按，通常是主线程）立刻抬前台服务，
+     * 再把回合丢到仓库 scope。切走之后 freezer 才不会冻进程掐 TCP。
+     */
+    private fun launchTurn(errorFallback: String, block: suspend () -> Unit): Job {
+        turnForeground.acquire()
+        return scope.launch {
+            try {
+                block()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (t: Throwable) {
+                reportError(t, errorFallback)
+            } finally {
+                turnForeground.release()
+            }
+        }
     }
 
     private fun stopIfStreaming(conversationId: String) {

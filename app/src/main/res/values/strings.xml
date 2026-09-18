@@ -1,3 +1,7 @@
 <resources>
     <string name="app_name">ChatAI</string>
+    <string name="turn_notification_channel">生成回复</string>
+    <string name="turn_notification_title">ChatAI</string>
+    <string name="turn_notification_text">正在生成回复…</string>
+    <string name="turn_notification_stop">停止</string>
 </resources>

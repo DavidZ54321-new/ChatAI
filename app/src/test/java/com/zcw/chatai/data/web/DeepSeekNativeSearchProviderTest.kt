@@ -11,6 +11,7 @@ import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.SocketPolicy
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -105,7 +106,16 @@ class DeepSeekNativeSearchProviderTest {
     }
 
     @Test
-    fun mapsHttpErrorToFriendlyMessage() = runBlocking {
+    fun retriesTransientDisconnectThenSucceeds() = runBlocking {
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST))
+        server.enqueue(okResponse())
+        val result = DeepSeekNativeSearchProvider().search("x", 5, config())
+        assertEquals("OK", result.answer)
+        assertEquals(2, server.requestCount)
+    }
+
+    @Test
+    fun doesNotRetryHttpUnauthorized() = runBlocking {
         server.enqueue(
             MockResponse().setResponseCode(401)
                 .setHeader("Content-Type", "application/json")
@@ -117,6 +127,7 @@ class DeepSeekNativeSearchProviderTest {
         } catch (e: ChatApiException) {
             assertTrue(e.message.orEmpty(), e.message.orEmpty().contains("API Key"))
         }
+        assertEquals(1, server.requestCount)
     }
 
     @Test

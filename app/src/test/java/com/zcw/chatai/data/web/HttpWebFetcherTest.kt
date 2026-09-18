@@ -4,6 +4,7 @@ import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.SocketPolicy
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -57,6 +58,18 @@ class HttpWebFetcherTest {
     fun rejectsPrivateHostByDefault() = runBlocking {
         val result = HttpWebFetcher().fetch(server.url("/page").toString())
         assertEquals(0, result.statusCode)
+    }
+
+    @Test
+    fun retriesTransientDisconnectThenSucceeds() = runBlocking {
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST))
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "text/plain").setBody("hello-world"),
+        )
+        val result = fetcher().fetch(server.url("/page").toString())
+        assertEquals(200, result.statusCode)
+        assertTrue(result.text, result.text.contains("hello-world"))
+        assertEquals(2, server.requestCount)
     }
 
     @Test

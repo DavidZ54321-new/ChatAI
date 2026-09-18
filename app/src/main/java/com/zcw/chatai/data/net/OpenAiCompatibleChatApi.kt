@@ -270,6 +270,7 @@ class OpenAiCompatibleChatApi(
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(0, TimeUnit.MILLISECONDS)
             .callTimeout(0, TimeUnit.MILLISECONDS)
+            .pingInterval(20, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
             .build()
     }

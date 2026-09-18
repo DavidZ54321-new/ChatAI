@@ -5,6 +5,7 @@ import com.zcw.chatai.data.model.ToolSource
 import com.zcw.chatai.data.net.ApiErrorMapper
 import com.zcw.chatai.data.net.ChatApiException
 import com.zcw.chatai.data.net.EndpointUrl
+import com.zcw.chatai.data.net.TransientNetwork
 import java.util.concurrent.TimeUnit
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -164,7 +165,7 @@ class DeepSeekNativeSearchProvider(
             .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
             .build()
         return try {
-            val http = client.awaitBody(request, MAX_RESPONSE_BYTES)
+            val http = TransientNetwork.retry { client.awaitBody(request, MAX_RESPONSE_BYTES) }
             if (http.code !in 200..299) {
                 throw ChatApiException(ApiErrorMapper.httpError(http.code, errorMessage(http.text)))
             }
@@ -202,6 +203,7 @@ class DeepSeekNativeSearchProvider(
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .callTimeout(90, TimeUnit.SECONDS)
+            .pingInterval(20, TimeUnit.SECONDS)
             .build()
     }
 }

@@ -1,9 +1,13 @@
 package com.zcw.chatai.ui.chat
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -103,6 +107,34 @@ fun ChatScreen(
         ActivityResultContracts.PickMultipleVisualMedia(8),
     ) { uris -> uris.forEach(onAddImage) }
 
+    val notifyPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { /* 拒了前台服务仍能保活，只是自定义通知不可见。 */ }
+
+    fun requestNotifyIfNeeded() {
+        if (Build.VERSION.SDK_INT < 33) return
+        val granted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.POST_NOTIFICATIONS,
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!granted) notifyPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    fun sendKeepingAlive() {
+        onSend()
+        requestNotifyIfNeeded()
+    }
+
+    fun regenerateKeepingAlive(id: String) {
+        onRegenerate(id)
+        requestNotifyIfNeeded()
+    }
+
+    fun retryKeepingAlive(id: String) {
+        onRetry(id)
+        requestNotifyIfNeeded()
+    }
+
     // 拍照目标 URI 必须活过进程重建：相机在前台时我们的进程被杀是很常见的，
     // 只放在 remember 里会丢结果，表现为「确认后什么都没发生」。
     var captureUriText by rememberSaveable { mutableStateOf<String?>(null) }
@@ -155,7 +187,7 @@ fun ChatScreen(
                                 message = message,
                                 onLongPress = { actionTarget = message },
                                 onCopy = { clipboard.copy(message.content) },
-                                onRegenerate = { onRegenerate(message.id) },
+                                onRegenerate = { regenerateKeepingAlive(message.id) },
                                 onDelete = { onDeleteMessage(message.id) },
                                 onOpenImage = { previewTarget = it },
                             )
@@ -173,9 +205,9 @@ fun ChatScreen(
                                 isStreaming = state.isStreaming && message.id == state.streamingMessageId,
                                 meta = if (message.id == lastAssistantId) metaOf(message) else null,
                                 onLongPress = { actionTarget = message },
-                                onRetry = { onRetry(message.id) },
+                                onRetry = { retryKeepingAlive(message.id) },
                                 onCopy = { clipboard.copy(message.content) },
-                                onRegenerate = { onRegenerate(message.id) },
+                                onRegenerate = { regenerateKeepingAlive(message.id) },
                                 onDelete = { onDeleteMessage(message.id) },
                             )
                         }
@@ -245,7 +277,7 @@ fun ChatScreen(
                 isStreaming = state.isStreaming,
                 canSend = state.canSend,
                 pending = state.pending,
-                onSend = onSend,
+                onSend = { sendKeepingAlive() },
                 onStop = onStop,
                 onAddImage = { attachOpen = true },
                 onRemoveAttachment = onRemoveAttachment,
@@ -283,7 +315,7 @@ fun ChatScreen(
                 actionTarget = null
             },
             onRegenerate = {
-                onRegenerate(target.id)
+                regenerateKeepingAlive(target.id)
                 actionTarget = null
             },
             onDelete = {

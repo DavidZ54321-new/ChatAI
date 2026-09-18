@@ -11,6 +11,7 @@ import com.zcw.chatai.data.SendResult
 import com.zcw.chatai.data.StreamingMessage
 import com.zcw.chatai.data.media.AttachmentLimits
 import com.zcw.chatai.data.media.AttachmentStore
+import com.zcw.chatai.data.model.Attachment
 import com.zcw.chatai.data.model.Conversation
 import com.zcw.chatai.data.model.Message
 import com.zcw.chatai.data.model.MessageStatus
@@ -133,16 +134,24 @@ class ChatViewModel(
         val text = input.value
         val attachments = pending.value.map { it.attachment }
         if (text.isBlank() && attachments.isEmpty()) return
+        val existing = conversationId.value
+        if (existing != null) {
+            dispatchSend(existing, text, attachments)
+            return
+        }
         viewModelScope.launch {
-            val id = ensureConversation()
-            when (val result = repository.send(id, text, attachments)) {
-                SendResult.Started -> {
-                    input.value = ""
-                    pending.value = emptyList()
-                }
+            dispatchSend(ensureConversation(), text, attachments)
+        }
+    }
 
-                is SendResult.Rejected -> notice.value = result.reason
+    private fun dispatchSend(id: String, text: String, attachments: List<Attachment>) {
+        when (val result = repository.send(id, text, attachments)) {
+            SendResult.Started -> {
+                input.value = ""
+                pending.value = emptyList()
             }
+
+            is SendResult.Rejected -> notice.value = result.reason
         }
     }
 

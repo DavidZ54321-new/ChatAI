@@ -43,11 +43,13 @@ class ChatAiApp : Application() {
             attachmentStore = attachmentStore,
             searchProvider = webSearchProvider,
             webFetcher = webFetcher,
+            turnForeground = ChatTurnForeground(this),
         )
     }
 
     override fun onCreate() {
         super.onCreate()
+        ChatTurnService.ensureChannel(this)
         MainThreadWatchdog.startIfDebuggable(
             (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0,
         )

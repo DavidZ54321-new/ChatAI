@@ -1,5 +1,6 @@
 package com.zcw.chatai.data.web
 
+import com.zcw.chatai.data.net.TransientNetwork
 import java.net.InetAddress
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
@@ -37,7 +38,7 @@ class HttpWebFetcher(
             .get()
             .build()
         try {
-            val http = client.awaitBody(request, maxBytes)
+            val http = TransientNetwork.retry { client.awaitBody(request, maxBytes) }
             val contentType = http.contentType.orEmpty().substringBefore(';').trim().lowercase()
             if (contentType.isNotEmpty() && contentType !in allowedTypes) {
                 return@withContext failure(url, "不支持的内容类型：$contentType")
@@ -71,6 +72,7 @@ class HttpWebFetcher(
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(20, TimeUnit.SECONDS)
             .callTimeout(30, TimeUnit.SECONDS)
+            .pingInterval(20, TimeUnit.SECONDS)
             .followRedirects(false)
             .followSslRedirects(false)
             .build()
