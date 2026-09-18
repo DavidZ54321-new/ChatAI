@@ -47,7 +47,7 @@ ui/theme                 →  设计系统（Color / ChatColors / Type / Theme /
 .\gradlew.bat lint                 # AGP default; no formatter or typecheck task is configured
 ```
 
-单测全是 JVM 测试（246 个）：网络层用 MockWebServer，其余是纯函数（错误映射、压缩尺寸、
+单测全是 JVM 测试（278 个）：网络层用 MockWebServer，其余是纯函数（错误映射、压缩尺寸、
 能力表、LaTeX 分段、Markdown 行内公式、思考摘要/耗时格式化、视觉度量、Room 映射往返、
 工具调用累加/编解码、Agent 决策、HTML→文本、搜索响应解析）。
 
