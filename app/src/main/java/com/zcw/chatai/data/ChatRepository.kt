@@ -230,8 +230,13 @@ class ChatRepository(
         if (turnJob?.isActive == true) return SendResult.Rejected("正在生成中，请先停止")
 
         turnJob = scope.launch {
-            runCatching { startTurn(conversationId, trimmed, attachments) }
-                .onFailure { reportError(it, "发送失败") }
+            try {
+                startTurn(conversationId, trimmed, attachments)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (t: Throwable) {
+                reportError(t, "发送失败")
+            }
         }
         return SendResult.Started
     }
@@ -240,20 +245,24 @@ class ChatRepository(
     fun regenerate(messageId: String): SendResult {
         if (turnJob?.isActive == true) stop()
         turnJob = scope.launch {
-            runCatching {
+            try {
                 val entity = db.messageDao().getById(messageId)
-                    ?: return@runCatching
+                    ?: return@launch
                 val message = entity.toModel()
                 if (message.role != Role.ASSISTANT) {
                     _errors.value = "只能重新生成回答"
-                    return@runCatching
+                    return@launch
                 }
                 val victims = db.messageDao().getFrom(message.conversationId, message.seq)
                 attachmentStore.delete(victims.flatMap { it.toModel().attachments })
                 db.messageDao().deleteFrom(message.conversationId, message.seq)
                 refreshSummary(message.conversationId)
                 startAssistant(message.conversationId)
-            }.onFailure { reportError(it, "重新生成失败") }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (t: Throwable) {
+                reportError(t, "重新生成失败")
+            }
         }
         return SendResult.Started
     }
@@ -326,7 +335,8 @@ class ChatRepository(
         try {
             runAgentTurn(conversationId, config.copy(webSearchEnabled = toolsUsable))
         } finally {
-            activeConversationId = null
+            // 只在仍属于本会话时清空：被 stop + 新回合接管的竞态下不能误清新回合的标记。
+            if (activeConversationId == conversationId) activeConversationId = null
         }
     }
 
