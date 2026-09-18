@@ -316,7 +316,13 @@ class ChatRepository(
         return base.copy(
             model = conversation?.model?.takeIf { it.isNotBlank() } ?: base.model,
             systemPrompt = conversation?.systemPrompt?.takeIf { it.isNotBlank() } ?: base.systemPrompt,
+            webSearchEnabled = conversation?.webSearchEnabled == true,
         )
+    }
+
+    /** 会话级联网开关：写回 `conversations.web_search_enabled`。 */
+    suspend fun setConversationWebSearch(conversationId: String, enabled: Boolean) {
+        db.conversationDao().updateWebSearchEnabled(conversationId, enabled)
     }
 
     private suspend fun runStream(

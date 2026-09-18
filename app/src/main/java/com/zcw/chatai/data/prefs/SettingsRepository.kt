@@ -92,6 +92,7 @@ class SettingsRepository(context: Context) {
             includeUsage = settings.includeUsage,
             historyImageLimit = settings.historyImageLimit,
             extraParams = settings.extraParams.ifBlank { null },
+            webSearchEnabled = false,
         )
     }
 
