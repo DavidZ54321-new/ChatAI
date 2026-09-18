@@ -51,6 +51,13 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE conversation_id = :conversationId AND seq >= :seq ORDER BY seq ASC")
     suspend fun getFrom(conversationId: String, seq: Long): List<MessageEntity>
 
+    /** 按 id 集合删除（分组规则由 `ToolTurnGrouping` 决定，SQL 不做配对推断）。 */
+    @Query("DELETE FROM messages WHERE id IN (:ids)")
+    suspend fun deleteByIds(ids: List<String>)
+
+    @Query("DELETE FROM messages WHERE conversation_id = :conversationId AND seq >= :seq")
+    suspend fun deleteFrom(conversationId: String, seq: Long)
+
     @Query("UPDATE messages SET tool_calls = :toolCalls, updated_at = :updatedAt WHERE id = :id")
     suspend fun updateToolCalls(id: String, toolCalls: String?, updatedAt: Long)
 
@@ -59,9 +66,6 @@ interface MessageDao {
 
     @Query("DELETE FROM messages WHERE id = :id")
     suspend fun deleteById(id: String)
-
-    @Query("DELETE FROM messages WHERE conversation_id = :conversationId AND seq >= :seq")
-    suspend fun deleteFrom(conversationId: String, seq: Long)
 
     @Query("DELETE FROM messages WHERE conversation_id = :conversationId")
     suspend fun deleteByConversation(conversationId: String)

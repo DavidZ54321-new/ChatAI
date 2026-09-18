@@ -4,6 +4,7 @@ import com.zcw.chatai.data.ai.AgentLoop
 import com.zcw.chatai.data.ai.ContextBuilder
 import com.zcw.chatai.data.ai.StreamAccumulator
 import com.zcw.chatai.data.ai.ToolCallAccumulator
+import com.zcw.chatai.data.ai.ToolTurnGrouping
 import com.zcw.chatai.data.db.AppDatabase
 import com.zcw.chatai.data.db.AttachmentCodec
 import com.zcw.chatai.data.db.ConversationEntity
@@ -209,9 +210,14 @@ class ChatRepository(
         scope.launch {
             runCatching {
                 val entity = db.messageDao().getById(messageId) ?: return@runCatching
-                attachmentStore.delete(entity.toModel().attachments)
-                db.messageDao().deleteById(messageId)
-                refreshSummary(entity.conversationId)
+                val message = entity.toModel()
+                val all = db.messageDao().getByConversation(message.conversationId)
+                // 分组规则见 ToolTurnGrouping：删一半会留下孤立的 tool_calls / TOOL 行 → 下次 400。
+                val victims = ToolTurnGrouping.deletionSetFor(all.map { it.toNode() }, message.seq)
+                    .mapNotNull { seq -> all.firstOrNull { it.seq == seq } }
+                attachmentStore.delete(victims.flatMap { it.toModel().attachments })
+                db.messageDao().deleteByIds(victims.map { it.id })
+                refreshSummary(message.conversationId)
             }.onFailure { reportError(it, "删除消息失败") }
         }
     }
@@ -244,7 +250,13 @@ class ChatRepository(
         return SendResult.Started
     }
 
-    /** 重新生成：删掉这条回答及其之后的所有消息，用剩余上下文重跑。 */
+    /**
+     * 重新生成：删掉这条回答及其之后的所有消息，用剩余上下文重跑。
+     *
+     * Agent 回合是「assistant(tool_calls) + TOOL 结果」的整体。这里必须以**整组**为单位截断：
+     * - 落在目标之前的孤立 assistant（工具结果在目标之后）也要带走；
+     * - 否则会留下「搜索没结果 / 抓取失败」的旧步骤，模型继承后继续失败。
+     */
     fun regenerate(messageId: String): SendResult {
         if (turnJob?.isActive == true) stop()
         turnJob = scope.launch {
@@ -252,13 +264,20 @@ class ChatRepository(
                 val entity = db.messageDao().getById(messageId)
                     ?: return@launch
                 val message = entity.toModel()
-                if (message.role != Role.ASSISTANT) {
+                // 从 TOOL 行触发时，按它所属的 assistant 回合整组截断。
+                val targetSeq = resolveTurnStart(message) ?: run {
                     _errors.value = "只能重新生成回答"
                     return@launch
                 }
-                val victims = db.messageDao().getFrom(message.conversationId, message.seq)
+                val all = db.messageDao().getByConversation(message.conversationId)
+                // 除 [targetSeq] 起的整段外，还要带走「应答落在该点之后」的孤儿 assistant（见 ToolTurnGrouping）。
+                val orphans = ToolTurnGrouping.orphanAssistantSeqsBefore(all.map { it.toNode() }, targetSeq)
+                val victims = all.filter { it.seq >= targetSeq || it.seq in orphans }
                 attachmentStore.delete(victims.flatMap { it.toModel().attachments })
-                db.messageDao().deleteFrom(message.conversationId, message.seq)
+                db.messageDao().deleteByIds(
+                    all.filter { it.seq in orphans }.map { it.id },
+                )
+                db.messageDao().deleteFrom(message.conversationId, targetSeq)
                 refreshSummary(message.conversationId)
                 startAssistant(message.conversationId)
             } catch (cancelled: CancellationException) {
@@ -269,6 +288,30 @@ class ChatRepository(
         }
         return SendResult.Started
     }
+
+    /** 找出这条消息所属 Agent 回合的起点 seq：assistant 是自己的 seq，TOOL 走配对回它的发起回合。 */
+    private suspend fun resolveTurnStart(message: Message): Long? {
+        if (message.role == Role.ASSISTANT) return message.seq
+        if (message.role != Role.TOOL) return null
+        val callId = message.toolCallId ?: return message.seq
+        // 与 ToolTurnGrouping 用同一条解码路径：不能对原始 JSON 做子串匹配，
+        // 否则 id 恰好出现在别的调用 arguments 里会选错发起回合。
+        val owner = db.messageDao().getByConversation(message.conversationId)
+            .lastOrNull { entity ->
+                entity.role == Role.ASSISTANT.name &&
+                    entity.seq <= message.seq &&
+                    ToolCallCodec.decodeCalls(entity.toolCalls).any { it.id == callId }
+            }
+        return owner?.seq ?: message.seq
+    }
+
+    /** Room 实体 → 分组规则需要的纯数据（`ToolTurnGrouping.Node`）。 */
+    private fun MessageEntity.toNode(): ToolTurnGrouping.Node = ToolTurnGrouping.Node(
+        seq = seq,
+        role = Role.entries.firstOrNull { it.name == role } ?: Role.SYSTEM,
+        toolCalls = ToolCallCodec.decodeCalls(toolCalls),
+        toolCallId = toolCallId,
+    )
 
     fun stop() {
         turnJob?.cancel()
