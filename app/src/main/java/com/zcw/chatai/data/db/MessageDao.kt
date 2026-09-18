@@ -58,6 +58,10 @@ interface MessageDao {
     @Query("DELETE FROM messages WHERE conversation_id = :conversationId AND seq >= :seq")
     suspend fun deleteFrom(conversationId: String, seq: Long)
 
+    /** 给插入腾位置：把 [fromSeq] 起的行整体后移一位（seq 只有非唯一索引）。 */
+    @Query("UPDATE messages SET seq = seq + 1 WHERE conversation_id = :conversationId AND seq >= :fromSeq")
+    suspend fun shiftSeqsFrom(conversationId: String, fromSeq: Long)
+
     @Query("UPDATE messages SET tool_calls = :toolCalls, updated_at = :updatedAt WHERE id = :id")
     suspend fun updateToolCalls(id: String, toolCalls: String?, updatedAt: Long)
 

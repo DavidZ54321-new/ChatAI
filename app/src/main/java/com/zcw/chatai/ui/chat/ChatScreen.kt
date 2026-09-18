@@ -66,6 +66,7 @@ fun ChatScreen(
     onInputChange: (String) -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
+    onContinue: () -> Unit,
     onRetry: (String) -> Unit,
     onRegenerate: (String) -> Unit,
     onDeleteMessage: (String) -> Unit,
@@ -101,7 +102,6 @@ fun ChatScreen(
     val bottomBand = ChatMetrics.bottomDissolve(windowHeight, composerDp + bottomInset + 10.dp)
 
     val messages = state.messages
-    val lastAssistantId = messages.lastOrNull { it.role == Role.ASSISTANT }?.id
 
     val pickImages = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(8),
@@ -132,6 +132,11 @@ fun ChatScreen(
 
     fun retryKeepingAlive(id: String) {
         onRetry(id)
+        requestNotifyIfNeeded()
+    }
+
+    fun continueKeepingAlive() {
+        onContinue()
         requestNotifyIfNeeded()
     }
 
@@ -178,37 +183,35 @@ fun ChatScreen(
                 ),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                itemsIndexed(messages, key = { _, message -> message.id }) { index, message ->
-                    val previousRole = messages.getOrNull(index - 1)?.role
-                    val turnGap = if (previousRole != null && previousRole != message.role) 18.dp else 0.dp
+                val groups = MessageGroups.of(messages)
+                itemsIndexed(groups, key = { _, group -> group.key }) { index, group ->
+                    val previous = groups.getOrNull(index - 1)
+                    val turnGap = if (previous != null && (previous is MessageGroup.User) != (group is MessageGroup.User)) {
+                        18.dp
+                    } else {
+                        0.dp
+                    }
                     Box(Modifier.padding(top = turnGap)) {
-                        when (message.role) {
-                            Role.USER -> UserMessageItem(
-                                message = message,
-                                onLongPress = { actionTarget = message },
-                                onCopy = { clipboard.copy(message.content) },
-                                onRegenerate = { regenerateKeepingAlive(message.id) },
-                                onDelete = { onDeleteMessage(message.id) },
+                        when (group) {
+                            is MessageGroup.User -> UserMessageItem(
+                                message = group.items.single(),
+                                onLongPress = { actionTarget = group.items.single() },
                                 onOpenImage = { previewTarget = it },
                             )
 
-                            Role.TOOL -> Box(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 16.dp),
-                            ) {
-                                message.toolResult?.let { ToolCallBlock(it) }
-                            }
-
-                            else -> AiMessageItem(
-                                message = message,
-                                isStreaming = state.isStreaming && message.id == state.streamingMessageId,
-                                meta = if (message.id == lastAssistantId) metaOf(message) else null,
-                                onLongPress = { actionTarget = message },
-                                onRetry = { retryKeepingAlive(message.id) },
-                                onCopy = { clipboard.copy(message.content) },
-                                onRegenerate = { regenerateKeepingAlive(message.id) },
-                                onDelete = { onDeleteMessage(message.id) },
+                            is MessageGroup.Assistant -> AssistantTurnItem(
+                                group = group.items,
+                                streamingMessageId = state.streamingMessageId,
+                                isCurrentTurn = state.isTurnActive && index == groups.lastIndex,
+                                meta = state.messages.lastOrNull { it.role == Role.ASSISTANT }
+                                    ?.takeIf { last -> group.items.any { it.id == last.id } }
+                                    ?.let { metaOf(it) },
+                                onLongPress = { actionTarget = it },
+                                onRetry = { retryKeepingAlive(it.id) },
+                                onCopy = { clipboard.copy(it.content) },
+                                onRegenerate = { regenerateKeepingAlive(it.id) },
+                                onDelete = { onDeleteMessage(it.id) },
+                                onContinue = { continueKeepingAlive() },
                             )
                         }
                     }

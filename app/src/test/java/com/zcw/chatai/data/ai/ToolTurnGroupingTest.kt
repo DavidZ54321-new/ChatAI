@@ -115,4 +115,82 @@ class ToolTurnGroupingTest {
         )
         assertEquals(setOf(2L), ToolTurnGrouping.deletionSetFor(nodes, 2))
     }
+
+    @Test
+    fun noMissingAnswersWhenEveryCallIsAnswered() {
+        val nodes = listOf(
+            user(1),
+            assistant(2, "a", "b"),
+            tool(3, "a"),
+            tool(4, "b"),
+        )
+        assertEquals(emptyList<ToolTurnGrouping.MissingAnswer>(), ToolTurnGrouping.planMissingToolAnswers(nodes))
+    }
+
+    @Test
+    fun missingAnswerIsPlannedRightAfterTheLastContiguousToolRow() {
+        val nodes = listOf(
+            user(1),
+            assistant(2, "a", "b"),
+            tool(3, "a"),
+        )
+        val plan = ToolTurnGrouping.planMissingToolAnswers(nodes)
+        assertEquals(listOf(ToolTurnGrouping.MissingAnswer(ToolCall("b", "web_search", "{}"), 3)), plan)
+    }
+
+    @Test
+    fun missingAnswerWithoutAnyToolRowGoesRightAfterTheAssistant() {
+        val nodes = listOf(
+            user(1),
+            assistant(2, "a"),
+            user(3),
+        )
+        val plan = ToolTurnGrouping.planMissingToolAnswers(nodes)
+        assertEquals(listOf(ToolTurnGrouping.MissingAnswer(ToolCall("a", "web_search", "{}"), 2)), plan)
+    }
+
+    /** 同一个 assistant 缺多条：第二条要排在第一条插入之后（计划里的 seq 已含前面的位移）。 */
+    @Test
+    fun multipleMissingAnswersForSameAssistantGetIncreasingAnchors() {
+        val nodes = listOf(
+            user(1),
+            assistant(2, "a", "b", "c"),
+            tool(3, "a"),
+        )
+        val plan = ToolTurnGrouping.planMissingToolAnswers(nodes)
+        assertEquals(listOf(3L, 4L), plan.map { it.afterSeq })
+        assertEquals(listOf("b", "c"), plan.map { it.call.id })
+    }
+
+    /** 后面的 assistant 的插入点要算上前面已规划的位移。 */
+    @Test
+    fun laterAssistantAnchorAccountsForEarlierInsertions() {
+        val nodes = listOf(
+            user(1),
+            assistant(2, "a", "b"),
+            tool(3, "a"),
+            assistant(4, "c"),
+            user(5),
+        )
+        val plan = ToolTurnGrouping.planMissingToolAnswers(nodes)
+        assertEquals(listOf(3L, 5L), plan.map { it.afterSeq })
+        assertEquals(listOf("b", "c"), plan.map { it.call.id })
+    }
+
+    /**
+     * 回归（真机损坏样本）：assistant(a,b) → tool(a) → USER → tool(b)，
+     * 缺的应答必须插在 USER **之前**，不能补到队尾。
+     */
+    @Test
+    fun missingAnswerNeverLandsAfterAnInterveningUserMessage() {
+        val nodes = listOf(
+            user(1),
+            assistant(2, "a", "b", "c"),
+            tool(3, "a"),
+            user(4),
+            tool(5, "b"),
+        )
+        val plan = ToolTurnGrouping.planMissingToolAnswers(nodes)
+        assertEquals(listOf("c", 3L), listOf(plan.single().call.id, plan.single().afterSeq))
+    }
 }

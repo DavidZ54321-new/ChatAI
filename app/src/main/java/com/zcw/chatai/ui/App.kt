@@ -62,6 +62,7 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
                 onInputChange = viewModel::setInput,
                 onSend = viewModel::send,
                 onStop = viewModel::stop,
+                onContinue = viewModel::continueTurn,
                 onRetry = viewModel::retry,
                 onRegenerate = viewModel::regenerate,
                 onDeleteMessage = viewModel::deleteMessage,

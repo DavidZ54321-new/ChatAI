@@ -38,6 +38,44 @@ object ToolTurnGrouping {
             .toSet()
     }
 
+    /** 一条缺失的工具应答：插在 [afterSeq] 之后。seq 已含计划中先前插入造成的位移。 */
+    data class MissingAnswer(val call: ToolCall, val afterSeq: Long)
+
+    /**
+     * 崩溃窗口修复（纯函数）：assistant 已落 `tool_calls` 但 DB 里没有对应 TOOL 行时，
+     * 算出占位应答应该插在哪。
+     *
+     * 位置必须是**紧跟在它连续的已有应答之后**（没有就紧跟 assistant 自己），
+     * 绝不能追加到队尾——真机样本里队尾是后来插入的用户消息，
+     * 补在它后面会让服务端把用户消息当成 tool 组的终点（400）。
+     */
+    fun planMissingToolAnswers(nodes: List<Node>): List<MissingAnswer> {
+        val ordered = nodes.sortedBy { it.seq }
+        val answered = ordered.filter { it.role == Role.TOOL }.mapNotNull { it.toolCallId }.toSet()
+        val plan = mutableListOf<MissingAnswer>()
+        // 已规划的插入数：assistant 按 seq 递增处理，因此前面所有插入都在当前锚点之前。
+        var insertions = 0
+        for (assistant in ordered) {
+            if (assistant.role != Role.ASSISTANT || assistant.toolCalls.isEmpty()) continue
+            val missing = assistant.toolCalls.filter { it.id !in answered }
+            if (missing.isEmpty()) continue
+            val callIds = assistant.toolCalls.map { it.id }.toSet()
+            var anchor = assistant.seq
+            for (node in ordered) {
+                if (node.seq <= anchor) continue
+                if (node.role != Role.TOOL || node.toolCallId !in callIds) break
+                anchor = node.seq
+            }
+            var position = anchor + insertions
+            for (call in missing) {
+                plan += MissingAnswer(call, position)
+                insertions++
+                position++
+            }
+        }
+        return plan
+    }
+
     /** 删除单条消息时要连带删除的 seq 集合（含自身）。 */
     fun deletionSetFor(nodes: List<Node>, targetSeq: Long): Set<Long> {
         val target = nodes.firstOrNull { it.seq == targetSeq } ?: return emptySet()

@@ -38,49 +38,89 @@ object ContextBuilder {
                     it.toolCalls.isNotEmpty() || it.toolCallId != null
             }
             .takeLast(MAX_MESSAGES)
-            // 窗口可能恰好切在 assistant(tool_calls) 与其 TOOL 结果之间；开头孤立的
-            // TOOL 行没有前置 tool_calls，发到服务端会 400。TOOL 只会紧跟在自己的
-            // assistant 回合之后，因此任何开头的 TOOL 行都是被截断的孤儿。
-            .dropWhile { it.role == Role.TOOL }
 
         val keepImages = messageIdsKeepingImages(usable, imageLimit)
 
-        return usable.map { message ->
-            if (message.role == Role.TOOL) {
-                // 空白工具结果也必须保留：它对应的 assistant tool_calls 需要被应答，
-                // 否则服务端会因找不到 tool_call_id 而 400（例如进程在 RUNNING 与更新之间被杀）。
-                val text = (message.toolResult?.text?.takeIf { it.isNotBlank() } ?: message.content)
-                    .ifBlank { TOOL_EMPTY }
-                ChatRequestMessage(
-                    role = message.role.wire,
-                    content = text,
-                    toolCallId = message.toolCallId,
-                )
-            } else if (message.attachments.isEmpty()) {
-                ChatRequestMessage(
-                    role = message.role.wire,
-                    content = message.content,
-                    toolCalls = message.toolCalls,
-                    // 只有带 tool_calls 的回合必须回传思考内容，否则思考模式 400。
-                    reasoning = message.reasoningContent?.takeIf {
-                        it.isNotBlank() && message.toolCalls.isNotEmpty()
-                    },
-                )
-            } else {
-                val keep = message.id in keepImages
-                val images = if (keep) message.attachments.mapNotNull(imageProvider) else emptyList()
-                val note = when {
-                    !keep -> IMAGE_OMITTED
-                    images.isEmpty() -> IMAGE_MISSING
-                    else -> null
-                }
-                ChatRequestMessage(
-                    role = message.role.wire,
-                    content = withNote(message.content, note),
-                    images = images,
-                )
+        // 服务端硬校验：assistant(tool_calls) 后面必须**连续**跟着每个 call 的应答。
+        // DB 行序可能被打乱（进程死在工具执行中，事后补的占位应答落在用户消息之后），
+        // 这里按 call id 把应答提回它的 assistant 后面；无主的 TOOL 行直接丢弃。
+        val answers = HashMap<String, ArrayDeque<Message>>()
+        for (message in usable) {
+            val callId = message.toolCallId
+            if (message.role == Role.TOOL && callId != null) {
+                answers.getOrPut(callId) { ArrayDeque() }.addLast(message)
             }
         }
+
+        val wire = ArrayList<ChatRequestMessage>(usable.size)
+        for (message in usable) {
+            when (message.role) {
+                // TOOL 行只在对应 assistant 的分支里按 tool_calls 顺序取出，这里跳过。
+                Role.TOOL -> Unit
+
+                Role.ASSISTANT -> {
+                    wire += toWire(message, keepImages, imageProvider)
+                    for (call in message.toolCalls) {
+                        val answer = answers[call.id]?.removeFirstOrNull()
+                        wire += if (answer != null) {
+                            toWire(answer, keepImages, imageProvider)
+                        } else {
+                            // assistant 已落 tool_calls 但应答行缺失（崩溃窗口）：
+                            // 合成占位应答，绝不让请求非法。
+                            ChatRequestMessage(
+                                role = Role.TOOL.wire,
+                                content = TOOL_EMPTY,
+                                toolCallId = call.id,
+                            )
+                        }
+                    }
+                }
+
+                else -> wire += toWire(message, keepImages, imageProvider)
+            }
+        }
+        return wire
+    }
+
+    private fun toWire(
+        message: Message,
+        keepImages: Set<String>,
+        imageProvider: (Attachment) -> ChatRequestImage?,
+    ): ChatRequestMessage {
+        if (message.role == Role.TOOL) {
+            // 空白工具结果也必须保留：它对应的 assistant tool_calls 需要被应答，
+            // 否则服务端会因找不到 tool_call_id 而 400（例如进程在 RUNNING 与更新之间被杀）。
+            val text = (message.toolResult?.text?.takeIf { it.isNotBlank() } ?: message.content)
+                .ifBlank { TOOL_EMPTY }
+            return ChatRequestMessage(
+                role = message.role.wire,
+                content = text,
+                toolCallId = message.toolCallId,
+            )
+        }
+        if (message.attachments.isEmpty()) {
+            return ChatRequestMessage(
+                role = message.role.wire,
+                content = message.content,
+                toolCalls = message.toolCalls,
+                // 只有带 tool_calls 的回合必须回传思考内容，否则思考模式 400。
+                reasoning = message.reasoningContent?.takeIf {
+                    it.isNotBlank() && message.toolCalls.isNotEmpty()
+                },
+            )
+        }
+        val keep = message.id in keepImages
+        val images = if (keep) message.attachments.mapNotNull(imageProvider) else emptyList()
+        val note = when {
+            !keep -> IMAGE_OMITTED
+            images.isEmpty() -> IMAGE_MISSING
+            else -> null
+        }
+        return ChatRequestMessage(
+            role = message.role.wire,
+            content = withNote(message.content, note),
+            images = images,
+        )
     }
 
     private fun messageIdsKeepingImages(messages: List<Message>, imageLimit: Int): Set<String> {

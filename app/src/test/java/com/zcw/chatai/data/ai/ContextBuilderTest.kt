@@ -195,6 +195,61 @@ class ContextBuilderTest {
     }
 
     @Test
+    fun toolAnswersArePulledUpRightAfterTheirAssistantWhenRowsAreOutOfOrder() {
+        val messages = listOf(
+            message(
+                id = "a1",
+                role = Role.ASSISTANT,
+                content = "",
+                toolCalls = listOf(
+                    ToolCall("call_1", "web_search", "{}"),
+                    ToolCall("call_2", "web_search", "{}"),
+                ),
+            ),
+            message(id = "t1", role = Role.TOOL, content = "结果1", toolCallId = "call_1"),
+            message(id = "u1", role = Role.USER, content = "你继续"),
+            message(id = "t2", role = Role.TOOL, content = "结果2", toolCallId = "call_2"),
+        )
+        val built = ContextBuilder.build(messages, imageLimit = 0) { null }
+        assertEquals(listOf("assistant", "tool", "tool", "user"), built.map { it.role })
+        assertEquals(listOf("call_1", "call_2"), built.filter { it.role == "tool" }.map { it.toolCallId })
+        assertEquals("结果2", built[2].content)
+        assertEquals("你继续", built[3].content)
+    }
+
+    @Test
+    fun unansweredToolCallGetsSynthesizedPlaceholderRightAfterTheAssistant() {
+        val messages = listOf(
+            message(
+                id = "a1",
+                role = Role.ASSISTANT,
+                content = "",
+                toolCalls = listOf(
+                    ToolCall("call_1", "web_search", "{}"),
+                    ToolCall("call_2", "web_search", "{}"),
+                ),
+            ),
+            message(id = "t1", role = Role.TOOL, content = "结果1", toolCallId = "call_1"),
+            message(id = "u1", role = Role.USER, content = "你继续"),
+        )
+        val built = ContextBuilder.build(messages, imageLimit = 0) { null }
+        assertEquals(listOf("assistant", "tool", "tool", "user"), built.map { it.role })
+        assertEquals("call_2", built[2].toolCallId)
+        assertEquals(ContextBuilder.TOOL_EMPTY, built[2].content)
+    }
+
+    @Test
+    fun orphanToolMessageInTheMiddleIsDropped() {
+        val messages = listOf(
+            message(id = "u1", role = Role.USER, content = "你好"),
+            message(id = "t1", role = Role.TOOL, content = "孤儿", toolCallId = "call_x"),
+            message(id = "a1", role = Role.ASSISTANT, content = "回答"),
+        )
+        val built = ContextBuilder.build(messages, imageLimit = 0) { null }
+        assertEquals(listOf("user", "assistant"), built.map { it.role })
+    }
+
+    @Test
     fun blankReasoningOnToolCallAssistantIsNotForwarded() {
         val messages = listOf(
             message(
@@ -206,7 +261,9 @@ class ContextBuilderTest {
             ),
         )
         val built = ContextBuilder.build(messages, imageLimit = 0) { null }
-        assertNull(built.single().reasoning)
+        // 缺应答的 tool_call 会合成占位应答，但 assistant 本体的空思考不回传。
+        assertEquals(listOf("assistant", "tool"), built.map { it.role })
+        assertNull(built.first().reasoning)
     }
 
     private fun attachment(id: String, path: String) = Attachment(

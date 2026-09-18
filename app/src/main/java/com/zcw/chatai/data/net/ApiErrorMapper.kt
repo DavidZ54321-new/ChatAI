@@ -15,6 +15,10 @@ object ApiErrorMapper {
             status == 400 && detail != null && isImageRelated(detail) ->
                 "该模型可能不支持图片，或图片格式/尺寸不受支持：$detail"
 
+            // 历史里工具应答缺失/错序导致的 400。组装层已能自动修复，重试即可。
+            status == 400 && detail != null && isToolPairingRelated(detail) ->
+                "对话记录里的工具调用缺少应答（已自动修复），请重试：$detail"
+
             status == 400 -> detail ?: "请求格式有误（400）"
             status == 401 -> "API Key 无效或已过期，请到设置里检查"
             status == 402 -> "账户余额不足，请充值后重试"
@@ -34,6 +38,13 @@ object ApiErrorMapper {
     fun isImageRelated(detail: String): Boolean {
         val lower = detail.lowercase()
         return "image" in lower || "图片" in detail || "vision" in lower
+    }
+
+    /** 工具应答缺失/错序导致的 400（`insufficient tool messages following tool_calls message`）。 */
+    fun isToolPairingRelated(detail: String): Boolean {
+        val lower = detail.lowercase()
+        return "insufficient tool messages" in lower ||
+            ("tool_calls" in lower && "must be followed by tool messages" in lower)
     }
 
     /** 正常结束（`stop`/null）返回 null，其余给可读提示。 */

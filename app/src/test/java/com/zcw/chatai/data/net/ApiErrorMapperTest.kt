@@ -33,6 +33,26 @@ class ApiErrorMapperTest {
     }
 
     @Test
+    fun flagsToolPairingBadRequestAsAutoRepairable() {
+        val message = ApiErrorMapper.httpError(
+            400,
+            "An assistant message with 'tool_calls' must be followed by tool messages " +
+                "responding to each 'tool_call_id'. (insufficient tool messages following tool_calls message)",
+        )
+        assertTrue(message, message.contains("已自动修复"))
+    }
+
+    @Test
+    fun detectsToolPairingMessages() {
+        assertTrue(
+            ApiErrorMapper.isToolPairingRelated(
+                "An assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'",
+            ),
+        )
+        assertFalse(ApiErrorMapper.isToolPairingRelated("model not found"))
+    }
+
+    @Test
     fun truncatesLongServerMessage() {
         val message = ApiErrorMapper.httpError(422, "x".repeat(1000))
         assertTrue(message.length < 400)

@@ -33,6 +33,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import com.zcw.chatai.R
 import com.zcw.chatai.data.model.MessageStatus
+import com.zcw.chatai.data.model.Role
 import com.zcw.chatai.ui.md.MessageMarkdown
 import com.zcw.chatai.ui.theme.ChatTheme
 import com.zcw.chatai.ui.theme.SpikeMark
@@ -42,9 +43,6 @@ import com.zcw.chatai.ui.theme.SpikeMark
 fun UserMessageItem(
     message: ChatMessageItem,
     onLongPress: () -> Unit,
-    onCopy: () -> Unit,
-    onRegenerate: () -> Unit,
-    onDelete: () -> Unit,
     onOpenImage: (MessageImage) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -76,73 +74,94 @@ fun UserMessageItem(
                     )
                 }
             }
-            MessageActions(
-                onCopy = onCopy,
-                onRegenerate = onRegenerate,
-                onDelete = onDelete,
-                meta = null,
-                alignEnd = true,
-            )
         }
     }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun AiMessageItem(
-    message: ChatMessageItem,
-    isStreaming: Boolean,
+fun AssistantTurnItem(
+    group: List<ChatMessageItem>,
+    streamingMessageId: String?,
+    isCurrentTurn: Boolean,
     meta: String?,
-    onLongPress: () -> Unit,
-    onRetry: () -> Unit,
-    onCopy: () -> Unit,
-    onRegenerate: () -> Unit,
-    onDelete: () -> Unit,
+    onLongPress: (ChatMessageItem) -> Unit,
+    onRetry: (ChatMessageItem) -> Unit,
+    onCopy: (ChatMessageItem) -> Unit,
+    onRegenerate: (ChatMessageItem) -> Unit,
+    onDelete: (ChatMessageItem) -> Unit,
+    onContinue: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
+    val lastAssistant = group.lastOrNull { it.role == Role.ASSISTANT } ?: return
     Box(modifier.fillMaxWidth().padding(vertical = 4.dp), contentAlignment = Alignment.Center) {
         Column(
             modifier = Modifier.fillMaxWidth(0.9f),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            val reasoning = message.reasoning.orEmpty()
-            if (reasoning.isNotBlank()) {
-                ReasoningBlock(
-                    reasoning = reasoning,
-                    isStreaming = isStreaming,
-                    answerStarted = message.content.isNotEmpty(),
-                    reasoningMs = message.reasoningMs,
-                )
-            } else if (isStreaming && message.content.isEmpty()) {
-                StreamingIndicator()
+            group.forEach { message ->
+                if (message.role == Role.TOOL) {
+                    message.toolResult?.let { ToolCallBlock(it) }
+                } else {
+                    AssistantStep(
+                        message = message,
+                        isStreaming = message.id == streamingMessageId,
+                        onLongPress = { onLongPress(message) },
+                        onRetry = { onRetry(message) },
+                        onContinue = onContinue,
+                    )
+                }
             }
-            if (message.content.isNotEmpty()) {
-                MessageMarkdown(
-                    content = message.content,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .combinedClickable(onClick = {}, onLongClick = onLongPress),
-                )
-            }
-            when (message.status) {
-                MessageStatus.ERROR -> ErrorRow(message.errorMessage, onRetry)
-                MessageStatus.CANCELLED -> CancelledRow(onRetry)
-                else -> message.errorMessage?.let { WarningRow(it) }
-            }
-            if (isStreaming && message.content.isNotEmpty()) {
-                StreamingIndicator()
-            }
-            // 中间思考步（只有 reasoning、没有正文）不挂复制/重生成/删除，
-            // 那组按钮留给用户气泡和真正的回答。
-            if (!isStreaming && message.content.isNotEmpty()) {
+            // 整回合只挂一次操作行，放在所有步骤（含工具块）之后；
+            // 最后一步没有正文（纯报错回合）时不挂，避免出现复制空白。
+            if (!isCurrentTurn && lastAssistant.content.isNotEmpty()) {
                 MessageActions(
-                    onCopy = onCopy,
-                    onRegenerate = onRegenerate,
-                    onDelete = onDelete,
+                    onCopy = { onCopy(lastAssistant) },
+                    onRegenerate = { onRegenerate(lastAssistant) },
+                    onDelete = { onDelete(lastAssistant) },
                     meta = meta,
-                    alignEnd = false,
                 )
             }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun AssistantStep(
+    message: ChatMessageItem,
+    isStreaming: Boolean,
+    onLongPress: () -> Unit,
+    onRetry: () -> Unit,
+    onContinue: (() -> Unit)?,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        val reasoning = message.reasoning.orEmpty()
+        if (reasoning.isNotBlank()) {
+            ReasoningBlock(
+                reasoning = reasoning,
+                isStreaming = isStreaming,
+                answerStarted = message.content.isNotEmpty(),
+                reasoningMs = message.reasoningMs,
+            )
+        } else if (isStreaming && message.content.isEmpty()) {
+            StreamingIndicator()
+        }
+        if (message.content.isNotEmpty()) {
+            MessageMarkdown(
+                content = message.content,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .combinedClickable(onClick = {}, onLongClick = onLongPress),
+            )
+        }
+        when (message.status) {
+            MessageStatus.ERROR -> ErrorRow(message.errorMessage, onRetry)
+            MessageStatus.CANCELLED -> CancelledRow(onRetry, onContinue)
+            else -> message.errorMessage?.let { WarningRow(it) }
+        }
+        if (isStreaming && message.content.isNotEmpty()) {
+            StreamingIndicator()
         }
     }
 }
@@ -150,41 +169,35 @@ fun AiMessageItem(
 @Composable
 private fun MessageActions(
     onCopy: () -> Unit,
-    onRegenerate: (() -> Unit)?,
+    onRegenerate: () -> Unit,
     onDelete: () -> Unit,
     meta: String?,
-    alignEnd: Boolean,
     modifier: Modifier = Modifier,
 ) {
     Row(modifier = modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        if (alignEnd) Spacer(Modifier.weight(1f))
         IconActionButton(
             contentDescription = "复制",
             onClick = onCopy,
             painter = painterResource(R.drawable.ic_copy),
         )
-        if (onRegenerate != null) {
-            IconActionButton(
-                contentDescription = "重新生成",
-                onClick = onRegenerate,
-                icon = Icons.Filled.Refresh,
-            )
-        }
+        IconActionButton(
+            contentDescription = "重新生成",
+            onClick = onRegenerate,
+            icon = Icons.Filled.Refresh,
+        )
         IconActionButton(
             contentDescription = "删除",
             onClick = onDelete,
             icon = Icons.Filled.Delete,
         )
-        if (!alignEnd) {
-            Spacer(Modifier.weight(1f))
-            if (meta != null) {
-                Text(
-                    text = meta,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                    maxLines = 1,
-                )
-            }
+        Spacer(Modifier.weight(1f))
+        if (meta != null) {
+            Text(
+                text = meta,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                maxLines = 1,
+            )
         }
     }
 }
@@ -244,7 +257,7 @@ private fun WarningRow(message: String) {
 }
 
 @Composable
-private fun CancelledRow(onRetry: () -> Unit) {
+private fun CancelledRow(onRetry: () -> Unit, onContinue: (() -> Unit)? = null) {
     val scheme = MaterialTheme.colorScheme
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -255,6 +268,14 @@ private fun CancelledRow(onRetry: () -> Unit) {
             style = MaterialTheme.typography.labelMedium,
             color = scheme.onSurfaceVariant,
         )
+        if (onContinue != null) {
+            Text(
+                text = "继续",
+                style = MaterialTheme.typography.labelLarge,
+                color = scheme.primary,
+                modifier = Modifier.clickable(onClick = onContinue),
+            )
+        }
         Text(
             text = "重新生成",
             style = MaterialTheme.typography.labelLarge,

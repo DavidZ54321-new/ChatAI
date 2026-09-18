@@ -1,5 +1,6 @@
 package com.zcw.chatai.data
 
+import androidx.room.withTransaction
 import com.zcw.chatai.data.ai.AgentLoop
 import com.zcw.chatai.data.ai.ContextBuilder
 import com.zcw.chatai.data.ai.StreamAccumulator
@@ -410,7 +411,12 @@ class ChatRepository(
         val config = resolveConfig(conversationId)
         val toolsUsable = config.webSearchEnabled &&
             searchProvider?.available(config.baseUrl, config.apiKey) == true
-        runAgentTurn(conversationId, config.copy(webSearchEnabled = toolsUsable))
+        try {
+            runAgentTurn(conversationId, config.copy(webSearchEnabled = toolsUsable))
+        } finally {
+            // 回合收尾（含取消）也落定一次：不把缺应答的 tool_calls 留给下一条消息。
+            withContext(NonCancellable) { reconcileUnansweredToolCalls(conversationId) }
+        }
     }
 
     private suspend fun resolveConfig(conversationId: String): ChatConfig {
@@ -654,6 +660,10 @@ class ChatRepository(
     /** 崩溃窗口兜底：assistant 已落 tool_calls 但 TOOL 行没写上时，补一条中断占位，避免下次请求 400。 */
     private suspend fun reconcileUnansweredToolCalls(conversationId: String) {
         val entities = db.messageDao().getByConversation(conversationId)
+        val callsById = entities
+            .filter { it.role == Role.ASSISTANT.name }
+            .flatMap { ToolCallCodec.decodeCalls(it.toolCalls) }
+            .associateBy { it.id }
         // 上次进程在工具执行中被杀，RUNNING 行会永远停在「搜索中」，这里落定为失败。
         entities.filter { it.role == Role.TOOL.name }.forEach { entity ->
             if (ToolCallCodec.decodeResult(entity.toolResult)?.status == ToolStatus.RUNNING) {
@@ -663,7 +673,7 @@ class ChatRepository(
                     toolResult = ToolCallCodec.encodeResult(
                         ToolResult(
                             status = ToolStatus.FAILED,
-                            detail = entity.toolCallId.orEmpty(),
+                            detail = entity.toolCallId?.let(callsById::get)?.let(::interruptedDetail) ?: "已中断",
                             text = INTERRUPTED_TOOL_TEXT,
                         ),
                     ),
@@ -671,39 +681,48 @@ class ChatRepository(
                 )
             }
         }
-        val answered = entities.filter { it.role == Role.TOOL.name }.mapNotNull { it.toolCallId }.toSet()
-        val unanswered = entities
-            .filter { it.role == Role.ASSISTANT.name }
-            .flatMap { ToolCallCodec.decodeCalls(it.toolCalls) }
-            .filter { it.id !in answered }
-            .distinctBy { it.id }
-        if (unanswered.isEmpty()) return
-        var seq = db.messageDao().nextSeq(conversationId)
+        val plan = ToolTurnGrouping.planMissingToolAnswers(entities.map { it.toNode() })
+        if (plan.isEmpty()) return
         val timestamp = nowMs()
-        unanswered.forEach { call ->
-            db.messageDao().upsert(
-                MessageEntity(
-                    id = newId(),
-                    conversationId = conversationId,
-                    role = Role.TOOL.name,
-                    content = INTERRUPTED_TOOL_TEXT,
-                    status = MessageStatus.COMPLETE.name,
-                    errorMessage = null,
-                    reasoningContent = null,
-                    seq = seq++,
-                    model = null,
-                    promptTokens = null,
-                    completionTokens = null,
-                    toolCallId = call.id,
-                    toolResult = ToolCallCodec.encodeResult(
-                        ToolResult(status = ToolStatus.FAILED, detail = call.name, text = INTERRUPTED_TOOL_TEXT),
+        db.withTransaction {
+            plan.forEach { missing ->
+                // 插在发起它的 assistant 的应答块之后（而不是队尾——那里可能有后来的用户消息）。
+                db.messageDao().shiftSeqsFrom(conversationId, missing.afterSeq + 1)
+                db.messageDao().upsert(
+                    MessageEntity(
+                        id = newId(),
+                        conversationId = conversationId,
+                        role = Role.TOOL.name,
+                        content = INTERRUPTED_TOOL_TEXT,
+                        status = MessageStatus.COMPLETE.name,
+                        errorMessage = null,
+                        reasoningContent = null,
+                        seq = missing.afterSeq + 1,
+                        model = null,
+                        promptTokens = null,
+                        completionTokens = null,
+                        toolCallId = missing.call.id,
+                        toolResult = ToolCallCodec.encodeResult(
+                            ToolResult(
+                                status = ToolStatus.FAILED,
+                                detail = interruptedDetail(missing.call),
+                                text = INTERRUPTED_TOOL_TEXT,
+                            ),
+                        ),
+                        createdAt = timestamp,
+                        updatedAt = timestamp,
                     ),
-                    createdAt = timestamp,
-                    updatedAt = timestamp,
-                ),
-            )
+                )
+            }
         }
         refreshSummary(conversationId)
+    }
+
+    /** 中断占位的可读标签：搜索显示词、抓取显示 URL，其余显示工具名。 */
+    private fun interruptedDetail(call: ToolCall): String = when (call.name) {
+        WebTools.SEARCH -> WebTools.queryOf(call.arguments) ?: call.name
+        WebTools.FETCH -> WebTools.urlOf(call.arguments) ?: call.name
+        else -> call.name
     }
 
     private suspend fun finalize(

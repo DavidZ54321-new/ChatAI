@@ -28,6 +28,9 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+/** 「继续」发送的文本；和用户手打一致，走同一条落库/请求路径。 */
+private const val CONTINUE_TEXT = "继续"
+
 class ChatViewModel(
     private val repository: ChatRepository,
     private val attachmentStore: AttachmentStore,
@@ -176,6 +179,18 @@ class ChatViewModel(
     }
 
     fun retry(messageId: String) = regenerate(messageId)
+
+    /**
+     * Claude Code 式「继续」：在停止/中断的回答后接着生成。
+     * 用一条普通用户消息「继续」触发（落库与线上请求一致），历史损坏由仓库层修复。
+     */
+    fun continueTurn() {
+        val id = conversationId.value ?: return
+        when (val result = repository.send(id, CONTINUE_TEXT)) {
+            SendResult.Started, SendResult.Busy -> Unit
+            is SendResult.Rejected -> notice.value = result.reason
+        }
+    }
 
     fun regenerate(messageId: String) {
         val id = conversationId.value ?: return
