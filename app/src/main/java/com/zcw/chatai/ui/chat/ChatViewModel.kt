@@ -16,6 +16,7 @@ import com.zcw.chatai.data.model.Message
 import com.zcw.chatai.data.model.MessageStatus
 import com.zcw.chatai.data.model.Role
 import com.zcw.chatai.data.prefs.SettingsRepository
+import com.zcw.chatai.data.web.WebSearchProvider
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -30,6 +31,7 @@ class ChatViewModel(
     private val repository: ChatRepository,
     private val attachmentStore: AttachmentStore,
     settingsRepository: SettingsRepository,
+    private val searchProvider: WebSearchProvider? = null,
 ) : ViewModel() {
 
     private val input = MutableStateFlow("")
@@ -53,8 +55,16 @@ class ChatViewModel(
         pending,
         notice,
         settingsRepository.settings,
-    ) { text, pend, note, settings ->
-        ComposerSnapshot(input = text, pending = pend, notice = note, defaultModel = settings.model)
+        repository.activity,
+    ) { text, pend, note, settings, activity ->
+        ComposerSnapshot(
+            input = text,
+            pending = pend,
+            notice = note,
+            defaultModel = settings.model,
+            webSearchAvailable = searchProvider?.available(settings.baseUrl, settings.apiKey) == true,
+            activity = activity,
+        )
     }
 
     val state: StateFlow<ChatUiState> = combine(
@@ -182,6 +192,19 @@ class ChatViewModel(
         viewModelScope.launch { repository.setConversationModel(id, model) }
     }
 
+    /** 切换本会话的 🌐 联网开关；不可用时给可读提示而不静默失败。 */
+    fun toggleWebSearch() {
+        val id = conversationId.value ?: return
+        val current = state.value.webSearchEnabled
+        viewModelScope.launch {
+            if (!current && !state.value.webSearchAvailable) {
+                notice.value = "联网搜索不可用：请先在设置里填写 API Key"
+                return@launch
+            }
+            repository.setConversationWebSearch(id, !current)
+        }
+    }
+
     override fun onCleared() {
         discardPending()
         super.onCleared()
@@ -246,6 +269,9 @@ class ChatViewModel(
             pending = composer.pending,
             defaultModel = composer.defaultModel,
             notice = composer.notice,
+            webSearchEnabled = conversation?.webSearchEnabled == true,
+            webSearchAvailable = composer.webSearchAvailable,
+            activity = composer.activity,
         )
     }
 
@@ -271,6 +297,7 @@ class ChatViewModel(
                 height = attachment.height,
             )
         },
+        toolResult = toolResult,
     )
 
     private data class ComposerSnapshot(
@@ -278,6 +305,8 @@ class ChatViewModel(
         val pending: List<PendingAttachment>,
         val notice: String?,
         val defaultModel: String,
+        val webSearchAvailable: Boolean,
+        val activity: String?,
     )
 
     companion object {
@@ -285,8 +314,9 @@ class ChatViewModel(
             repository: ChatRepository,
             attachmentStore: AttachmentStore,
             settingsRepository: SettingsRepository,
+            searchProvider: WebSearchProvider? = null,
         ): ViewModelProvider.Factory = viewModelFactory {
-            initializer { ChatViewModel(repository, attachmentStore, settingsRepository) }
+            initializer { ChatViewModel(repository, attachmentStore, settingsRepository, searchProvider) }
         }
     }
 }
