@@ -3,6 +3,10 @@ package com.zcw.chatai.data.web
 import com.zcw.chatai.data.model.ChatConfig
 import com.zcw.chatai.data.net.ChatApiException
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
@@ -66,16 +70,16 @@ class DeepSeekNativeSearchProviderTest {
     }
 
     @Test
-    fun cancellationIsNotWrapped() = runBlocking {
-        val cancel = java.util.concurrent.CancellationException("cancelled")
-        val client = OkHttpClient.Builder().addInterceptor { throw cancel }.build()
-        try {
-            DeepSeekNativeSearchProvider(client).search("x", 5, config())
-            fail("Expected CancellationException")
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            // 能进入这个 catch 就说明没有被包装成 ChatApiException。
-            assertEquals("cancelled", e.message)
+    fun cancellationStopsTheInFlightCall() = runBlocking {
+        server.enqueue(okResponse().setBodyDelay(5, TimeUnit.SECONDS))
+        val started = System.nanoTime()
+        val job = launch(Dispatchers.IO) {
+            DeepSeekNativeSearchProvider().search("x", 5, config())
         }
+        delay(200)
+        job.cancelAndJoin()
+        val elapsedMs = (System.nanoTime() - started) / 1_000_000
+        assertTrue("cancellation took ${elapsedMs}ms", elapsedMs < 2_000)
     }
 
     @Test

@@ -56,6 +56,9 @@ private const val TAG = "ChatRepository"
 /** 工具执行被中断（崩溃窗口兜底）时占位，保持 assistant 的 tool_calls 有应答。 */
 private const val INTERRUPTED_TOOL_TEXT = "[工具执行被中断，无返回内容]"
 
+/** 用户主动停止时工具行的落定文本。 */
+private const val TOOL_CANCELLED_TEXT = "[已停止]"
+
 data class StreamingMessage(
     val conversationId: String,
     val messageId: String,
@@ -64,6 +67,9 @@ data class StreamingMessage(
     /** 思考耗时（毫秒）；null = 还没有思考增量。和落库的值同一个来源。 */
     val reasoningMs: Long? = null,
 )
+
+/** 工具活动带归属会话：UI 只显示当前会话的活动，避免切会话后串台。 */
+data class AgentActivity(val conversationId: String, val text: String)
 
 sealed interface SendResult {
     data object Started : SendResult
@@ -104,12 +110,21 @@ class ChatRepository(
         _errors.value = null
     }
 
-    private var streamJob: Job? = null
+    /**
+     * 整回合的任务句柄：覆盖「流式 + 工具执行 + 再流式」全过程。
+     * 不能只看 [streaming] —— 工具执行期间它会被清空，那样并发发送会插进第二个回合。
+     */
+    private var turnJob: Job? = null
+
+    /** 正在跑回合的会话；用于「清空/删除会话时顺手停掉」。
+     *  `@Volatile`：写入在 IO 线程，读取可能来自主线程。 */
+    @Volatile
+    private var activeConversationId: String? = null
 
     /** 当前工具活动（如「正在联网搜索：xxx」）。独立于 [streaming]：assistant 步结束后 streaming 会被清空。 */
-    private val _activity = MutableStateFlow<String?>(null)
+    private val _activity = MutableStateFlow<AgentActivity?>(null)
 
-    val activity: StateFlow<String?> = _activity.asStateFlow()
+    val activity: StateFlow<AgentActivity?> = _activity.asStateFlow()
 
     /** 统一收口后台失败：日志留堆栈，界面只给一句人话。 */
     private fun reportError(t: Throwable, fallback: String) {
@@ -212,9 +227,9 @@ class ChatRepository(
         val trimmed = text.trim()
         if (trimmed.isEmpty() && attachments.isEmpty()) return SendResult.Rejected("请输入内容")
         AttachmentLimits.validate(attachments)?.let { return SendResult.Rejected(it) }
-        if (_streaming.value != null) return SendResult.Rejected("正在生成中，请先停止")
+        if (turnJob?.isActive == true) return SendResult.Rejected("正在生成中，请先停止")
 
-        scope.launch {
+        turnJob = scope.launch {
             runCatching { startTurn(conversationId, trimmed, attachments) }
                 .onFailure { reportError(it, "发送失败") }
         }
@@ -223,8 +238,8 @@ class ChatRepository(
 
     /** 重新生成：删掉这条回答及其之后的所有消息，用剩余上下文重跑。 */
     fun regenerate(messageId: String): SendResult {
-        if (_streaming.value != null) stop()
-        scope.launch {
+        if (turnJob?.isActive == true) stop()
+        turnJob = scope.launch {
             runCatching {
                 val entity = db.messageDao().getById(messageId)
                     ?: return@runCatching
@@ -244,12 +259,12 @@ class ChatRepository(
     }
 
     fun stop() {
-        streamJob?.cancel()
-        streamJob = null
+        turnJob?.cancel()
+        turnJob = null
     }
 
     private fun stopIfStreaming(conversationId: String) {
-        if (_streaming.value?.conversationId == conversationId) stop()
+        if (activeConversationId == conversationId) stop()
     }
 
     // ---------- 附件清理 ----------
@@ -307,8 +322,11 @@ class ChatRepository(
         val config = resolveConfig(conversationId)
         val toolsUsable = config.webSearchEnabled &&
             searchProvider?.available(config.baseUrl, config.apiKey) == true
-        streamJob = scope.launch {
+        activeConversationId = conversationId
+        try {
             runAgentTurn(conversationId, config.copy(webSearchEnabled = toolsUsable))
+        } finally {
+            activeConversationId = null
         }
     }
 
@@ -456,44 +474,56 @@ class ChatRepository(
     }
 
     private suspend fun executeTools(conversationId: String, config: ChatConfig, calls: List<ToolCall>) {
-        for (call in calls) {
-            val toolMessageId = newId()
-            val timestamp = nowMs()
-            db.messageDao().upsert(
-                MessageEntity(
-                    id = toolMessageId,
-                    conversationId = conversationId,
-                    role = Role.TOOL.name,
-                    content = "",
-                    status = MessageStatus.COMPLETE.name,
-                    errorMessage = null,
-                    reasoningContent = null,
-                    seq = db.messageDao().nextSeq(conversationId),
-                    model = config.model,
-                    promptTokens = null,
-                    completionTokens = null,
-                    toolCallId = call.id,
-                    toolResult = ToolCallCodec.encodeResult(
-                        ToolResult(status = ToolStatus.RUNNING, detail = activityLabel(call)),
+        try {
+            for (call in calls) {
+                val toolMessageId = newId()
+                val timestamp = nowMs()
+                db.messageDao().upsert(
+                    MessageEntity(
+                        id = toolMessageId,
+                        conversationId = conversationId,
+                        role = Role.TOOL.name,
+                        content = "",
+                        status = MessageStatus.COMPLETE.name,
+                        errorMessage = null,
+                        reasoningContent = null,
+                        seq = db.messageDao().nextSeq(conversationId),
+                        model = config.model,
+                        promptTokens = null,
+                        completionTokens = null,
+                        toolCallId = call.id,
+                        toolResult = ToolCallCodec.encodeResult(
+                            ToolResult(status = ToolStatus.RUNNING, detail = activityLabel(call)),
+                        ),
+                        createdAt = timestamp,
+                        updatedAt = timestamp,
                     ),
-                    createdAt = timestamp,
-                    updatedAt = timestamp,
-                ),
-            )
-            _activity.value = activityLabel(call)
-            val result = runCatching { runTool(call, config) }
-                .getOrElse {
-                    ToolResult(status = ToolStatus.FAILED, detail = call.name, text = it.message ?: "工具执行失败")
+                )
+                _activity.value = AgentActivity(conversationId, activityLabel(call))
+                var cancellation: CancellationException? = null
+                val result = try {
+                    runTool(call, config)
+                } catch (c: CancellationException) {
+                    cancellation = c
+                    ToolResult(status = ToolStatus.FAILED, detail = call.name, text = TOOL_CANCELLED_TEXT)
+                } catch (t: Throwable) {
+                    ToolResult(status = ToolStatus.FAILED, detail = call.name, text = t.message ?: "工具执行失败")
                 }
-            db.messageDao().updateToolResultContent(
-                id = toolMessageId,
-                content = result.text.ifBlank { result.detail },
-                toolResult = ToolCallCodec.encodeResult(result),
-                updatedAt = nowMs(),
-            )
-            refreshSummary(conversationId)
+                // 取消时也要把 RUNNING 行落定，否则界面会永远停在「搜索中」。
+                withContext(NonCancellable) {
+                    db.messageDao().updateToolResultContent(
+                        id = toolMessageId,
+                        content = result.text.ifBlank { result.detail },
+                        toolResult = ToolCallCodec.encodeResult(result),
+                        updatedAt = nowMs(),
+                    )
+                    refreshSummary(conversationId)
+                }
+                if (cancellation != null) throw cancellation
+            }
+        } finally {
+            _activity.value = null
         }
-        _activity.value = null
     }
 
     private suspend fun runTool(call: ToolCall, config: ChatConfig): ToolResult = when (call.name) {
@@ -534,6 +564,23 @@ class ChatRepository(
     /** 崩溃窗口兜底：assistant 已落 tool_calls 但 TOOL 行没写上时，补一条中断占位，避免下次请求 400。 */
     private suspend fun reconcileUnansweredToolCalls(conversationId: String) {
         val entities = db.messageDao().getByConversation(conversationId)
+        // 上次进程在工具执行中被杀，RUNNING 行会永远停在「搜索中」，这里落定为失败。
+        entities.filter { it.role == Role.TOOL.name }.forEach { entity ->
+            if (ToolCallCodec.decodeResult(entity.toolResult)?.status == ToolStatus.RUNNING) {
+                db.messageDao().updateToolResultContent(
+                    id = entity.id,
+                    content = INTERRUPTED_TOOL_TEXT,
+                    toolResult = ToolCallCodec.encodeResult(
+                        ToolResult(
+                            status = ToolStatus.FAILED,
+                            detail = entity.toolCallId.orEmpty(),
+                            text = INTERRUPTED_TOOL_TEXT,
+                        ),
+                    ),
+                    updatedAt = nowMs(),
+                )
+            }
+        }
         val answered = entities.filter { it.role == Role.TOOL.name }.mapNotNull { it.toolCallId }.toSet()
         val unanswered = entities
             .filter { it.role == Role.ASSISTANT.name }

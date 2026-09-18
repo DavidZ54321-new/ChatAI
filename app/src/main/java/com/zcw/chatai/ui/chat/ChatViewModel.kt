@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import com.zcw.chatai.data.AgentActivity
 import com.zcw.chatai.data.ChatRepository
 import com.zcw.chatai.data.SendResult
 import com.zcw.chatai.data.StreamingMessage
@@ -271,7 +272,7 @@ class ChatViewModel(
             notice = composer.notice,
             webSearchEnabled = conversation?.webSearchEnabled == true,
             webSearchAvailable = composer.webSearchAvailable,
-            activity = composer.activity,
+            activity = composer.activity?.takeIf { it.conversationId == id }?.text,
         )
     }
 
@@ -306,7 +307,7 @@ class ChatViewModel(
         val notice: String?,
         val defaultModel: String,
         val webSearchAvailable: Boolean,
-        val activity: String?,
+        val activity: AgentActivity?,
     )
 
     companion object {

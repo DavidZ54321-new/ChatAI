@@ -37,25 +37,19 @@ class HttpWebFetcher(
             .get()
             .build()
         try {
-            client.newCall(request).execute().use { response ->
-                val contentType = response.header("Content-Type").orEmpty().substringBefore(';').trim().lowercase()
-                if (contentType.isNotEmpty() && contentType !in allowedTypes) {
-                    return@withContext failure(url, "不支持的内容类型：$contentType")
-                }
-                val bytes = response.body.source().let { source ->
-                    val buffer = okio.Buffer()
-                    source.read(buffer, maxBytes.toLong())
-                    buffer.readByteArray()
-                }
-                val truncated = response.body.contentLength() > bytes.size
-                val raw = bytes.toString(Charsets.UTF_8)
-                val text = if (contentType == "text/html" || contentType == "application/xhtml+xml" || contentType.isEmpty()) {
-                    HtmlToText.toText(raw)
-                } else {
-                    raw
-                }
-                WebFetchResult(url = httpUrl.toString(), statusCode = response.code, text = text, truncated = truncated)
+            val http = client.awaitBody(request, maxBytes)
+            val contentType = http.contentType.orEmpty().substringBefore(';').trim().lowercase()
+            if (contentType.isNotEmpty() && contentType !in allowedTypes) {
+                return@withContext failure(url, "不支持的内容类型：$contentType")
             }
+            val truncated = http.contentLength > http.bytes.size
+            val raw = http.text
+            val text = if (contentType == "text/html" || contentType == "application/xhtml+xml" || contentType.isEmpty()) {
+                HtmlToText.toText(raw)
+            } else {
+                raw
+            }
+            WebFetchResult(url = httpUrl.toString(), statusCode = http.code, text = text, truncated = truncated)
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (t: Exception) {

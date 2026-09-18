@@ -6,8 +6,6 @@ import com.zcw.chatai.data.net.ApiErrorMapper
 import com.zcw.chatai.data.net.ChatApiException
 import com.zcw.chatai.data.net.EndpointUrl
 import java.util.concurrent.TimeUnit
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -122,67 +120,64 @@ class DeepSeekNativeSearchProvider(
     override fun available(baseUrl: String, apiKey: String): Boolean =
         apiKey.isNotBlank() && EndpointUrl.anthropicMessages(baseUrl) != null
 
-    override suspend fun search(query: String, maxResults: Int, config: ChatConfig): WebSearchResult =
-        withContext(Dispatchers.IO) {
-            val url = EndpointUrl.anthropicMessages(config.baseUrl)
-                ?: throw ChatApiException("请先在设置中填写 Base URL")
-            val payload = buildJsonObject {
-                put("model", config.model)
-                put("max_tokens", 2048)
-                putJsonArray("messages") {
-                    add(
-                        buildJsonObject {
-                            put("role", "user")
-                            putJsonArray("content") {
-                                add(
-                                    buildJsonObject {
-                                        put("type", "text")
-                                        put("text", "Perform a web search for the query: $query")
-                                    },
-                                )
-                            }
-                        },
-                    )
-                }
-                putJsonArray("tools") {
-                    add(
-                        buildJsonObject {
-                            put("type", "web_search_20250305")
-                            put("name", "web_search")
-                            put("max_uses", maxResults.coerceIn(1, 5))
-                        },
-                    )
-                }
-                // 强制只调搜索：既保证真的联网，也规避已知的 DSML 标记漏出。
-                putJsonObject("tool_choice") {
-                    put("type", "tool")
-                    put("name", "web_search")
-                }
+    override suspend fun search(query: String, maxResults: Int, config: ChatConfig): WebSearchResult {
+        val url = EndpointUrl.anthropicMessages(config.baseUrl)
+            ?: throw ChatApiException("请先在设置中填写 Base URL")
+        val payload = buildJsonObject {
+            put("model", config.model)
+            put("max_tokens", 2048)
+            putJsonArray("messages") {
+                add(
+                    buildJsonObject {
+                        put("role", "user")
+                        putJsonArray("content") {
+                            add(
+                                buildJsonObject {
+                                    put("type", "text")
+                                    put("text", "Perform a web search for the query: $query")
+                                },
+                            )
+                        }
+                    },
+                )
             }
-            val request = Request.Builder()
-                .url(url)
-                .header("x-api-key", config.apiKey)
-                .header("anthropic-version", "2023-06-01")
-                .header("content-type", "application/json")
-                .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
-                .build()
-            try {
-                client.newCall(request).execute().use { response ->
-                    val body = response.body.string()
-                    if (!response.isSuccessful) {
-                        throw ChatApiException(ApiErrorMapper.httpError(response.code, errorMessage(body)))
-                    }
-                    DeepSeekSearchParser.parse(body)
-                }
-            } catch (e: ChatApiException) {
-                throw e
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                // 协程取消必须原样向上传播，不能被包装成普通失败。
-                throw e
-            } catch (t: Exception) {
-                throw ChatApiException("联网搜索失败：${t.message ?: "未知错误"}", t)
+            putJsonArray("tools") {
+                add(
+                    buildJsonObject {
+                        put("type", "web_search_20250305")
+                        put("name", "web_search")
+                        put("max_uses", maxResults.coerceIn(1, 5))
+                    },
+                )
+            }
+            // 强制只调搜索：既保证真的联网，也规避已知的 DSML 标记漏出。
+            putJsonObject("tool_choice") {
+                put("type", "tool")
+                put("name", "web_search")
             }
         }
+        val request = Request.Builder()
+            .url(url)
+            .header("x-api-key", config.apiKey)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+        return try {
+            val http = client.awaitBody(request, MAX_RESPONSE_BYTES)
+            if (http.code !in 200..299) {
+                throw ChatApiException(ApiErrorMapper.httpError(http.code, errorMessage(http.text)))
+            }
+            DeepSeekSearchParser.parse(http.text)
+        } catch (e: ChatApiException) {
+            throw e
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // 协程取消必须原样向上传播，不能被包装成普通失败。
+            throw e
+        } catch (t: Exception) {
+            throw ChatApiException("联网搜索失败：${t.message ?: "未知错误"}", t)
+        }
+    }
 
     private fun errorMessage(body: String): String? = try {
         val error = Json { ignoreUnknownKeys = true }
@@ -199,6 +194,9 @@ class DeepSeekNativeSearchProvider(
 
     companion object {
         private val JSON_MEDIA_TYPE = "application/json".toMediaType()
+
+        /** 搜索响应上限：远超正常搜索结果，防止异常端点拖垮内存。 */
+        private const val MAX_RESPONSE_BYTES = 2_000_000
 
         fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
