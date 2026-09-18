@@ -14,6 +14,12 @@ class AgentLoopTest {
         assertEquals(AgentLoop.Decision.Finish, AgentLoop.decide(null, emptyList(), 0, 5))
     }
 
+    /** 回归：`tool_calls` 却没有可执行的调用是协议异常，不能当成正常结束（会留空白气泡）。 */
+    @Test
+    fun malformedWhenToolCallsFinishedButNothingAssembled() {
+        assertEquals(AgentLoop.Decision.Malformed, AgentLoop.decide("tool_calls", emptyList(), 0, 5))
+    }
+
     @Test
     fun continuesWhenToolCallsAndBudgetLeft() {
         assertEquals(

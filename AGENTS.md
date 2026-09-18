@@ -188,6 +188,8 @@ Gotchas that cost real debugging time:
   `JsonDecodingException ... EOF at path $.content[2].content` 被吞掉 → 每次搜索都「No results found」
   → 模型转而疯狂 `web_fetch` 搜索引擎页。正确写法见 `data/web/OkHttpCall.awaitBody`。
   **症状与原因离得极远，这类「静默解析失败」要优先怀疑截断。**
+- **`finish_reason` 里的 `tool_calls` 不是错误**。它是 Agent 循环的中间态；`ApiErrorMapper` 若把它
+  当异常，每一步工具调用都会在气泡里显示「生成中断（tool_calls）」并标红成 ERROR。
 
 ## 用模拟器联调真接口（宿主机挂了会做 TLS 拦截的代理时）
 

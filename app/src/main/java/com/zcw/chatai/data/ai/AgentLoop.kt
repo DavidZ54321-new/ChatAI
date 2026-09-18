@@ -15,6 +15,14 @@ object AgentLoop {
         data object ForceFinal : Decision
 
         data object Finish : Decision
+
+        /**
+         * 模型声称要调工具，但没有可执行的调用（空列表 / 工具名缺失被丢弃）。
+         *
+         * 这是协议异常，不是正常结束：不能再当 `Finish`，否则会留下一个**空白气泡且没有任何提示**。
+         * 交给上层标记为可见的失败。
+         */
+        data object Malformed : Decision
     }
 
     fun decide(
@@ -23,7 +31,8 @@ object AgentLoop {
         steps: Int,
         maxSteps: Int,
     ): Decision {
-        if (finishReason != "tool_calls" || toolCalls.isEmpty()) return Decision.Finish
+        if (finishReason != "tool_calls") return Decision.Finish
+        if (toolCalls.isEmpty()) return Decision.Malformed
         return if (steps >= maxSteps) Decision.ForceFinal else Decision.Continue(toolCalls)
     }
 }

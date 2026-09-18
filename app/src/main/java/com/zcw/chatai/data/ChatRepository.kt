@@ -59,6 +59,9 @@ private const val INTERRUPTED_TOOL_TEXT = "[工具执行被中断，无返回内
 /** 用户主动停止时工具行的落定文本。 */
 private const val TOOL_CANCELLED_TEXT = "[已停止]"
 
+/** 与 OpenAI 兼容面一致的中间态字面量。 */
+private const val FINISH_TOOL_CALLS = "tool_calls"
+
 data class StreamingMessage(
     val conversationId: String,
     val messageId: String,
@@ -411,6 +414,9 @@ class ChatRepository(
                 }
 
                 AgentLoop.Decision.Finish -> return
+
+                // 协议异常已由 finalize 标成可见错误，直接结束本回合（再循环也没东西可执行）。
+                AgentLoop.Decision.Malformed -> return
             }
             // 收尾步无论如何都结束，杜绝模型在没有工具时仍回 tool_calls 造成死循环。
             if (forceFinal) return
@@ -469,8 +475,15 @@ class ChatRepository(
             errorMessage = t.message ?: "请求失败"
         } finally {
             withContext(NonCancellable) {
-                finalize(conversationId, messageId, accumulator, status, errorMessage)
                 val assembled = toolCalls.assemble()
+                finalize(
+                    conversationId = conversationId,
+                    messageId = messageId,
+                    accumulator = accumulator,
+                    status = status,
+                    errorMessage = errorMessage,
+                    assembledToolCalls = assembled.size,
+                )
                 if (assembled.isNotEmpty()) {
                     db.messageDao().updateToolCalls(messageId, ToolCallCodec.encodeCalls(assembled), nowMs())
                 }
@@ -632,8 +645,15 @@ class ChatRepository(
         accumulator: StreamAccumulator,
         status: MessageStatus,
         errorMessage: String?,
+        assembledToolCalls: Int,
     ) {
-        val finishNote = ApiErrorMapper.finishReasonMessage(accumulator.finishReason)
+        // `tool_calls` 但没有可执行的调用是协议异常：给出可见提示，而不是留一个空白气泡。
+        val malformed = accumulator.finishReason == FINISH_TOOL_CALLS && assembledToolCalls == 0
+        val finishNote = if (malformed) {
+            "模型未能给出可执行的工具调用，本次生成已中断，可直接重试"
+        } else {
+            ApiErrorMapper.finishReasonMessage(accumulator.finishReason)
+        }
         val hasContent = accumulator.content.isNotBlank()
         val resolvedStatus = when {
             status == MessageStatus.CANCELLED -> MessageStatus.CANCELLED

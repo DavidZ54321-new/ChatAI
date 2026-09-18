@@ -45,6 +45,12 @@ class ApiErrorMapperTest {
         assertNull(ApiErrorMapper.finishReasonMessage(""))
     }
 
+    /** 回归：`tool_calls` 是 Agent 循环的中间态，曾经被显示成「生成中断」。 */
+    @Test
+    fun toolCallsFinishReasonIsNotAnError() {
+        assertNull(ApiErrorMapper.finishReasonMessage("tool_calls"))
+    }
+
     @Test
     fun mapsFinishReasons() {
         assertTrue(

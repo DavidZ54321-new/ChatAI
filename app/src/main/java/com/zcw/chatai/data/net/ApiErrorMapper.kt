@@ -39,6 +39,8 @@ object ApiErrorMapper {
     /** 正常结束（`stop`/null）返回 null，其余给可读提示。 */
     fun finishReasonMessage(reason: String?): String? = when (reason) {
         null, "", "stop" -> null
+        // `tool_calls` 是 Agent 循环的中间态，不是错误/截断。
+        "tool_calls" -> null
         "length" -> "已达输出长度上限，回答被截断。可在设置里提高回复长度上限，或关闭思考模式"
         "content_filter" -> "输出被内容策略过滤，请调整提问方式"
         "insufficient_system_resource" -> "服务端推理资源不足，本次生成被中断，可直接重试"
