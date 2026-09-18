@@ -73,6 +73,7 @@ fun ChatScreen(
     onAddImage: (Uri) -> Unit,
     onRemoveAttachment: (String) -> Unit,
     onModelClick: () -> Unit,
+    onToggleWebSearch: () -> Unit,
     onNoticeShown: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -264,6 +265,20 @@ fun ChatScreen(
                 onAddImage = { attachOpen = true },
                 onRemoveAttachment = onRemoveAttachment,
                 onModelClick = onModelClick,
+                webSearchEnabled = state.webSearchEnabled,
+                webSearchAvailable = state.webSearchAvailable,
+                onToggleWebSearch = onToggleWebSearch,
+            )
+        }
+        state.activity?.let { activity ->
+            Text(
+                text = activity,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(bottom = 96.dp, start = 16.dp, end = 16.dp),
             )
         }
         val notice = state.notice

@@ -29,6 +29,7 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
             repository = app.chatRepository,
             attachmentStore = app.attachmentStore,
             settingsRepository = app.settingsRepository,
+            searchProvider = app.webSearchProvider,
         ),
     )
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -71,6 +72,7 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
                 onAddImage = viewModel::addAttachment,
                 onRemoveAttachment = viewModel::removeAttachment,
                 onModelClick = { showModelPicker = true },
+                onToggleWebSearch = viewModel::toggleWebSearch,
                 onNoticeShown = viewModel::consumeNotice,
             )
         }

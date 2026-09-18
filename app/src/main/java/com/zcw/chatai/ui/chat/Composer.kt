@@ -53,6 +53,9 @@ fun Composer(
     onAddImage: () -> Unit,
     onRemoveAttachment: (String) -> Unit,
     onModelClick: () -> Unit,
+    webSearchEnabled: Boolean,
+    webSearchAvailable: Boolean,
+    onToggleWebSearch: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val colors = ChatTheme.colors
@@ -113,6 +116,11 @@ fun Composer(
                 iconSize = 22.dp,
                 tint = scheme.onSurfaceVariant,
             )
+            WebSearchToggle(
+                enabled = webSearchEnabled,
+                available = webSearchAvailable,
+                onClick = onToggleWebSearch,
+            )
             ModelChip(model = model, onClick = onModelClick)
             Spacer(Modifier.weight(1f))
             PrimaryActionButton(
@@ -122,6 +130,25 @@ fun Composer(
                 onStop = onStop,
             )
         }
+    }
+}
+
+@Composable
+private fun WebSearchToggle(enabled: Boolean, available: Boolean, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Box(
+        modifier = Modifier
+            .size(36.dp)
+            .clip(RoundedCornerShape(999.dp))
+            .background(if (enabled && available) scheme.primary.copy(alpha = 0.12f) else Color.Transparent)
+            .clickable(enabled = available, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = "🌐",
+            style = MaterialTheme.typography.bodyLarge,
+            color = if (enabled && available) scheme.primary else scheme.onSurfaceVariant.copy(alpha = if (available) 1f else 0.4f),
+        )
     }
 }
 
