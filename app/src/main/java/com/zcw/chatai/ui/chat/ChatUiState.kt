@@ -47,6 +47,8 @@ data class ChatUiState(
     val messages: List<ChatMessageItem> = emptyList(),
     val isStreaming: Boolean = false,
     val streamingMessageId: String? = null,
+    /** 本会话整回合是否在跑（含工具执行阶段）：发送键禁用、显示停止键。 */
+    val isTurnActive: Boolean = false,
     val input: String = "",
     val pending: List<PendingAttachment> = emptyList(),
     val defaultModel: String = "",
@@ -55,5 +57,5 @@ data class ChatUiState(
     val webSearchAvailable: Boolean = true,
 ) {
     val canSend: Boolean
-        get() = (input.isNotBlank() || pending.isNotEmpty()) && !isStreaming
+        get() = (input.isNotBlank() || pending.isNotEmpty()) && !isTurnActive
 }

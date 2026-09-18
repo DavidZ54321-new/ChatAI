@@ -48,6 +48,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -75,8 +76,17 @@ data class StreamingMessage(
 sealed interface SendResult {
     data object Started : SendResult
 
+    /** 目标会话已有回合在跑：静默忽略，不弹文案（同一会话的连点/竞态）。 */
+    data object Busy : SendResult
+
     data class Rejected(val reason: String) : SendResult
 }
+
+/** 后台失败：带会话 id，UI 只显示给对应会话，不跨会话打扰。 */
+data class RepoError(
+    val conversationId: String?,
+    val message: String,
+)
 
 /**
  * 唯一业务入口：落库 → 组上下文 → 流式 → 节流发布 / checkpoint → 终值写回。
@@ -99,34 +109,50 @@ class ChatRepository(
     private val newId: () -> String = { UUID.randomUUID().toString() },
 ) {
 
-    private val _streaming = MutableStateFlow<StreamingMessage?>(null)
+    /** 正在流式的消息，按会话索引：跨会话并发时互不覆盖。 */
+    private val _streaming = MutableStateFlow<Map<String, StreamingMessage>>(emptyMap())
 
-    val streaming: StateFlow<StreamingMessage?> = _streaming.asStateFlow()
+    val streaming: StateFlow<Map<String, StreamingMessage>> = _streaming.asStateFlow()
 
     /** 后台失败（例如界面已退出）通过这里抛给 UI，而不是静默丢掉。 */
-    private val _errors = MutableStateFlow<String?>(null)
+    private val _errors = MutableStateFlow<RepoError?>(null)
 
-    val errors: StateFlow<String?> = _errors.asStateFlow()
+    val errors: StateFlow<RepoError?> = _errors.asStateFlow()
 
     fun consumeError() {
         _errors.value = null
     }
 
     /**
-     * 整回合的任务句柄：覆盖「流式 + 工具执行 + 再流式」全过程。
+     * 回合调度：同一会话至多一个进行中的回合，跨会话不限并发。
      * 不能只看 [streaming] —— 工具执行期间它会被清空，那样并发发送会插进第二个回合。
      */
-    private var turnJob: Job? = null
+    private val turns = TurnRegistry()
 
-    /** 正在跑回合的会话；用于「清空/删除会话时顺手停掉」。
-     *  `@Volatile`：写入在 IO 线程，读取可能来自主线程。 */
-    @Volatile
-    private var activeConversationId: String? = null
+    /** 哪些会话正在跑回合（含工具执行全程），UI 用它决定发送/停止键。 */
+    val busyConversations: StateFlow<Set<String>> = turns.busy
 
-    /** 统一收口后台失败：日志留堆栈，界面只给一句人话。 */
-    private fun reportError(t: Throwable, fallback: String) {
+    /** 统一收口后台失败：日志留堆栈，界面只给一句人话（按会话路由）。 */
+    private fun reportError(conversationId: String?, t: Throwable, fallback: String) {
         Log.e(TAG, "后台操作失败", t)
-        _errors.value = t.message?.takeIf { it.isNotBlank() } ?: fallback
+        _errors.value = RepoError(
+            conversationId = conversationId,
+            message = t.message?.takeIf { it.isNotBlank() } ?: fallback,
+        )
+    }
+
+    private fun publishStreaming(message: StreamingMessage) {
+        _streaming.update { it + (message.conversationId to message) }
+    }
+
+    private fun clearStreaming(messageId: String) {
+        _streaming.update { current ->
+            if (current.values.none { it.messageId == messageId }) {
+                current
+            } else {
+                current.filterValues { it.messageId != messageId }
+            }
+        }
     }
 
     // ---------- 观察 ----------
@@ -174,19 +200,19 @@ class ChatRepository(
 
     /** 删除会话：文件与行一起清掉。跑在仓库自己的 scope 上，界面退出也不会半途而废。 */
     fun deleteConversation(id: String) {
-        stopIfStreaming(id)
+        turns.cancel(id)
         scope.launch {
             runCatching {
                 val messages = db.messageDao().getByConversation(id)
                 attachmentStore.delete(messages.flatMap { it.toModel().attachments })
                 attachmentStore.deleteConversation(id)
                 db.conversationDao().delete(id)
-            }.onFailure { reportError(it, "删除会话失败") }
+            }.onFailure { reportError(id, it, "删除会话失败") }
         }
     }
 
     fun clearConversation(id: String) {
-        stopIfStreaming(id)
+        turns.cancel(id)
         scope.launch {
             runCatching {
                 val messages = db.messageDao().getByConversation(id)
@@ -194,16 +220,19 @@ class ChatRepository(
                 attachmentStore.deleteConversation(id)
                 db.messageDao().deleteByConversation(id)
                 refreshSummary(id)
-            }.onFailure { reportError(it, "清空会话失败") }
+            }.onFailure { reportError(id, it, "清空会话失败") }
         }
     }
 
     fun deleteMessage(messageId: String) {
-        if (_streaming.value?.messageId == messageId) stop()
+        _streaming.value.values.firstOrNull { it.messageId == messageId }
+            ?.let { stop(it.conversationId) }
         scope.launch {
+            var conversationId: String? = null
             runCatching {
                 val entity = db.messageDao().getById(messageId) ?: return@runCatching
                 val message = entity.toModel()
+                conversationId = message.conversationId
                 val all = db.messageDao().getByConversation(message.conversationId)
                 // 分组规则见 ToolTurnGrouping：删一半会留下孤立的 tool_calls / TOOL 行 → 下次 400。
                 val victims = ToolTurnGrouping.deletionSetFor(all.map { it.toNode() }, message.seq)
@@ -211,7 +240,7 @@ class ChatRepository(
                 attachmentStore.delete(victims.flatMap { it.toModel().attachments })
                 db.messageDao().deleteByIds(victims.map { it.id })
                 refreshSummary(message.conversationId)
-            }.onFailure { reportError(it, "删除消息失败") }
+            }.onFailure { reportError(conversationId, it, "删除消息失败") }
         }
     }
 
@@ -220,6 +249,7 @@ class ChatRepository(
     /**
      * 发送。校验是同步的（立刻能告诉界面「为什么不给发」），真正的落库与流式
      * 跑在仓库自己的 scope 上 —— 用户点了发送之后即使界面退出，消息与回答也不会丢。
+     * 只有**目标会话**已有回合在跑时才拒绝；其他会话照常并发。
      */
     fun send(
         conversationId: String,
@@ -229,12 +259,13 @@ class ChatRepository(
         val trimmed = text.trim()
         if (trimmed.isEmpty() && attachments.isEmpty()) return SendResult.Rejected("请输入内容")
         AttachmentLimits.validate(attachments)?.let { return SendResult.Rejected(it) }
-        if (turnJob?.isActive == true) return SendResult.Rejected("正在生成中，请先停止")
 
-        turnJob = launchTurn("发送失败") {
-            startTurn(conversationId, trimmed, attachments)
+        val job = turns.startIfIdle(conversationId) {
+            launchTurn(conversationId, "发送失败") {
+                startTurn(conversationId, trimmed, attachments)
+            }
         }
-        return SendResult.Started
+        return if (job == null) SendResult.Busy else SendResult.Started
     }
 
     /**
@@ -245,28 +276,29 @@ class ChatRepository(
      * - 落在目标之前的孤立 assistant（工具结果在目标之后）也要带走；
      * - 否则会留下「搜索没结果 / 抓取失败」的旧步骤，模型继承后继续失败。
      */
-    fun regenerate(messageId: String): SendResult {
-        if (turnJob?.isActive == true) stop()
-        turnJob = launchTurn("重新生成失败") {
-            val entity = db.messageDao().getById(messageId)
-                ?: return@launchTurn
-            val message = entity.toModel()
-            // 从 TOOL 行触发时，按它所属的 assistant 回合整组截断。
-            val targetSeq = resolveTurnStart(message) ?: run {
-                _errors.value = "只能重新生成回答"
-                return@launchTurn
+    fun regenerate(conversationId: String, messageId: String): SendResult {
+        turns.restart(conversationId) {
+            launchTurn(conversationId, "重新生成失败") {
+                val entity = db.messageDao().getById(messageId)
+                    ?: return@launchTurn
+                val message = entity.toModel()
+                // 从 TOOL 行触发时，按它所属的 assistant 回合整组截断。
+                val targetSeq = resolveTurnStart(message) ?: run {
+                    _errors.value = RepoError(message.conversationId, "只能重新生成回答")
+                    return@launchTurn
+                }
+                val all = db.messageDao().getByConversation(message.conversationId)
+                // 除 [targetSeq] 起的整段外，还要带走「应答落在该点之后」的孤儿 assistant（见 ToolTurnGrouping）。
+                val orphans = ToolTurnGrouping.orphanAssistantSeqsBefore(all.map { it.toNode() }, targetSeq)
+                val victims = all.filter { it.seq >= targetSeq || it.seq in orphans }
+                attachmentStore.delete(victims.flatMap { it.toModel().attachments })
+                db.messageDao().deleteByIds(
+                    all.filter { it.seq in orphans }.map { it.id },
+                )
+                db.messageDao().deleteFrom(message.conversationId, targetSeq)
+                refreshSummary(message.conversationId)
+                startAssistant(message.conversationId)
             }
-            val all = db.messageDao().getByConversation(message.conversationId)
-            // 除 [targetSeq] 起的整段外，还要带走「应答落在该点之后」的孤儿 assistant（见 ToolTurnGrouping）。
-            val orphans = ToolTurnGrouping.orphanAssistantSeqsBefore(all.map { it.toNode() }, targetSeq)
-            val victims = all.filter { it.seq >= targetSeq || it.seq in orphans }
-            attachmentStore.delete(victims.flatMap { it.toModel().attachments })
-            db.messageDao().deleteByIds(
-                all.filter { it.seq in orphans }.map { it.id },
-            )
-            db.messageDao().deleteFrom(message.conversationId, targetSeq)
-            refreshSummary(message.conversationId)
-            startAssistant(message.conversationId)
         }
         return SendResult.Started
     }
@@ -297,16 +329,18 @@ class ChatRepository(
         toolCallId = toolCallId,
     )
 
-    fun stop() {
-        turnJob?.cancel()
-        turnJob = null
-    }
+    /** 停止指定会话的回合；其他会话照常运行。 */
+    fun stop(conversationId: String) = turns.cancel(conversationId)
+
+    /** 停止所有会话的回合（仅系统侧兜底：前台服务超时被拆时无保活可用）。 */
+    fun stopAll() = turns.cancelAll()
 
     /**
      * 在调用线程（发送/重生成点按，通常是主线程）立刻抬前台服务，
      * 再把回合丢到仓库 scope。切走之后 freezer 才不会冻进程掐 TCP。
+     * 并发回合靠 [ChatTurnForeground] 的代数计数保活，这里不需要单例句柄。
      */
-    private fun launchTurn(errorFallback: String, block: suspend () -> Unit): Job {
+    private fun launchTurn(conversationId: String, errorFallback: String, block: suspend () -> Unit): Job {
         turnForeground.acquire()
         return scope.launch {
             try {
@@ -314,15 +348,11 @@ class ChatRepository(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (t: Throwable) {
-                reportError(t, errorFallback)
+                reportError(conversationId, t, errorFallback)
             } finally {
                 turnForeground.release()
             }
         }
-    }
-
-    private fun stopIfStreaming(conversationId: String) {
-        if (activeConversationId == conversationId) stop()
     }
 
     // ---------- 附件清理 ----------
@@ -346,7 +376,7 @@ class ChatRepository(
     ) {
         val conversation = db.conversationDao().getById(conversationId)
         if (conversation == null) {
-            _errors.value = "会话不存在"
+            _errors.value = RepoError(conversationId, "会话不存在")
             return
         }
         val timestamp = nowMs()
@@ -380,13 +410,7 @@ class ChatRepository(
         val config = resolveConfig(conversationId)
         val toolsUsable = config.webSearchEnabled &&
             searchProvider?.available(config.baseUrl, config.apiKey) == true
-        activeConversationId = conversationId
-        try {
-            runAgentTurn(conversationId, config.copy(webSearchEnabled = toolsUsable))
-        } finally {
-            // 只在仍属于本会话时清空：被 stop + 新回合接管的竞态下不能误清新回合的标记。
-            if (activeConversationId == conversationId) activeConversationId = null
-        }
+        runAgentTurn(conversationId, config.copy(webSearchEnabled = toolsUsable))
     }
 
     private suspend fun resolveConfig(conversationId: String): ChatConfig {
@@ -486,18 +510,20 @@ class ChatRepository(
         var status = MessageStatus.COMPLETE
         var errorMessage: String? = null
 
-        _streaming.value = StreamingMessage(conversationId, messageId, "", "")
+        publishStreaming(StreamingMessage(conversationId, messageId, "", ""))
         try {
             api.stream(config, messages).collect { event ->
                 if (event is ChatStreamEvent.ToolCallDelta) toolCalls.accept(event)
                 val update = accumulator.accept(event, elapsedMs())
                 if (update.publish) {
-                    _streaming.value = StreamingMessage(
-                        conversationId = conversationId,
-                        messageId = messageId,
-                        content = accumulator.content,
-                        reasoning = accumulator.reasoning,
-                        reasoningMs = accumulator.reasoningMs,
+                    publishStreaming(
+                        StreamingMessage(
+                            conversationId = conversationId,
+                            messageId = messageId,
+                            content = accumulator.content,
+                            reasoning = accumulator.reasoning,
+                            reasoningMs = accumulator.reasoningMs,
+                        ),
                     )
                 }
                 if (update.checkpoint) {
@@ -720,9 +746,7 @@ class ChatRepository(
             reasoningMs = accumulator.reasoningMs,
             updatedAt = nowMs(),
         )
-        if (_streaming.value?.messageId == messageId) {
-            _streaming.value = null
-        }
+        clearStreaming(messageId)
         refreshSummary(conversationId)
     }
 

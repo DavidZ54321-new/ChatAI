@@ -50,7 +50,7 @@ fun Composer(
     value: String,
     onValueChange: (String) -> Unit,
     model: String,
-    isStreaming: Boolean,
+    isTurnActive: Boolean,
     canSend: Boolean,
     pending: List<PendingAttachment>,
     onSend: () -> Unit,
@@ -138,7 +138,7 @@ fun Composer(
             ModelChip(model = model, onClick = onModelClick)
             Spacer(Modifier.weight(1f))
             PrimaryActionButton(
-                isStreaming = isStreaming,
+                isTurnActive = isTurnActive,
                 canSend = canSend,
                 onSend = onSend,
                 onStop = onStop,
@@ -189,14 +189,14 @@ private fun ModelChip(model: String, onClick: () -> Unit) {
 
 @Composable
 private fun PrimaryActionButton(
-    isStreaming: Boolean,
+    isTurnActive: Boolean,
     canSend: Boolean,
     onSend: () -> Unit,
     onStop: () -> Unit,
 ) {
     val colors = ChatTheme.colors
     val scheme = MaterialTheme.colorScheme
-    val active = isStreaming || canSend
+    val active = isTurnActive || canSend
     val container = if (active) scheme.onSurface else colors.chipBackground
     val content = if (active) scheme.surface else scheme.onSurfaceVariant
     Box(
@@ -205,11 +205,11 @@ private fun PrimaryActionButton(
             .clip(CircleShape)
             .background(container)
             .clickable(enabled = active) {
-                if (isStreaming) onStop() else onSend()
+                if (isTurnActive) onStop() else onSend()
             },
         contentAlignment = Alignment.Center,
     ) {
-        if (isStreaming) {
+        if (isTurnActive) {
             Box(
                 modifier = Modifier
                     .size(12.dp)

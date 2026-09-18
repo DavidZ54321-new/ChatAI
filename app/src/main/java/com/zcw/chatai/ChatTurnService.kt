@@ -20,11 +20,6 @@ class ChatTurnService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
-            // 只停回合：拆服务走 ChatTurnForeground.release，避免和服务计数各写各的。
-            (application as ChatAiApp).chatRepository.stop()
-            return START_NOT_STICKY
-        }
         startForeground(
             NOTIFICATION_ID,
             buildNotification(),
@@ -34,8 +29,8 @@ class ChatTurnService : Service() {
     }
 
     override fun onTimeout(startId: Int, fgsType: Int) {
-        (application as ChatAiApp).chatRepository.stop()
-        // 系统已经摘掉前台身份，几秒内必须 stopSelf，否则崩进程。
+        // 系统已摘掉前台身份、无保活可用：全停兜底，避免回合在后台被冻死。
+        (application as ChatAiApp).chatRepository.stopAll()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -47,12 +42,6 @@ class ChatTurnService : Service() {
             Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        val stop = PendingIntent.getService(
-            this,
-            1,
-            Intent(this, ChatTurnService::class.java).setAction(ACTION_STOP),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_notify)
             .setContentTitle(getString(R.string.turn_notification_title))
@@ -62,13 +51,11 @@ class ChatTurnService : Service() {
             .setSilent(true)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-            .addAction(0, getString(R.string.turn_notification_stop), stop)
             .build()
     }
 
     companion object {
         const val CHANNEL_ID = "chatai.turn"
-        const val ACTION_STOP = "com.zcw.chatai.STOP_TURN"
         private const val NOTIFICATION_ID = 1001
 
         fun ensureChannel(context: Context) {

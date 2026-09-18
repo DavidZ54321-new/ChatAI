@@ -66,21 +66,32 @@ class ChatViewModel(
         )
     }
 
+    private val turnFlow = combine(
+        repository.streaming,
+        repository.busyConversations,
+    ) { streaming, busy ->
+        TurnSnapshot(streaming = streaming, busy = busy)
+    }
+
     val state: StateFlow<ChatUiState> = combine(
         conversationId,
         conversationFlow,
         messagesFlow,
-        repository.streaming,
+        turnFlow,
         composerFlow,
-    ) { id, conversation, messages, streaming, composer ->
-        buildState(id, conversation, messages, streaming, composer)
+    ) { id, conversation, messages, turn, composer ->
+        buildState(id, conversation, messages, turn, composer)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatUiState())
 
     init {
         viewModelScope.launch {
-            repository.errors.collect { message ->
-                if (message != null) {
-                    notice.value = message
+            repository.errors.collect { error ->
+                if (error != null) {
+                    val current = conversationId.value
+                    // 只把当前会话（或全局）的失败显示出来，别的会话不打扰。
+                    if (error.conversationId == null || error.conversationId == current) {
+                        notice.value = error.message
+                    }
                     repository.consumeError()
                 }
             }
@@ -151,17 +162,26 @@ class ChatViewModel(
                 pending.value = emptyList()
             }
 
+            // 本会话回合还在跑（连点/竞态）：静默忽略，发送键此时也已被禁用。
+            SendResult.Busy -> Unit
+
             is SendResult.Rejected -> notice.value = result.reason
         }
     }
 
-    fun stop() = repository.stop()
+    /** 只停当前会话；其他会话的回合照常运行。 */
+    fun stop() {
+        val id = conversationId.value ?: return
+        repository.stop(id)
+    }
 
     fun retry(messageId: String) = regenerate(messageId)
 
     fun regenerate(messageId: String) {
-        when (val result = repository.regenerate(messageId)) {
+        val id = conversationId.value ?: return
+        when (val result = repository.regenerate(id, messageId)) {
             SendResult.Started -> Unit
+            SendResult.Busy -> Unit
             is SendResult.Rejected -> notice.value = result.reason
         }
     }
@@ -234,10 +254,10 @@ class ChatViewModel(
         id: String?,
         conversation: Conversation?,
         messages: List<Message>,
-        streaming: StreamingMessage?,
+        turn: TurnSnapshot,
         composer: ComposerSnapshot,
     ): ChatUiState {
-        val activeStream = streaming?.takeIf { it.conversationId == id }
+        val activeStream = id?.let { turn.streaming[it] }
         val items = messages.map { message ->
             val item = message.toItem()
             if (activeStream != null && activeStream.messageId == message.id) {
@@ -272,6 +292,7 @@ class ChatViewModel(
             messages = items,
             isStreaming = activeStream != null,
             streamingMessageId = activeStream?.messageId,
+            isTurnActive = id != null && turn.busy.contains(id),
             input = composer.input,
             pending = composer.pending,
             defaultModel = composer.defaultModel,
@@ -304,6 +325,11 @@ class ChatViewModel(
             )
         },
         toolResult = toolResult,
+    )
+
+    private data class TurnSnapshot(
+        val streaming: Map<String, StreamingMessage>,
+        val busy: Set<String>,
     )
 
     private data class ComposerSnapshot(

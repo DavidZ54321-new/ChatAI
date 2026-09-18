@@ -274,7 +274,7 @@ fun ChatScreen(
                 value = state.input,
                 onValueChange = onInputChange,
                 model = state.model,
-                isStreaming = state.isStreaming,
+                isTurnActive = state.isTurnActive,
                 canSend = state.canSend,
                 pending = state.pending,
                 onSend = { sendKeepingAlive() },
