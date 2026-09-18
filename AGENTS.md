@@ -12,21 +12,22 @@
 ChatAiApp (Application)  →  懒加载单例：AppDatabase / SettingsRepository / ChatApi / ChatRepository
 MainActivity             →  ChatAITheme + 主题模式 + 路由（Chat ↔ Settings）
 data/model               →  Conversation / Message / ChatConfig / Attachment / ToolSource / ConversationTitle
-data/db                  →  Room 2（schema v4）：ConversationEntity / MessageEntity / DAO / Mappers / Migrations / ToolCallCodec
-data/ai                  →  纯逻辑（可 JVM 单测）：ContextBuilder / StreamAccumulator / ToolCallAccumulator / AgentLoop / ReasoningPreview / ReasoningDuration
-data/prefs               →  SettingsRepository（DataStore，key 只存本机）
-data/net                 →  ChatApi 接口 + OpenAiCompatibleChatApi（okhttp-sse + callbackFlow）
-data/web                 →  联网工具：WebSearchProvider / DeepSeekNativeSearchProvider（Anthropic web_search）/ WebFetcher / HttpWebFetcher / HtmlToText / WebTools
-data/media               →  图片压缩与私有目录存储（ImageCompressor / AttachmentStore）
-data/ChatRepository      →  唯一业务入口：落库 → 组上下文 → 有界 Agent 循环（流式 → 工具 → 再流式）
-ui/chat                  →  ChatScreen / ChatViewModel / ChatUiState / Composer / MessageItems / ReasoningBlock / ToolCallBlock / Attachments / ChatMetrics
+data/db                  →  Room 2（schema v5）：ConversationEntity / MessageEntity / DAO / Mappers / Migrations / ToolCallCodec
+data/ai                  →  纯逻辑（可 JVM 单测）：ContextBuilder / AttachmentRetention / StreamAccumulator / ToolCallAccumulator / AgentLoop / ReasoningPreview / ReasoningDuration
+data/prefs               →  SettingsRepository（DataStore：providers_json + 全局生成参数，key 只存本机）
+data/provider            →  供应商目录：ProviderCatalog（presets/caps）+ ProviderConfigCodec（旧单配置懒迁移）
+data/net                 →  ChatApi 接口 + OpenAiCompatibleChatApi（okhttp-sse）+ QwenResponsesClient / DashScopeUpload
+data/web                 →  联网工具：WebSearchProvider / DeepSeekNativeSearchProvider（Anthropic）/ QwenWebSearchProvider / ImageSearchProvider / QwenImageSearchProvider / WebFetcher / HtmlToText / WebTools
+data/media               →  图片压缩与私有目录存储（ImageCompressor / AttachmentStore / VideoMetadata / VideoPlanner / VideoUploadCoordinator）
+data/ChatRepository      →  唯一业务入口：落库 → 视频预检 → 组上下文 → 有界 Agent 循环（流式 → 工具 → 再流式）
+ui/chat                  →  ChatScreen / ChatViewModel / ChatUiState / Composer / MessageItems / ReasoningBlock / ToolCallBlock / Attachments / RemoteImage / ChatMetrics
 ui/drawer                →  ConversationDrawer
-ui/settings              →  SettingsScreen / SettingsViewModel
-ui/md                    →  MessageMarkdown（mikepenz）+ LatexSplitter + latex/（vendored Kai，Apache-2.0）
+ui/settings              →  SettingsScreen / SettingsViewModel（服务商切换/连接配置/生成参数）
+ui/md                    →  MessageMarkdown（mikepenz，image 组件走 RemoteImage）+ LatexSplitter + latex/（vendored Kai，Apache-2.0）
 ui/theme                 →  设计系统（Color / ChatColors / Type / Theme / SpikeMark）
 ```
 
-两条不该踩第二次的约定：
+五条不该踩第二次的约定：
 
 - **视觉尺寸统一走 `ui/chat/ChatMetrics.kt`**（相对**视窗**而非父容器）：消息里图片缩略图 =
   视窗宽 20% 的正方形、顶消散尾巴 = 视窗高 4%（按钮行内不透明）、底消散引导 =
@@ -35,6 +36,22 @@ ui/theme                 →  设计系统（Color / ChatColors / Type / Theme /
   区分开）。测量用 `SystemClock.elapsedRealtime()`（单调钟，墙钟被 NTP 跳会落库荒谬值），
   口径 = 回合开始 → **最后一个 reasoning 增量**（不是第一个正文增量：输出顺序不保证）。
   UI 侧的秒数和落库值是同一个测量，别再用墙钟自己算一遍。
+- **供应商是数据，不是分支**：`ProviderCatalog` 描述基址/默认模型/能力（`ProviderCaps`），
+  `conversations.provider_id` 绑定会话（**空串 = 跟随激活供应商**；v4→v5 迁移的旧会话先统一回填空串，
+  `resolveConfig`/`ChatUiState` 再解析成激活供应商——不能写死 deepseek，旧配置可能是 Qwen/自建端点）；
+  连接参数按会话的供应商取（`ChatSettings.toChatConfig(providerId)`），生成参数全局。
+  设置页保存**整张 providers 表**（切走供应商时暂存的编辑也一并落盘）。加新供应商=加一条 preset +
+  配后端实现，不在 UI/请求层写 if-vendor。
+- **工具注入先算名单**：`ChatConfig.enabledTools` 由 `ChatRepository.resolveEnabledTools` 决定
+  （🌐 开关 × 工具后端可用性），网络层只按名单组装 schema；四个客户端工具统一挂 🌐。
+- **工具后端与主对话供应商解耦（借道）**：`ToolBackendResolver` 解析出搜索/图搜各自的供应商与模型
+  （规则：显式 `search_provider` 设置 → 会话供应商 → preset 顺序回退；**要求 apiKey 非空**，
+  空条目不能遮蔽后面配好的后端；图搜固定取 Qwen）。工具子调用用**后端自己的 `ChatConfig`**
+  （model = 后端模型），所以 DeepSeek/GLM/任意会话都能借道 Qwen 的图搜与搜索。
+- **视频是双路由**（`VideoPlanner`）：≤5MB 内联 base64，>5MB 走 DashScope 临时上传得 `oss://`；
+  **发送前预检门禁**（`resolvePendingVideos`）全部归位才发请求；能力门禁用
+  `ProviderCatalog.supportsVideo(会话供应商)`（UI 附件面板与预检共用同一条判定，旧会话空绑定跟随激活）；
+  本地文件是真相源，上传日志（`pendingKey`/`pendingPolicy` + `remoteUrl`）让崩溃后免二次上传（409=云端已完整）。
 
 
 ## Build & test
@@ -47,9 +64,11 @@ ui/theme                 →  设计系统（Color / ChatColors / Type / Theme /
 .\gradlew.bat lint                 # AGP default; no formatter or typecheck task is configured
 ```
 
-单测全是 JVM 测试（294 个）：网络层用 MockWebServer，其余是纯函数（错误映射、压缩尺寸、
-能力表、LaTeX 分段、Markdown 行内公式、思考摘要/耗时格式化、视觉度量、Room 映射往返、
-工具调用累加/编解码、Agent 决策、上下文组装/工具应答配对、回合分组、HTML→文本、搜索响应解析）。
+单测全是 JVM 测试（407 个）：网络层用 MockWebServer，其余是纯函数（错误映射、压缩尺寸、
+能力表、供应商目录/配置迁移/工具后端解析、LaTeX 分段、Markdown 行内公式、图行分段、
+思考摘要/耗时格式化、视觉度量、Room 映射往返、工具调用累加/编解码、Agent 决策、
+上下文组装/工具应答配对/附件保留/视频规划、回合分组、HTML→文本、搜索与 Responses 响应解析、
+上传凭证/multipart）。
 
 ## AGP 9 DSL — differs from most examples you'll find
 
@@ -106,6 +125,65 @@ Anthropic 面的 `available()` 不限制 host，兼容自建/转发代理基址�
 设计原则：**不为任何厂商特制**。线上只用标准交集（`image_url` data URL、`reasoning_effort`、
 `stream_options`）；厂商差异靠数据消化（预设基址表、模型能力表 `ModelCapabilities`、
 设置里的「附加请求参数 (JSON)」逃生口）；不预设模型能力，不支持时给可读提示而非静默失败。
+
+## Qwen / 通义千问（Model Studio）的事实（2026-09 真 key 实测，勿凭记忆改）
+
+基址用经典 `https://dashscope.aliyuncs.com/compatible-mode/v1` 即可（不需要 workspace MaaS 域名）：
+`GET /models` 返回 255 个模型（qwen3.8-max/-flash/-max-0902/-27b/-2.4t/-omni-flash…）；
+`GET /responses` 回 **405 Method Not Allowed**（路由存在、仅 POST），所以 Responses API 与
+Chat Completions **共用一个基址**。
+
+**Responses API（`data/net/QwenResponsesClient`）**——Qwen 原生工具只活在这里：
+
+- `tools:[{"type":"web_search"}]`：模型 agent 式多轮检索（实测一次提问触发 2 轮、耗时 ~86s）。
+  `output[]` 序列形如 `reasoning / web_search_call / … / message`；
+  **来源在 `web_search_call.action.sources`**，元素是 `{"type":"url","url":…}`——**没有 title**；
+  次数看 `usage.x_tools.web_search.count`。`message.content` 只有 `output_text` 文本，
+  **没有 annotations**（角标引用别指望）。
+- `tools:[{"type":"web_search_image"}]`（文搜图）：`output` 项 `web_search_image_call.output` 是
+  **JSON 字符串**，parse 后 `[{index,title,url}]`（实测 30 条，带 title）；~30s。
+- `tools:[{"type":"image_search"}]`（图搜图）：`input` 必须含 `input_image`，
+  **base64 data URI 实测可用**（无需公网 URL）；返回同 `image_search_call.output` 形状；
+  `output[]` 顺序不保证（实测 `message → call → message`），解析取最后一个 message。
+- **`tool_choice` 不能强制内置工具**（传了也当没有，实测直接回 message）——靠提示词触发，
+  三次实测 web_search/web_search_image/image_search 都成功调用。
+- `enable_thinking:false` 被接受且会去掉 `reasoning` 项（提速）；但**标准 `reasoning_effort` 同样有效**
+  （chat 面实测 `none`→0 推理、`high`→有推理），所以思考控制继续走标准字段，不加厂商专有映射。
+
+**视频（Qwen 视觉理解系列，非 Omni＝不听音轨）**：
+
+- OpenAI 兼容面 `{"type":"video_url","video_url":{"url":…}}`，url 可以是
+  **整文件 base64 data URI**（实测 3s/35KB，prompt 仅 301 token）或 **`oss://` 临时 URL**；
+  服务端自己抽帧（`fps` 默认 2.0，可传但不传也行），本地文件 base64 编码后 ≤10MB（错误码文档）。
+- 大文件走免费临时存储：`GET /api/v1/uploads?action=getPolicy&model=X` →
+  `POST {upload_host}` multipart（字段 `OSSAccessKeyId/policy/Signature/key/x-oss-object-acl/
+  x-oss-forbid-overwrite/success_action_status=200/file`，**file 必须最后**）→ `oss://{key}`。
+  凭证 300s、单文件上限取 `max_file_size_mb`（qwen3.8-max 实测 1024MB）、URL 有效期 48h。
+- **文件与模型绑定**：上传时指定的 model 必须和调用时的 model 一致；
+  文件与 API Key 同属一个主账号；**上传后不可查询/修改/下载**——"先查云端"没有 API，
+  崩溃恢复靠本地 journal + 同 key 重传：实测重复 POST 返回 **409 `FileAlreadyExists`**，
+  即"云端已有完整对象"的可靠信号。
+- 调用 `oss://` URL 必须带请求头 `X-DashScope-OssResourceResolve: enable`（compatible-mode 官方 curl 示例
+  就是这么用的，实测视频回环 200）。
+
+## OpenCode Go（第三方聚合网关）的事实（2026-09 真 key 实测，勿凭记忆改）
+
+- 基址 `https://opencode.ai/zen/go/v1`（`GET /models` 实测 37 个模型，标准 OpenAI 形状）；
+  同一域名下有三种协议面：`/chat/completions`、`/v1/messages`、`/v1/responses`。
+- **`x-opencode-session` 是强制头**：缺了直接 `400 MissingSessionID`（文档说"应当"是委婉说法）。
+  客户端还应自报 UA（`ChatAI/1.0`）。预设 `opencode-go` 用 `sendSessionHeader` 开关这一行为；
+  无会话上下文的请求（模型列表/测试连接）用兜底值 `chatai`。
+- **chat/completions 实测可用**：`deepseek-v4.1-flash`、`deepseek-v4-flash`、`glm-5.3-flash`、`hy3`、
+  **`qwen3.8-flash`**（文档只把它列在 `/v1/messages`，但兼容面实际也能用）。流式/`usage`/
+  `reasoning_content`/`tool_calls` 增量全部标准；function calling 实测可用（借道工具靠它）。
+- **只在 Responses 面**：`grok-4.6`（401 `Model … is not supported for format oa-compat`）、
+  `gpt-5.6-luna`（500）→ 本应用暂不可用；`ApiErrorMapper` 已把这类 401 映射成「不支持当前接口格式」
+  而不是误报 API Key 无效。
+- 视觉：`deepseek-v4-flash-vision-exp` 接受 `image_url` data URL（实测描述准确，91 token）；
+  `video_url` 回 422（不支持视频）。
+- `glm-5.3-flash` 思考默认开且会吃 `max_tokens`（给 200 直接 `finish=length`）；默认别发 max_tokens。
+- 模拟器联调（境外域名 + 宿主机 TUN 代理会 TLS 拦截）：临时 Python 转发器 + `adb reverse tcp:8443`
+  （脚本只放系统临时目录、不进仓库）；应用内 Base URL 用 `http://127.0.0.1:8443/zen/go/v1`。
 
 ## Android skills are installed project-locally
 
@@ -180,9 +258,9 @@ Gotchas that cost real debugging time:
 - **每个 assistant `tool_calls` 都必须有配对的 `role=tool` 应答**，否则服务端 400。窗口截断会切出
   孤立 TOOL 行（`ContextBuilder` 用 `dropWhile` 去掉开头的 TOOL），崩溃窗口的缺失应答由
   `ChatRepository.reconcileUnansweredToolCalls` 补占位。空白工具结果也必须以占位文本保留，不能丢行。
-- **schema v3→v4 的迁移没有 instrumented 测试**（仓库全是 JVM 测试，未接 `room-testing`）。纯增量列，
-  已用导出的 `app/schemas/.../4.json` 人工核对；后续再加列时优先补一个 `MigrationTestHelper` 测试，
-  或按下面「查设备上的库」用 `PRAGMA table_info` 手工验。
+- **schema 迁移没有 instrumented 测试**（仓库全是 JVM 测试，未接 `room-testing`）。v3→v4、v4→v5
+  都是纯增量列，已用导出的 `app/schemas/.../4.json`、`5.json` 人工核对；后续再加列时优先补一个
+  `MigrationTestHelper` 测试，或按下面「查设备上的库」用 `PRAGMA table_info` 手工验。
 - **OkHttp 读响应体必须显式循环到 EOF**。`source.read(buffer, n)` 只保证「至少读一点」，一次通常
   只返回一个网络分片；写完就收手会把长 JSON 从中间截断。搜索接口实测这样丢掉 90% 正文，表现为
   `JsonDecodingException ... EOF at path $.content[2].content` 被吞掉 → 每次搜索都「No results found」
@@ -190,6 +268,15 @@ Gotchas that cost real debugging time:
   **症状与原因离得极远，这类「静默解析失败」要优先怀疑截断。**
 - **`finish_reason` 里的 `tool_calls` 不是错误**。它是 Agent 循环的中间态；`ApiErrorMapper` 若把它
   当异常，每一步工具调用都会在气泡里显示「生成中断（tool_calls）」并标红成 ERROR。
+- **markdown 正文里的网图要自己接**（本仓库没有 Coil）：mikepenz 默认的 image/inlineImage 组件
+  依赖 transformer，不注册就什么都不画（但会占一片空白）。实测两个坑：① 独占一行的图片走
+  `inlineImage` 槽，只覆盖 `image` 不生效；② inline 形态的 `model.content` **就是链接本身**，
+  而块级形态的 `model.content` 是整段 markdown、URL 必须从 AST 节点解析——把短字符串按节点偏移
+  `substring` 会直接 `StringIndexOutOfBoundsException` 崩掉整个页面。修法见
+  `ui/md/MessageMarkdown.MarkdownNetworkImage`（两种形态都兼容 + 解析失败静默降级），
+  远程加载器见 `ui/chat/RemoteImage.kt`（OkHttp + LruCache，失败留灰色占位）。
+  连续多张图片（允许中间空行）会被 `ui/md/ImageRowSplitter` 合并成**一行横向滑动**——
+  模型图搜回答常常一张图一个段落，逐段渲染会变成一条竖列；尺寸常量在 `ChatMetrics`。
 
 ## 用模拟器联调真接口（宿主机挂了会做 TLS 拦截的代理时）
 
