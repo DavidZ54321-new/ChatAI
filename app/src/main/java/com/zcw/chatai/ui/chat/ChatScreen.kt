@@ -173,6 +173,14 @@ fun ChatScreen(
                                 onOpenImage = { previewTarget = it },
                             )
 
+                            Role.TOOL -> Box(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp),
+                            ) {
+                                message.toolResult?.let { ToolCallBlock(it) }
+                            }
+
                             else -> AiMessageItem(
                                 message = message,
                                 isStreaming = state.isStreaming && message.id == state.streamingMessageId,
