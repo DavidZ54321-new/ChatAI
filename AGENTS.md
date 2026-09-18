@@ -183,6 +183,11 @@ Gotchas that cost real debugging time:
 - **schema v3→v4 的迁移没有 instrumented 测试**（仓库全是 JVM 测试，未接 `room-testing`）。纯增量列，
   已用导出的 `app/schemas/.../4.json` 人工核对；后续再加列时优先补一个 `MigrationTestHelper` 测试，
   或按下面「查设备上的库」用 `PRAGMA table_info` 手工验。
+- **OkHttp 读响应体必须显式循环到 EOF**。`source.read(buffer, n)` 只保证「至少读一点」，一次通常
+  只返回一个网络分片；写完就收手会把长 JSON 从中间截断。搜索接口实测这样丢掉 90% 正文，表现为
+  `JsonDecodingException ... EOF at path $.content[2].content` 被吞掉 → 每次搜索都「No results found」
+  → 模型转而疯狂 `web_fetch` 搜索引擎页。正确写法见 `data/web/OkHttpCall.awaitBody`。
+  **症状与原因离得极远，这类「静默解析失败」要优先怀疑截断。**
 
 ## 用模拟器联调真接口（宿主机挂了会做 TLS 拦截的代理时）
 

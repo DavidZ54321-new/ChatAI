@@ -55,6 +55,23 @@ class DeepSeekSearchParserTest {
     }
 
     @Test
+    fun extractsSourcesFromRealAnthropicBodyWithThinkingAndToolUse() {
+        val body = """
+            {"id":"x","type":"message","role":"assistant","model":"deepseek-flash","content":[
+              {"type":"thinking","thinking":"The user wants a web search.","signature":"abc123"},
+              {"type":"server_tool_use","id":"call_00_1","name":"web_search","input":{"query":"DeepSeek V4 Flash"},"caller":{"type":"direct"}},
+              {"type":"web_search_tool_result","tool_use_id":"call_00_1","content":[
+                 {"type":"web_search_result","title":"DeepSeek-V4 Preview","url":"https://www.deepseek.com/en/news/v4-preview/","encrypted_content":"LONG_BASE64_STRING"}
+              ]}
+            ]}
+        """.trimIndent()
+        val result = DeepSeekSearchParser.parse(body)
+        assertEquals(1, result.sources.size)
+        assertEquals("https://www.deepseek.com/en/news/v4-preview/", result.sources[0].url)
+        assertEquals("DeepSeek-V4 Preview", result.sources[0].title)
+    }
+
+    @Test
     fun emptyContentGivesEmptyResult() {
         val result = DeepSeekSearchParser.parse("""{"content":[]}""")
         assertEquals(null, result.answer)

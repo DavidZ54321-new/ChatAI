@@ -70,6 +70,28 @@ class DeepSeekNativeSearchProviderTest {
     }
 
     @Test
+    fun readsBodyAcrossMultipleNetworkChunks() = runBlocking {
+        // 回归：`source.read(buffer, n)` 一次只返回一个分片，直接收手会把 JSON 从中间截断。
+        val payload = buildString {
+            append("""{"content":[{"type":"text","text":"OK"},{"type":"web_search_tool_result","tool_use_id":"s","content":[""")
+            repeat(400) { append("""{"type":"web_search_result","url":"https://example.com/$it","title":"t"}, """) }
+            append("""{"type":"web_search_result","url":"https://last.example.com","title":"last"}]}]}""")
+        }
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody(payload)
+                .throttleBody(256, 1, TimeUnit.MILLISECONDS),
+        )
+
+        val result = DeepSeekNativeSearchProvider().search("x", 5, config())
+
+        assertEquals("OK", result.answer)
+        assertEquals("https://last.example.com", result.sources.last().url)
+        assertTrue(result.sources.size > 100)
+    }
+
+    @Test
     fun cancellationStopsTheInFlightCall() = runBlocking {
         server.enqueue(okResponse().setBodyDelay(5, TimeUnit.SECONDS))
         val started = System.nanoTime()

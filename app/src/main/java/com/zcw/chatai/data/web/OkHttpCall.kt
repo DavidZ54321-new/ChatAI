@@ -40,8 +40,14 @@ internal suspend fun OkHttpClient.awaitBody(request: Request, maxBytes: Int): Ht
 
                 override fun onResponse(call: Call, response: Response) {
                     try {
+                        val source = response.body.source()
                         val buffer = Buffer()
-                        response.body.source().read(buffer, maxBytes.toLong())
+                        // 必须显式循环读到 EOF：`source.read(buffer, n)` 一次可能只返回一个网络分片，
+                        // 直接收手会把 JSON 从中间截断（实测导致搜索解析永远得到空结果）。
+                        while (buffer.size < maxBytes) {
+                            val read = source.read(buffer, maxBytes - buffer.size)
+                            if (read == -1L) break
+                        }
                         continuation.resume(
                             HttpBody(
                                 code = response.code,
