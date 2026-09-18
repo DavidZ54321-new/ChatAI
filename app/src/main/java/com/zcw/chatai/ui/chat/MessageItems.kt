@@ -43,6 +43,7 @@ fun UserMessageItem(
     message: ChatMessageItem,
     onLongPress: () -> Unit,
     onCopy: () -> Unit,
+    onRegenerate: () -> Unit,
     onDelete: () -> Unit,
     onOpenImage: (MessageImage) -> Unit,
     modifier: Modifier = Modifier,
@@ -77,7 +78,7 @@ fun UserMessageItem(
             }
             MessageActions(
                 onCopy = onCopy,
-                onRegenerate = null,
+                onRegenerate = onRegenerate,
                 onDelete = onDelete,
                 meta = null,
                 alignEnd = true,
@@ -131,7 +132,9 @@ fun AiMessageItem(
             if (isStreaming && message.content.isNotEmpty()) {
                 StreamingIndicator()
             }
-            if (!isStreaming) {
+            // 中间思考步（只有 reasoning、没有正文）不挂复制/重生成/删除，
+            // 那组按钮留给用户气泡和真正的回答。
+            if (!isStreaming && message.content.isNotEmpty()) {
                 MessageActions(
                     onCopy = onCopy,
                     onRegenerate = onRegenerate,

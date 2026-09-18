@@ -28,10 +28,11 @@ private const val COMPOSE_SETTLE_MS = 64L
  * 滚到最后一项真正出现在视口里。
  *
  * 每次跳转后等一拍，让下一屏 Markdown 量完高；只等一帧的话会假到底，
- * 人停在中途的用户气泡上。
+ * 人停在中途的用户气泡上。用户上滑松钉后 [stillPinned] 立刻停，不再抢滚动。
  */
-suspend fun LazyListState.scrollToEnd() {
+suspend fun LazyListState.scrollToEnd(stillPinned: () -> Boolean = { true }) {
     repeat(40) {
+        if (!stillPinned()) return
         val lastIndex = layoutInfo.totalItemsCount - 1
         if (lastIndex < 0) {
             delay(COMPOSE_SETTLE_MS)

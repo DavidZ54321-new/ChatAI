@@ -27,20 +27,21 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.boundsInParent
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.ClipboardManager
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -54,8 +55,6 @@ import androidx.core.content.FileProvider
 import com.zcw.chatai.data.model.Role
 import com.zcw.chatai.ui.theme.ChatTheme
 import java.io.File
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
 
 @Composable
 fun ChatScreen(
@@ -80,8 +79,8 @@ fun ChatScreen(
     val colors = ChatTheme.colors
     val context = LocalContext.current
     val listState = rememberLazyListState()
-    val scope = rememberCoroutineScope()
     val clipboard = LocalClipboardManager.current
+    val composerRect = remember { mutableStateOf(Rect.Zero) }
     val topInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     var actionTarget by remember { mutableStateOf<ChatMessageItem?>(null) }
     var previewTarget by remember { mutableStateOf<MessageImage?>(null) }
@@ -98,7 +97,6 @@ fun ChatScreen(
     val bottomBand = ChatMetrics.bottomDissolve(windowHeight, composerDp + bottomInset + 10.dp)
 
     val messages = state.messages
-    val lastMessage = messages.lastOrNull()
     val lastAssistantId = messages.lastOrNull { it.role == Role.ASSISTANT }?.id
 
     val pickImages = rememberLauncherForActivityResult(
@@ -117,33 +115,20 @@ fun ChatScreen(
         captureUriText = null
     }
 
-    val atBottom by remember {
-        derivedStateOf {
-            val info = listState.layoutInfo
-            isChatListAtBottom(
-                lastVisibleIndex = info.visibleItemsInfo.lastOrNull()?.index,
-                totalItems = info.totalItemsCount,
-                canScrollForward = listState.canScrollForward,
-            )
-        }
-    }
+    val follow = rememberChatListFollow(
+        listState = listState,
+        conversationId = state.conversationId,
+        messages = messages,
+        isStreaming = state.isStreaming,
+    )
 
-    var listEndJob by remember { mutableStateOf<Job?>(null) }
-    fun scrollListToEnd() {
-        listEndJob?.cancel()
-        listEndJob = scope.launch { listState.scrollToEnd() }
-    }
-
-    LaunchedEffect(messages.size, lastMessage?.id) {
-        if (messages.isNotEmpty()) scrollListToEnd()
-    }
-
-    LaunchedEffect(lastMessage?.content?.length, lastMessage?.reasoning?.length, state.isStreaming) {
-        if (messages.isEmpty() || !state.isStreaming) return@LaunchedEffect
-        if (atBottom) scrollListToEnd()
-    }
-
-    Box(modifier = modifier.fillMaxSize().background(colors.canvas).imePadding()) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(colors.canvas)
+            .imePadding()
+            .clearFocusOnTapOutside { composerRect.value },
+    ) {
         if (messages.isEmpty()) {
             EmptyChatState(
                 onSuggestionClick = onInputChange,
@@ -152,7 +137,7 @@ fun ChatScreen(
         } else {
             LazyColumn(
                 state = listState,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().nestedScroll(follow.nestedScrollConnection),
                 contentPadding = PaddingValues(
                     // 含顶消散尾巴：停在顶部时第一条气泡在渐变之下，实色。
                     top = topBand.height,
@@ -170,6 +155,7 @@ fun ChatScreen(
                                 message = message,
                                 onLongPress = { actionTarget = message },
                                 onCopy = { clipboard.copy(message.content) },
+                                onRegenerate = { onRegenerate(message.id) },
                                 onDelete = { onDeleteMessage(message.id) },
                                 onOpenImage = { previewTarget = it },
                             )
@@ -235,11 +221,9 @@ fun ChatScreen(
             onOverflow = { overflowOpen = true },
             modifier = Modifier.align(Alignment.TopCenter),
         )
-        if (messages.isNotEmpty() && !atBottom) {
+        if (messages.isNotEmpty() && !follow.atBottom) {
             ScrollToBottomButton(
-                onClick = {
-                    scrollListToEnd()
-                },
+                onClick = follow.scrollToEnd,
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(end = 16.dp, bottom = 170.dp),
@@ -251,6 +235,7 @@ fun ChatScreen(
                 .navigationBarsPadding()
                 .padding(horizontal = 16.dp, vertical = 10.dp)
                 .fillMaxWidth()
+                .onGloballyPositioned { composerRect.value = it.boundsInParent() }
                 .onSizeChanged { composerHeight = it.height },
         ) {
             Composer(
@@ -268,17 +253,6 @@ fun ChatScreen(
                 webSearchEnabled = state.webSearchEnabled,
                 webSearchAvailable = state.webSearchAvailable,
                 onToggleWebSearch = onToggleWebSearch,
-            )
-        }
-        state.activity?.let { activity ->
-            Text(
-                text = activity,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .navigationBarsPadding()
-                    .padding(bottom = 96.dp, start = 16.dp, end = 16.dp),
             )
         }
         val notice = state.notice
@@ -302,7 +276,7 @@ fun ChatScreen(
     val target = actionTarget
     if (target != null) {
         MessageActionsSheet(
-            canRegenerate = target.role == Role.ASSISTANT,
+            canRegenerate = target.role == Role.ASSISTANT || target.role == Role.USER,
             onDismiss = { actionTarget = null },
             onCopy = {
                 clipboard.copy(target.content)

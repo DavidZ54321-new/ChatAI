@@ -1,5 +1,7 @@
 package com.zcw.chatai.ui.chat
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -32,13 +34,16 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.zcw.chatai.R
 import com.zcw.chatai.ui.theme.ChatTheme
 
-private val ComposerShape = RoundedCornerShape(26.dp)
+private val ComposerCorner = 26.dp
+private val ComposerFocusRing = 3.dp
+private val ComposerShape = RoundedCornerShape(ComposerCorner)
 
 @Composable
 fun Composer(
@@ -62,11 +67,24 @@ fun Composer(
     val scheme = MaterialTheme.colorScheme
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
+    val focus by animateFloatAsState(
+        targetValue = if (focused) 1f else 0f,
+        animationSpec = tween(durationMillis = 150),
+        label = "composerFocus",
+    )
+    val borderColor = lerp(colors.hairline, scheme.primary, focus)
     Column(
         modifier = modifier
             .fillMaxWidth()
+            // 3px 15% 珊瑚外环：失焦时透明，避免和 clip/shadow 图层把溢出绘制裁掉。
+            .border(
+                width = ComposerFocusRing,
+                color = scheme.primary.copy(alpha = 0.15f * focus),
+                shape = RoundedCornerShape(ComposerCorner + ComposerFocusRing),
+            )
+            .padding(ComposerFocusRing)
             .shadow(
-                elevation = if (focused) 6.dp else 3.dp,
+                elevation = (3f + 3f * focus).dp,
                 shape = ComposerShape,
                 clip = false,
                 ambientColor = Color.Black.copy(alpha = 0.08f),
@@ -74,11 +92,7 @@ fun Composer(
             )
             .clip(ComposerShape)
             .background(colors.surfaceCard)
-            .border(
-                width = 1.dp,
-                color = if (focused) scheme.primary else colors.hairline,
-                shape = ComposerShape,
-            )
+            .border(width = 1.dp, color = borderColor, shape = ComposerShape)
             .padding(start = 18.dp, end = 10.dp, top = 14.dp, bottom = 10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {

@@ -72,9 +72,6 @@ data class StreamingMessage(
     val reasoningMs: Long? = null,
 )
 
-/** 工具活动带归属会话：UI 只显示当前会话的活动，避免切会话后串台。 */
-data class AgentActivity(val conversationId: String, val text: String)
-
 sealed interface SendResult {
     data object Started : SendResult
 
@@ -124,11 +121,6 @@ class ChatRepository(
      *  `@Volatile`：写入在 IO 线程，读取可能来自主线程。 */
     @Volatile
     private var activeConversationId: String? = null
-
-    /** 当前工具活动（如「正在联网搜索：xxx」）。独立于 [streaming]：assistant 步结束后 streaming 会被清空。 */
-    private val _activity = MutableStateFlow<AgentActivity?>(null)
-
-    val activity: StateFlow<AgentActivity?> = _activity.asStateFlow()
 
     /** 统一收口后台失败：日志留堆栈，界面只给一句人话。 */
     private fun reportError(t: Throwable, fallback: String) {
@@ -252,6 +244,7 @@ class ChatRepository(
 
     /**
      * 重新生成：删掉这条回答及其之后的所有消息，用剩余上下文重跑。
+     * 从用户气泡触发时，保留该条用户消息，从它之后截断再重跑。
      *
      * Agent 回合是「assistant(tool_calls) + TOOL 结果」的整体。这里必须以**整组**为单位截断：
      * - 落在目标之前的孤立 assistant（工具结果在目标之后）也要带走；
@@ -289,9 +282,11 @@ class ChatRepository(
         return SendResult.Started
     }
 
-    /** 找出这条消息所属 Agent 回合的起点 seq：assistant 是自己的 seq，TOOL 走配对回它的发起回合。 */
+    /** 找出这条消息所属 Agent 回合的起点 seq：assistant 是自己的 seq，用户气泡从下一条起切，TOOL 走配对回它的发起回合。 */
     private suspend fun resolveTurnStart(message: Message): Long? {
         if (message.role == Role.ASSISTANT) return message.seq
+        // 保留用户原文，deleteFrom(seq >= user.seq + 1) 清掉它后面的整段回答。
+        if (message.role == Role.USER) return message.seq + 1
         if (message.role != Role.TOOL) return null
         val callId = message.toolCallId ?: return message.seq
         // 与 ToolTurnGrouping 用同一条解码路径：不能对原始 JSON 做子串匹配，
@@ -540,55 +535,50 @@ class ChatRepository(
     }
 
     private suspend fun executeTools(conversationId: String, config: ChatConfig, calls: List<ToolCall>) {
-        try {
-            for (call in calls) {
-                val toolMessageId = newId()
-                val timestamp = nowMs()
-                db.messageDao().upsert(
-                    MessageEntity(
-                        id = toolMessageId,
-                        conversationId = conversationId,
-                        role = Role.TOOL.name,
-                        content = "",
-                        status = MessageStatus.COMPLETE.name,
-                        errorMessage = null,
-                        reasoningContent = null,
-                        seq = db.messageDao().nextSeq(conversationId),
-                        model = config.model,
-                        promptTokens = null,
-                        completionTokens = null,
-                        toolCallId = call.id,
-                        toolResult = ToolCallCodec.encodeResult(
-                            ToolResult(status = ToolStatus.RUNNING, detail = activityLabel(call)),
-                        ),
-                        createdAt = timestamp,
-                        updatedAt = timestamp,
+        for (call in calls) {
+            val toolMessageId = newId()
+            val timestamp = nowMs()
+            db.messageDao().upsert(
+                MessageEntity(
+                    id = toolMessageId,
+                    conversationId = conversationId,
+                    role = Role.TOOL.name,
+                    content = "",
+                    status = MessageStatus.COMPLETE.name,
+                    errorMessage = null,
+                    reasoningContent = null,
+                    seq = db.messageDao().nextSeq(conversationId),
+                    model = config.model,
+                    promptTokens = null,
+                    completionTokens = null,
+                    toolCallId = call.id,
+                    toolResult = ToolCallCodec.encodeResult(
+                        ToolResult(status = ToolStatus.RUNNING, detail = activityLabel(call)),
                     ),
-                )
-                _activity.value = AgentActivity(conversationId, activityLabel(call))
-                var cancellation: CancellationException? = null
-                val result = try {
-                    runTool(call, config)
-                } catch (c: CancellationException) {
-                    cancellation = c
-                    ToolResult(status = ToolStatus.FAILED, detail = call.name, text = TOOL_CANCELLED_TEXT)
-                } catch (t: Throwable) {
-                    ToolResult(status = ToolStatus.FAILED, detail = call.name, text = t.message ?: "工具执行失败")
-                }
-                // 取消时也要把 RUNNING 行落定，否则界面会永远停在「搜索中」。
-                withContext(NonCancellable) {
-                    db.messageDao().updateToolResultContent(
-                        id = toolMessageId,
-                        content = result.text.ifBlank { result.detail },
-                        toolResult = ToolCallCodec.encodeResult(result),
-                        updatedAt = nowMs(),
-                    )
-                    refreshSummary(conversationId)
-                }
-                if (cancellation != null) throw cancellation
+                    createdAt = timestamp,
+                    updatedAt = timestamp,
+                ),
+            )
+            var cancellation: CancellationException? = null
+            val result = try {
+                runTool(call, config)
+            } catch (c: CancellationException) {
+                cancellation = c
+                ToolResult(status = ToolStatus.FAILED, detail = call.name, text = TOOL_CANCELLED_TEXT)
+            } catch (t: Throwable) {
+                ToolResult(status = ToolStatus.FAILED, detail = call.name, text = t.message ?: "工具执行失败")
             }
-        } finally {
-            _activity.value = null
+            // 取消时也要把 RUNNING 行落定，否则界面会永远停在「搜索中」。
+            withContext(NonCancellable) {
+                db.messageDao().updateToolResultContent(
+                    id = toolMessageId,
+                    content = result.text.ifBlank { result.detail },
+                    toolResult = ToolCallCodec.encodeResult(result),
+                    updatedAt = nowMs(),
+                )
+                refreshSummary(conversationId)
+            }
+            if (cancellation != null) throw cancellation
         }
     }
 

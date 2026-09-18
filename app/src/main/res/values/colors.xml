@@ -4,4 +4,5 @@
     <color name="white">#FFFFFFFF</color>
     <color name="canvas">#FFFAF9F5</color>
     <color name="surface_dark">#FF181715</color>
+    <color name="ic_launcher_background">#FFFFFFFF</color>
 </resources>

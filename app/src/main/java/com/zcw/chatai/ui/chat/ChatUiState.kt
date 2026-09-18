@@ -53,8 +53,6 @@ data class ChatUiState(
     val notice: String? = null,
     val webSearchEnabled: Boolean = false,
     val webSearchAvailable: Boolean = true,
-    /** 当前工具活动（如「正在联网搜索：xxx」）。 */
-    val activity: String? = null,
 ) {
     val canSend: Boolean
         get() = (input.isNotBlank() || pending.isNotEmpty()) && !isStreaming
