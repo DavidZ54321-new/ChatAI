@@ -1,7 +1,9 @@
 package com.zcw.chatai
 
 import android.app.Application
+import android.content.ComponentCallbacks2
 import android.content.pm.ApplicationInfo
+import android.content.res.Configuration
 import com.zcw.chatai.data.ChatRepository
 import com.zcw.chatai.data.db.AppDatabase
 import com.zcw.chatai.data.media.AttachmentStore
@@ -18,6 +20,7 @@ import com.zcw.chatai.data.web.QwenImageSearchProvider
 import com.zcw.chatai.data.web.QwenWebSearchProvider
 import com.zcw.chatai.data.web.WebFetcher
 import com.zcw.chatai.data.web.WebSearchProvider
+import com.zcw.chatai.ui.chat.RemoteImages
 import com.zcw.chatai.util.MainThreadWatchdog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -74,6 +77,20 @@ class ChatAiApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        RemoteImages.install(this)
+        registerComponentCallbacks(
+            object : ComponentCallbacks2 {
+                override fun onTrimMemory(level: Int) {
+                    RemoteImages.onTrimMemory(level)
+                }
+
+                override fun onConfigurationChanged(newConfig: Configuration) = Unit
+
+                override fun onLowMemory() {
+                    RemoteImages.onTrimMemory(ComponentCallbacks2.TRIM_MEMORY_COMPLETE)
+                }
+            },
+        )
         ChatTurnService.ensureChannel(this)
         MainThreadWatchdog.startIfDebuggable(
             (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0,

@@ -34,8 +34,13 @@ object MainThreadWatchdog {
                 Thread.sleep(POLL_MS)
                 val stuck = SystemClock.uptimeMillis() - lastBeat
                 if (stuck > TIMEOUT_MS) {
-                    val trace = mainThread.stackTrace.joinToString("\n") { "    at $it" }
-                    Log.e(TAG, "主线程已阻塞 ${stuck}ms，当前堆栈：\n$trace")
+                    val frames = mainThread.stackTrace
+                    // 进程被系统/安装器冻结时，堆栈只剩 Looper 空转（post 的 beat 根本轮不到执行），
+                    // 那不是应用代码卡住；只有堆栈里出现应用/框架代码才值得报。
+                    if (frames.hasAppCode()) {
+                        val trace = frames.joinToString("\n") { "    at $it" }
+                        Log.e(TAG, "主线程已阻塞 ${stuck}ms，当前堆栈：\n$trace")
+                    }
                     Thread.sleep(TIMEOUT_MS * 2)
                 }
             }
@@ -44,5 +49,15 @@ object MainThreadWatchdog {
             isDaemon = true
             start()
         }
+    }
+
+    /** 栈里除 `android.os.*` / `java.*` 等运行时空转帧外，是否还有真正的代码在执行。 */
+    private fun Array<StackTraceElement>.hasAppCode(): Boolean = any { frame ->
+        val name = frame.className
+        !name.startsWith("android.os.") &&
+            !name.startsWith("java.") &&
+            !name.startsWith("jdk.") &&
+            !name.startsWith("com.android.internal.os.") &&
+            !name.startsWith("dalvik.")
     }
 }

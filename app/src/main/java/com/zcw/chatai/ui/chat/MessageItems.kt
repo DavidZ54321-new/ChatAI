@@ -150,6 +150,7 @@ private fun AssistantStep(
         if (message.content.isNotEmpty()) {
             MessageMarkdown(
                 content = message.content,
+                cacheable = !isStreaming,
                 modifier = Modifier
                     .fillMaxWidth()
                     .combinedClickable(onClick = {}, onLongClick = onLongPress),

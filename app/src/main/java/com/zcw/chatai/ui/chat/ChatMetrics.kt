@@ -1,7 +1,9 @@
 package com.zcw.chatai.ui.chat
 
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.isSpecified
 
 /**
  * 聊天界面的视觉度量。比例都相对「手机视窗」而不是相对父容器，
@@ -33,6 +35,9 @@ object ChatMetrics {
     /** 图行里单张图的最大宽度 = 视窗宽 80%（超宽的一行只能滑一张）。 */
     const val MARKDOWN_IMAGE_MAX_WIDTH_FRACTION = 0.8f
 
+    /** 单张图的高度上限 = 视窗高 55%（竖长图不占满整屏，横图仍由宽度上限约束）。 */
+    const val MARKDOWN_SINGLE_IMAGE_MAX_HEIGHT_FRACTION = 0.55f
+
     /** 加载占位的最小宽度，避免行内出现「什么都没有」的空档。 */
     val MARKDOWN_IMAGE_MIN_WIDTH: Dp = 120.dp
 
@@ -46,6 +51,27 @@ object ChatMetrics {
 
     fun markdownImageMaxWidth(windowWidth: Dp): Dp =
         (windowWidth * MARKDOWN_IMAGE_MAX_WIDTH_FRACTION).coerceAtLeast(1.dp)
+
+    /** 单张图的高度上限；视窗高未知时返回 [Dp.Unspecified]（调用方的 heightIn 会忽略它）。 */
+    fun markdownSingleImageMaxHeight(windowHeight: Dp): Dp {
+        if (!windowHeight.isSpecified || windowHeight.value <= 0f) return Dp.Unspecified
+        return (windowHeight * MARKDOWN_SINGLE_IMAGE_MAX_HEIGHT_FRACTION).coerceAtLeast(1.dp)
+    }
+
+    /**
+     * 单张 block 图的显示尺寸：保持宽高比，装进「视窗宽 80% × 视窗高 55%」的框。
+     * [aspect] = 宽 / 高；未测量（<= 0）或视窗高未知时只返回宽度上限、高度给 0，
+     * 由调用方退回「宽度封顶 + 占位最小高度」。
+     */
+    fun markdownSingleImageSize(aspect: Float, windowWidth: Dp, windowHeight: Dp): DpSize {
+        val maxWidth = markdownImageMaxWidth(windowWidth)
+        if (aspect <= 0f || !windowHeight.isSpecified || windowHeight.value <= 0f) {
+            return DpSize(maxWidth, 0.dp)
+        }
+        val maxHeight = markdownSingleImageMaxHeight(windowHeight)
+        val width = minOf(maxWidth.value, maxHeight.value * aspect).coerceAtLeast(1f)
+        return DpSize(width.dp, (width / aspect).dp)
+    }
 
     fun topDissolve(windowHeight: Dp, statusBar: Dp): DissolveBand {
         val tail = (windowHeight * TOP_DISSOLVE_TAIL_FRACTION).coerceAtLeast(1.dp)
