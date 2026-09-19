@@ -48,6 +48,7 @@ import com.zcw.chatai.data.prefs.ReasoningEffort
 import com.zcw.chatai.data.prefs.ThemeMode
 import com.zcw.chatai.data.provider.ProviderCatalog
 import com.zcw.chatai.data.provider.ProviderEntry
+import com.zcw.chatai.ui.common.ModelAutocompleteField
 import com.zcw.chatai.ui.theme.ChatTheme
 
 @Composable
@@ -129,20 +130,16 @@ fun SettingsScreen(
                 keyboardType = KeyboardType.Password,
                 masked = true,
             )
-            Field(
-                label = "模型",
+            ModelAutocompleteField(
+                label = if (state.models.isEmpty()) "模型" else "模型（共 ${state.models.size} 个）",
                 value = state.model,
                 onValueChange = { value -> viewModel.update { it.copy(model = value) } },
                 placeholder = ProviderCatalog.byId(state.activeProviderId)?.defaultModel?.takeIf { it.isNotBlank() }
                     ?: "model-name",
+                models = state.models,
+                busy = state.busy,
+                onFetch = viewModel::testConnection,
             )
-            if (state.models.isNotEmpty()) {
-                ChipFlow(
-                    options = state.models.map { it to it },
-                    selected = state.model,
-                    onSelect = { value -> viewModel.update { it.copy(model = value) } },
-                )
-            }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 ActionPill(
                     label = if (state.busy) "连接中…" else "测试连接 / 拉取模型列表",

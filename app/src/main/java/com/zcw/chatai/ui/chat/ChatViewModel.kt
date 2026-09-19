@@ -30,7 +30,10 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /** 「继续」发送的文本；和用户手打一致，走同一条落库/请求路径。 */
 private const val CONTINUE_TEXT = "继续"
@@ -38,7 +41,7 @@ private const val CONTINUE_TEXT = "继续"
 class ChatViewModel(
     private val repository: ChatRepository,
     private val attachmentStore: AttachmentStore,
-    settingsRepository: SettingsRepository,
+    private val settingsRepository: SettingsRepository,
     /** 按供应商 id 选搜索后端（可用性提示用）。 */
     private val searchProviders: Map<String, WebSearchProvider> = emptyMap(),
     /** 按供应商 id 选图搜后端（可用性提示用）。 */
@@ -49,6 +52,15 @@ class ChatViewModel(
     private val pending = MutableStateFlow<List<PendingAttachment>>(emptyList())
     private val notice = MutableStateFlow<String?>(null)
     private val conversationId = MutableStateFlow<String?>(null)
+
+    /**
+     * 还没有会话时，用户先选好的模型/供应商只是**界面状态**：不急着建一条空会话，
+     * 等真正建会话（首次发送或点「+」）时再一次性落库。
+     */
+    private val pendingBinding = MutableStateFlow<PendingBinding?>(null)
+
+    /** 建会话是「读-改-写」，两条协程并发 can 都看到 null 而各建一条空会话，串行化掉。 */
+    private val conversationLock = Mutex()
 
     val conversations: StateFlow<List<Conversation>> = repository.observeConversations()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -66,7 +78,8 @@ class ChatViewModel(
         pending,
         notice,
         settingsRepository.settings,
-    ) { text, pend, note, settings ->
+        pendingBinding,
+    ) { text, pend, note, settings, binding ->
         val entry = settings.activeProvider
         // 工具后端与主对话供应商解耦（借道）：可用性只看后端配置，不看会话模型。
         val backendIds = ToolBackendResolver.resolve(
@@ -93,6 +106,8 @@ class ChatViewModel(
             defaultModel = entry.model,
             webSearchAvailable = textAvailable || imageAvailable,
             activeProviderId = settings.activeProviderId,
+            pendingModel = binding?.model,
+            pendingProviderId = binding?.providerId,
         )
     }
 
@@ -130,7 +145,17 @@ class ChatViewModel(
         viewModelScope.launch {
             val existing = repository.observeConversations().first()
             if (conversationId.value == null && existing.isNotEmpty()) {
-                conversationId.value = existing.first().id
+                val id = existing.first().id
+                conversationId.value = id
+                // 采纳既有会话后，把用户在建会话之前选的绑定补写到它上面，别让选择落空。
+                pendingBinding.value?.let { binding ->
+                    when {
+                        binding.providerId != null && binding.model != null ->
+                            repository.setConversationProvider(id, binding.providerId, binding.model)
+                        binding.model != null -> repository.setConversationModel(id, binding.model)
+                    }
+                }
+                pendingBinding.value = null
             }
         }
     }
@@ -261,7 +286,11 @@ class ChatViewModel(
 
     fun newConversation() {
         discardPending()
-        viewModelScope.launch { conversationId.value = repository.createConversation() }
+        viewModelScope.launch {
+            val binding = pendingBinding.value
+            conversationId.value = repository.createConversation(binding?.model, binding?.providerId)
+            pendingBinding.value = null
+        }
     }
 
     fun clearConversation() {
@@ -279,9 +308,42 @@ class ChatViewModel(
         if (conversationId.value == id) conversationId.value = null
     }
 
+    /**
+     * 设置会话模型。还没有会话时只记成待落库的绑定（不建空会话），
+     * 等真正发消息或点「+」时一次性写进新会话。
+     */
     fun setModel(model: String) {
-        val id = conversationId.value ?: return
+        if (model.isBlank()) return
+        val id = conversationId.value
+        if (id == null) {
+            pendingBinding.update { current ->
+                (current ?: PendingBinding(model = null, providerId = null)).copy(model = model)
+            }
+            return
+        }
         viewModelScope.launch { repository.setConversationModel(id, model) }
+    }
+
+    /**
+     * 切换当前会话的供应商，并把它重置为该供应商配置的模型（两者必须一起换）。
+     * 没配模型的供应商给可读提示，不改绑定；还没有会话时同样先记成待落库绑定。
+     */
+    fun setProvider(providerId: String) {
+        if (providerId.isBlank()) return
+        viewModelScope.launch {
+            val settings = settingsRepository.settings.first()
+            val model = ProviderCatalog.defaultModelFor(settings.providers, providerId)
+            if (model.isBlank()) {
+                notice.value = "「${ProviderCatalog.displayName(providerId)}」还没配置模型，请先到设置里填写"
+                return@launch
+            }
+            val id = conversationId.value
+            if (id == null) {
+                pendingBinding.value = PendingBinding(model = model, providerId = providerId)
+                return@launch
+            }
+            repository.setConversationProvider(id, providerId, model)
+        }
     }
 
     /** 切换本会话的 🌐 联网开关；不可用时给可读提示而不静默失败。 */
@@ -302,11 +364,14 @@ class ChatViewModel(
         super.onCleared()
     }
 
-    private suspend fun ensureConversation(): String {
-        conversationId.value?.let { return it }
-        val created = repository.createConversation()
+    /** 拿当前会话；没有就建一个（带上待落库的模型/供应商绑定）。加锁避免并发各建一条空会话。 */
+    private suspend fun ensureConversation(): String = conversationLock.withLock {
+        conversationId.value?.let { return@withLock it }
+        val binding = pendingBinding.value
+        val created = repository.createConversation(binding?.model, binding?.providerId)
+        pendingBinding.value = null
         conversationId.value = created
-        return created
+        created
     }
 
     private fun discardPending() {
@@ -351,12 +416,18 @@ class ChatViewModel(
             }
         }
         // 视频能不能发由**会话绑定的供应商**决定；迁移后的旧会话为空串 → 跟随激活供应商
-        // （与 ChatRepository.resolveConfig 同一条规则）。
-        val providerId = conversation?.providerId?.takeIf { it.isNotBlank() } ?: composer.activeProviderId
+        // （与 ChatRepository.resolveConfig 同一条规则）。还没有会话时用「待落库绑定」，
+        // 让用户刚选的供应商/模型立刻在界面上生效。
+        val providerId = conversation?.providerId?.takeIf { it.isNotBlank() }
+            ?: composer.pendingProviderId?.takeIf { it.isNotBlank() }
+            ?: composer.activeProviderId
+        val model = conversation?.model?.takeIf { it.isNotBlank() }
+            ?: composer.pendingModel?.takeIf { it.isNotBlank() }
+            ?: composer.defaultModel
         return ChatUiState(
             conversationId = id,
             title = conversation?.title ?: "新对话",
-            model = conversation?.model?.takeIf { it.isNotBlank() } ?: composer.defaultModel,
+            model = model,
             providerId = providerId,
             messages = items,
             isStreaming = activeStream != null,
@@ -413,7 +484,12 @@ class ChatViewModel(
         val defaultModel: String,
         val webSearchAvailable: Boolean,
         val activeProviderId: String,
+        /** 还没有会话时用户先选好的绑定；建会话时落库。 */
+        val pendingModel: String? = null,
+        val pendingProviderId: String? = null,
     )
+
+    private data class PendingBinding(val model: String?, val providerId: String?)
 
     companion object {
         fun factory(

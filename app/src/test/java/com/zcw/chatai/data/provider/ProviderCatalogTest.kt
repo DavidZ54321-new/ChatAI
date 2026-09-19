@@ -60,6 +60,25 @@ class ProviderCatalogTest {
     }
 
     @Test
+    fun defaultModelPrefersConfiguredEntryThenPresetDefault() {
+        assertEquals(
+            "my-deepseek",
+            ProviderCatalog.defaultModelFor(
+                mapOf(ProviderCatalog.DEEPSEEK to ProviderEntry("https://x/v1", "sk", "my-deepseek")),
+                ProviderCatalog.DEEPSEEK,
+            ),
+        )
+        assertEquals(
+            "deepseek-flash",
+            ProviderCatalog.defaultModelFor(
+                mapOf(ProviderCatalog.DEEPSEEK to ProviderEntry("https://x/v1", "sk", "")),
+                ProviderCatalog.DEEPSEEK,
+            ),
+        )
+        assertEquals("", ProviderCatalog.defaultModelFor(emptyMap(), "unknown-id"))
+    }
+
+    @Test
     fun capabilitiesDescribeNativeTools() {
         val qwen = ProviderCatalog.byId(ProviderCatalog.QWEN)!!.caps
         assertTrue(qwen.textSearch)

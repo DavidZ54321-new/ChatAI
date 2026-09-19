@@ -195,23 +195,28 @@ class ChatRepository(
 
     // ---------- 会话 ----------
 
-    suspend fun createConversation(model: String? = null): String {
+    /**
+     * 新建会话。[model] / [providerId] 用来把「会话还不存在时用户已经选好的绑定」一次性落库，
+     * 缺省则跟随当前激活供应商。
+     */
+    suspend fun createConversation(model: String? = null, providerId: String? = null): String {
         val settings = settingsRepository.settings.first()
-        val entry = settings.activeProvider
+        val boundProviderId = providerId?.takeIf { it.isNotBlank() } ?: settings.activeProviderId
         val id = newId()
         val timestamp = nowMs()
         db.conversationDao().upsert(
             ConversationEntity(
                 id = id,
                 title = ConversationTitle.FALLBACK,
-                model = model?.takeIf { it.isNotBlank() } ?: entry.model,
+                model = model?.takeIf { it.isNotBlank() }
+                    ?: ProviderCatalog.defaultModelFor(settings.providers, boundProviderId),
                 systemPrompt = null,
                 createdAt = timestamp,
                 updatedAt = timestamp,
                 lastMessagePreview = "",
                 messageCount = 0,
                 isPinned = false,
-                providerId = settings.activeProviderId,
+                providerId = boundProviderId,
             ),
         )
         return id
@@ -225,6 +230,15 @@ class ChatRepository(
     suspend fun setConversationModel(id: String, model: String) {
         if (model.isBlank()) return
         db.conversationDao().updateModel(id, model, nowMs())
+    }
+
+    /**
+     * 切换会话绑定的供应商，并把模型一起重置为该供应商的模型。
+     * 连接参数不落库——`resolveConfig` 按 provider_id 实时取，所以这里只改绑定。
+     */
+    suspend fun setConversationProvider(id: String, providerId: String, model: String) {
+        if (providerId.isBlank() || model.isBlank()) return
+        db.conversationDao().updateProviderAndModel(id, providerId, model, nowMs())
     }
 
     /** 删除会话：文件与行一起清掉。跑在仓库自己的 scope 上，界面退出也不会半途而废。 */

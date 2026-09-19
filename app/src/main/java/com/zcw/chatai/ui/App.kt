@@ -88,6 +88,7 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
                     viewModel.setModel(model)
                     showModelPicker = false
                 },
+                onSelectProvider = viewModel::setProvider,
                 onOpenSettings = {
                     showModelPicker = false
                     showSettings = true

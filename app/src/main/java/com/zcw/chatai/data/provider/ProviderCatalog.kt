@@ -80,6 +80,13 @@ object ProviderCatalog {
 
     fun displayName(id: String): String = byId(id)?.displayName ?: id
 
+    /**
+     * 该供应商实际生效的对话模型：条目里填过的优先，没填则回落到预设默认。
+     * 切换会话供应商时用它重置模型（纯函数，JVM 可测）。
+     */
+    fun defaultModelFor(providers: Map<String, ProviderEntry>, id: String): String =
+        providers[id]?.model?.takeIf { it.isNotBlank() } ?: byId(id)?.defaultModel.orEmpty()
+
     /** 该供应商是否支持视频输入（附件面板门禁与发送前预检共用同一条判定）。 */
     fun supportsVideo(id: String): Boolean = byId(id)?.caps?.video == true
 
