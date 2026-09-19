@@ -20,7 +20,7 @@ class ChatSettingsTest {
         temperature = 0.7,
         reasoningEffort = ReasoningEffort.OFF,
         maxTokens = 1024,
-        historyImageLimit = 5,
+        historyImageTurns = 5,
     )
 
     @Test
@@ -34,7 +34,7 @@ class ChatSettingsTest {
         assertEquals("be nice", qwen.systemPrompt)
         assertEquals("none", qwen.reasoningEffort)
         assertEquals(1024, qwen.maxTokens)
-        assertEquals(5, qwen.historyImageLimit)
+        assertEquals(5, qwen.historyImageTurns)
     }
 
     @Test
@@ -85,6 +85,13 @@ class ChatSettingsTest {
         val configured = settings.copy(searchProviderId = ProviderCatalog.QWEN)
         assertEquals(ProviderCatalog.QWEN, configured.searchProviderId)
         assertEquals(null, settings.searchProviderId)
+    }
+
+    @Test
+    fun imageSearchModelsUseOverrideOrBuiltInDefault() {
+        assertEquals(listOf("qwen3.8-27b", "qwen3.8-max"), settings.imageSearchModels)
+        val overridden = settings.copy(imageSearchModelsRaw = "qwen3.8-27b , qwen3.8-max, extra")
+        assertEquals(listOf("qwen3.8-27b", "qwen3.8-max", "extra"), overridden.imageSearchModels)
     }
 
     @Test

@@ -5,9 +5,6 @@ import com.zcw.chatai.data.model.ToolCall
 /** Agent 循环的纯决策：继续调工具 / 强制收尾 / 结束。JVM 单测覆盖。 */
 object AgentLoop {
 
-    const val DEFAULT_MAX_STEPS = 5
-    const val HARD_MAX_STEPS = 8
-
     sealed interface Decision {
         data class Continue(val toolCalls: List<ToolCall>) : Decision
 

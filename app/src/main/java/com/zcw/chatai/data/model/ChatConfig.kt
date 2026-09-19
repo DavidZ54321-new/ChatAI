@@ -11,7 +11,8 @@ import com.zcw.chatai.data.provider.ProviderCatalog
  * - [imageDetail] 对应标准 `image_url.detail`（low/high/original/auto），null 时不发送。
  * - [extraParams] 是兼容逃生口：一段 JSON 对象，顶层键深度合并进请求体
  *   （`model`/`messages`/`stream` 三个键受保护，不允许被覆盖）。
- * - [historyImageLimit] 历史带图消息的重发上限：-1 全部，0 不发历史图片，N 只发最近 N 条。
+ * - [historyImageTurns] 历史图片按**轮次**重发：-1 全部，0 只发当前轮，N = 当前轮 + 最近 N 轮；
+ *   「最后一条带附件的消息」永远保留（它就是本轮内容）。
  */
 data class ChatConfig(
     val baseUrl: String,
@@ -23,7 +24,7 @@ data class ChatConfig(
     val maxTokens: Int? = null,
     val imageDetail: String? = null,
     val includeUsage: Boolean = true,
-    val historyImageLimit: Int = 2,
+    val historyImageTurns: Int = 1,
     val extraParams: String? = null,
     /** 本回合是否注入 web_search/web_fetch 工具。 */
     val webSearchEnabled: Boolean = false,
@@ -32,8 +33,8 @@ data class ChatConfig(
      * 由仓库层按供应商能力与后端可用性算好，网络层只负责按名单组装 schema。
      */
     val enabledTools: List<String> = emptyList(),
-    /** Agent 最多几步工具调用。 */
-    val maxAgentSteps: Int = 5,
+    /** Agent 最多几轮工具调用（不含最后的无工具收尾步）。 */
+    val maxAgentSteps: Int = 6,
     /** 本回合绑定哪个供应商（决定搜索/图搜后端与文件上传路由）。 */
     val providerId: String = ProviderCatalog.DEEPSEEK,
     /** 网关要求的稳定会话 id（配合 [sendSessionHeader]，Go 实测缺了直接 400）。 */

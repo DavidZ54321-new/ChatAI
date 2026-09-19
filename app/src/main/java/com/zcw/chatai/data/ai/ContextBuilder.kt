@@ -29,22 +29,33 @@ object ContextBuilder {
     /** 工具返回空文本时的占位：保留该行以应答对应的 assistant tool_calls。 */
     const val TOOL_EMPTY = "[工具无返回内容]"
 
+    /**
+     * 出站上下文里**模型真正能看到**的消息窗口。
+     *
+     * 图片编号/来源标注与 `find_similar_images` 的 `image_index` 必须基于同一份窗口
+     * （`ToolImageInventory` 的唯一真相源），否则长会话截断后编号会错位。
+     */
+    fun usableHistory(history: List<Message>): List<Message> = history
+        .filter { it.role == Role.USER || it.role == Role.ASSISTANT || it.role == Role.TOOL }
+        .filter { it.status != MessageStatus.STREAMING }
+        .filter {
+            it.content.isNotBlank() || it.attachments.isNotEmpty() ||
+                it.toolCalls.isNotEmpty() || it.toolCallId != null
+        }
+        .takeLast(MAX_MESSAGES)
+
     fun build(
         history: List<Message>,
-        imageLimit: Int,
+        imageTurns: Int,
         imageProvider: (Attachment) -> ChatRequestImage?,
         videoProvider: (Attachment) -> ChatRequestVideo? = { null },
     ): List<ChatRequestMessage> {
-        val usable = history
-            .filter { it.role == Role.USER || it.role == Role.ASSISTANT || it.role == Role.TOOL }
-            .filter { it.status != MessageStatus.STREAMING }
-            .filter {
-                it.content.isNotBlank() || it.attachments.isNotEmpty() ||
-                    it.toolCalls.isNotEmpty() || it.toolCallId != null
-            }
-            .takeLast(MAX_MESSAGES)
+        val usable = usableHistory(history)
 
-        val keepAttachments = AttachmentRetention.keptMessageIds(usable, imageLimit)
+        val keepAttachments = AttachmentRetention.keptMessageIds(usable, imageTurns)
+        // 图片编号/来源标注的唯一真相源：与 image_index、保留规则共用同一份清单。
+        val labels = ToolImageInventory.visibleImages(usable, imageTurns)
+            .associate { it.attachment.id to ToolImageInventory.label(it) }
 
         // 服务端硬校验：assistant(tool_calls) 后面必须**连续**跟着每个 call 的应答。
         // DB 行序可能被打乱（进程死在工具执行中，事后补的占位应答落在用户消息之后），
@@ -64,11 +75,11 @@ object ContextBuilder {
                 Role.TOOL -> Unit
 
                 Role.ASSISTANT -> {
-                    wire += toWire(message, keepAttachments, imageProvider, videoProvider)
+                    wire += toWire(message, keepAttachments, labels, imageProvider, videoProvider)
                     for (call in message.toolCalls) {
                         val answer = answers[call.id]?.removeFirstOrNull()
                         wire += if (answer != null) {
-                            toWire(answer, keepAttachments, imageProvider, videoProvider)
+                            toWire(answer, keepAttachments, labels, imageProvider, videoProvider)
                         } else {
                             // assistant 已落 tool_calls 但应答行缺失（崩溃窗口）：
                             // 合成占位应答，绝不让请求非法。
@@ -81,7 +92,7 @@ object ContextBuilder {
                     }
                 }
 
-                else -> wire += toWire(message, keepAttachments, imageProvider, videoProvider)
+                else -> wire += toWire(message, keepAttachments, labels, imageProvider, videoProvider)
             }
         }
         return wire
@@ -90,17 +101,20 @@ object ContextBuilder {
     private fun toWire(
         message: Message,
         keepAttachments: Set<String>,
+        labels: Map<String, String>,
         imageProvider: (Attachment) -> ChatRequestImage?,
         videoProvider: (Attachment) -> ChatRequestVideo?,
     ): ChatRequestMessage {
         if (message.role == Role.TOOL) {
             // 空白工具结果也必须保留：它对应的 assistant tool_calls 需要被应答，
             // 否则服务端会因找不到 tool_call_id 而 400（例如进程在 RUNNING 与更新之间被杀）。
-            val text = (message.toolResult?.text?.takeIf { it.isNotBlank() } ?: message.content)
+            val body = (message.toolResult?.text?.takeIf { it.isNotBlank() } ?: message.content)
                 .ifBlank { TOOL_EMPTY }
+            // modelNote 只发给模型（工具预算/空结果提示），UI 只渲染 text。
+            val note = message.toolResult?.modelNote?.takeIf { it.isNotBlank() }
             return ChatRequestMessage(
                 role = message.role.wire,
-                content = text,
+                content = if (note == null) body else "$body\n\n$note",
                 toolCallId = message.toolCallId,
             )
         }
@@ -117,7 +131,10 @@ object ContextBuilder {
         }
         val keep = message.id in keepAttachments
         val images = if (keep) {
-            message.attachments.filter { it.kind == AttachmentKind.IMAGE }.mapNotNull(imageProvider)
+            message.attachments.filter { it.kind == AttachmentKind.IMAGE }.mapNotNull { attachment ->
+                // 逐张带上来源标注（全局编号 + 轮次），避免历史图与本轮图混淆。
+                imageProvider(attachment)?.let { wire -> wire.copy(label = labels[attachment.id]) }
+            }
         } else {
             emptyList()
         }

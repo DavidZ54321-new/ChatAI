@@ -126,9 +126,27 @@ class ToolCallCodecTest {
             ),
         )
         assertEquals(
-            """{"status":"OK","detail":"kotlin","sources":[{"url":"https://a","title":"A","snippet":"snippet","publishedAt":"2026-01-01"}],"text":"Search results","kind":"SEARCH","images":[]}""",
+            """{"status":"OK","detail":"kotlin","sources":[{"url":"https://a","title":"A","snippet":"snippet","publishedAt":"2026-01-01"}],"text":"Search results","kind":"SEARCH","images":[],"modelNote":null}""",
             encoded,
         )
+    }
+
+    @Test
+    fun roundTripsModelNote() {
+        val result = ToolResult(
+            status = ToolStatus.OK,
+            detail = "d",
+            text = "t",
+            modelNote = "[Tool budget] 1 more tool round(s) available this turn.",
+        )
+        assertEquals(result, ToolCallCodec.decodeResult(ToolCallCodec.encodeResult(result)))
+    }
+
+    @Test
+    fun legacyResultWithoutModelNoteDecodesToNull() {
+        val decoded = ToolCallCodec.decodeResult("""{"status":"OK","detail":"d","text":"t"}""")
+        assertEquals(ToolStatus.OK, decoded?.status)
+        assertNull(decoded?.modelNote)
     }
 
     @Test

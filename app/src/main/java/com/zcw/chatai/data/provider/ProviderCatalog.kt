@@ -16,6 +16,11 @@ data class ProviderPreset(
     val caps: ProviderCaps,
     /** 网关要求每段对话带稳定的会话头（如 OpenCode Go 的 x-opencode-session）。 */
     val sendSessionHeader: Boolean = false,
+    /**
+     * 该供应商原生工具的默认模型优先级（可被设置覆盖）。
+     * 图搜（文搜图/图搜图）用它，与对话模型解耦——见 `ToolModels`。
+     */
+    val toolModels: List<String> = emptyList(),
 )
 
 /** 一套供应商连接配置（DataStore `providers_json` 的持久化单元）。 */
@@ -50,6 +55,8 @@ object ProviderCatalog {
             defaultBaseUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1",
             defaultModel = "qwen3.8-max",
             caps = ProviderCaps(video = true, textSearch = true, imageSearch = true),
+            // 图搜借道 Qwen 时优先 27b，空结果/报错再退 max（实测 flash 对部分图返回空）。
+            toolModels = listOf("qwen3.8-27b", "qwen3.8-max"),
         ),
         ProviderPreset(
             id = OPENCODE_GO,

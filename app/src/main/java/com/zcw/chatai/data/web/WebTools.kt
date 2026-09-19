@@ -51,6 +51,33 @@ object WebTools {
 
     fun urlOf(arguments: String): String? = stringArg(arguments, "url")
 
+    /** `find_similar_images` 的图片序号（1-based）；缺省/非法都返回 null（= 用最近一张）。 */
+    fun imageIndexOf(arguments: String): Int? {
+        if (arguments.isBlank()) return null
+        val obj = try {
+            json.parseToJsonElement(arguments) as? JsonObject
+        } catch (t: Exception) {
+            null
+        } ?: return null
+        val raw = (obj["image_index"] as? JsonPrimitive)?.contentOrNull?.trim() ?: return null
+        return raw.toIntOrNull()?.takeIf { it >= 1 }
+    }
+
+    /** 搜索空结果的「查漏/换词」提示（只给模型看）。 */
+    fun emptySearchNote(query: String): String =
+        "No results for \"$query\". Before retrying, check whether a key name, spelling or source is " +
+            "missing; then try a different or broader query. Retry at most once, then report honestly."
+
+    /** 文搜图空结果的提示（只给模型看）。 */
+    fun emptyImageSearchNote(query: String): String =
+        "No images for \"$query\". Try different keywords. Do not fabricate image URLs; " +
+            "if nothing matches, say so plainly."
+
+    /** 以图搜图空结果的提示（只给模型看）。 */
+    fun emptyImageSimilarNote(): String =
+        "Reverse image search returned no matches. Do not fabricate image URLs or invent matches; " +
+            "tell the user nothing was found and state what remains uncertain."
+
     private fun stringArg(arguments: String, key: String): String? {
         if (arguments.isBlank()) return null
         val obj = try {
@@ -164,12 +191,20 @@ object WebTools {
     private fun findSimilarImagesSpec() = ChatTool(
         function = FunctionSpec(
             name = FIND_SIMILAR_IMAGES,
-            description = "Search the web for images visually similar to the most recent image the user " +
-                "sent in this conversation (image-to-image search). Only call it when the conversation " +
-                "already contains a user image; it always uses that image, no arguments needed.",
+            description = "Reverse image search (image-to-image): find web images visually similar to one " +
+                "of the user's images in this conversation. User images are numbered 1..N in the order " +
+                "they appear, and each image block in the request is preceded by a label like " +
+                "\"[Image 2 | previous turn 1/2]\". Pass image_index to pick which image to search " +
+                "(1-based); omit it to use the most recent image. Call it once per image when the user " +
+                "asks to search several images.",
             parameters = buildJsonObject {
                 put("type", "object")
-                putJsonObject("properties") {}
+                putJsonObject("properties") {
+                    putJsonObject("image_index") {
+                        put("type", "integer")
+                        put("description", "1-based index of the user image to search; omit for the most recent image.")
+                    }
+                }
                 put("additionalProperties", false)
             },
         ),

@@ -12,6 +12,7 @@ import com.zcw.chatai.data.model.ChatConfig
 import com.zcw.chatai.data.provider.ProviderCatalog
 import com.zcw.chatai.data.provider.ProviderConfigCodec
 import com.zcw.chatai.data.provider.ProviderEntry
+import com.zcw.chatai.data.provider.ToolModels
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -48,10 +49,20 @@ data class ChatSettings(
     val maxTokens: Int?,
     val imageDetail: ImageDetail,
     val includeUsage: Boolean,
-    val historyImageLimit: Int,
+    /** 历史图片重发轮次：-1 全部、0 只发当前轮、N = 当前轮 + 最近 N 轮。 */
+    val historyImageTurns: Int,
+    /** 图搜模型链（原始输入，逗号分隔）；空 = 用 Qwen 预设的默认链。 */
+    val imageSearchModelsRaw: String,
     val extraParams: String,
     val themeMode: ThemeMode,
 ) {
+    /** 生效的图搜模型链：用户覆盖优先，空则用 Qwen 预设默认（27b → max）。 */
+    val imageSearchModels: List<String>
+        get() = ToolModels.resolve(
+            imageSearchModelsRaw,
+            ProviderCatalog.byId(ProviderCatalog.QWEN)?.toolModels.orEmpty(),
+        )
+
     /** 激活供应商；表意外为空时给一个安全空条目（请求层会给出可读报错）。 */
     val activeProvider: ProviderEntry
         get() = providers[activeProviderId]
@@ -61,7 +72,7 @@ data class ChatSettings(
     companion object {
         const val DEFAULT_BASE_URL = "https://api.deepseek.com/v1"
         const val DEFAULT_MODEL = "deepseek-flash"
-        const val DEFAULT_HISTORY_IMAGE_LIMIT = 2
+        const val DEFAULT_HISTORY_IMAGE_TURNS = 1
 
         val Default = ChatSettings(
             providers = mapOf(
@@ -79,7 +90,8 @@ data class ChatSettings(
             maxTokens = null,
             imageDetail = ImageDetail.FOLLOW_DEFAULT,
             includeUsage = true,
-            historyImageLimit = DEFAULT_HISTORY_IMAGE_LIMIT,
+            historyImageTurns = DEFAULT_HISTORY_IMAGE_TURNS,
+            imageSearchModelsRaw = "",
             extraParams = "",
             themeMode = ThemeMode.SYSTEM,
         )
@@ -102,7 +114,7 @@ fun ChatSettings.toChatConfig(providerId: String = activeProviderId): ChatConfig
         maxTokens = maxTokens,
         imageDetail = imageDetail.wire,
         includeUsage = includeUsage,
-        historyImageLimit = historyImageLimit,
+        historyImageTurns = historyImageTurns,
         extraParams = extraParams.ifBlank { null },
         providerId = providerId,
         sendSessionHeader = ProviderCatalog.byId(providerId)?.sendSessionHeader == true,
@@ -137,7 +149,8 @@ class SettingsRepository(context: Context) {
         maxTokens: Int?,
         imageDetail: ImageDetail,
         includeUsage: Boolean,
-        historyImageLimit: Int,
+        historyImageTurns: Int,
+        imageSearchModelsRaw: String,
         extraParams: String,
     ) {
         store.edit { prefs ->
@@ -150,7 +163,8 @@ class SettingsRepository(context: Context) {
             if (maxTokens == null) prefs.remove(KEY_MAX_TOKENS) else prefs[KEY_MAX_TOKENS] = maxTokens
             prefs[KEY_IMAGE_DETAIL] = imageDetail.name
             prefs[KEY_INCLUDE_USAGE] = includeUsage
-            prefs[KEY_HISTORY_IMAGE_LIMIT] = historyImageLimit
+            prefs[KEY_HISTORY_IMAGE_TURNS] = historyImageTurns
+            if (imageSearchModelsRaw.isBlank()) prefs.remove(KEY_IMAGE_SEARCH_MODELS) else prefs[KEY_IMAGE_SEARCH_MODELS] = imageSearchModelsRaw
             prefs[KEY_EXTRA_PARAMS] = extraParams
         }
     }
@@ -184,7 +198,9 @@ class SettingsRepository(context: Context) {
             maxTokens = this[KEY_MAX_TOKENS],
             imageDetail = this[KEY_IMAGE_DETAIL].toEnum(ImageDetail.FOLLOW_DEFAULT),
             includeUsage = this[KEY_INCLUDE_USAGE] ?: true,
-            historyImageLimit = this[KEY_HISTORY_IMAGE_LIMIT] ?: ChatSettings.DEFAULT_HISTORY_IMAGE_LIMIT,
+            // 轮次单位是 v6 引入的；旧 key（消息条数）按约定统一归一到默认 1 轮。
+            historyImageTurns = this[KEY_HISTORY_IMAGE_TURNS] ?: ChatSettings.DEFAULT_HISTORY_IMAGE_TURNS,
+            imageSearchModelsRaw = this[KEY_IMAGE_SEARCH_MODELS].orEmpty(),
             extraParams = this[KEY_EXTRA_PARAMS].orEmpty(),
             themeMode = this[KEY_THEME_MODE].toEnum(ThemeMode.SYSTEM),
         )
@@ -203,7 +219,10 @@ class SettingsRepository(context: Context) {
         val KEY_MAX_TOKENS = intPreferencesKey("max_tokens")
         val KEY_IMAGE_DETAIL = stringPreferencesKey("image_detail")
         val KEY_INCLUDE_USAGE = booleanPreferencesKey("include_usage")
-        val KEY_HISTORY_IMAGE_LIMIT = intPreferencesKey("history_image_limit")
+        /** 轮次单位（v6）：历史图片重发轮次。旧 key `history_image_limit` 已废弃。 */
+        val KEY_HISTORY_IMAGE_TURNS = intPreferencesKey("history_image_turns")
+        /** 图搜模型链覆盖（空 = 用 Qwen 预设默认）。 */
+        val KEY_IMAGE_SEARCH_MODELS = stringPreferencesKey("image_search_models")
         val KEY_EXTRA_PARAMS = stringPreferencesKey("extra_params")
         val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
 

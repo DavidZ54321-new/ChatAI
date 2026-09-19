@@ -14,6 +14,7 @@ import com.zcw.chatai.data.prefs.ThemeMode
 import com.zcw.chatai.data.prefs.toChatConfig
 import com.zcw.chatai.data.provider.ProviderCatalog
 import com.zcw.chatai.data.provider.ProviderEntry
+import com.zcw.chatai.data.provider.ToolModels
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -41,7 +42,9 @@ class SettingsViewModel(
         val maxTokens: String = "",
         val imageDetail: ImageDetail = ImageDetail.FOLLOW_DEFAULT,
         val includeUsage: Boolean = true,
-        val historyImageLimit: Int = ChatSettings.DEFAULT_HISTORY_IMAGE_LIMIT,
+        val historyImageTurns: Int = ChatSettings.DEFAULT_HISTORY_IMAGE_TURNS,
+        /** 图搜模型链（逗号分隔的原始输入）；空 = 用内置默认。 */
+        val imageSearchModels: String = "",
         val extraParams: String = "",
         val themeMode: ThemeMode = ThemeMode.SYSTEM,
         val loaded: Boolean = false,
@@ -52,6 +55,9 @@ class SettingsViewModel(
     ) {
         val extraParamsError: String?
             get() = validateExtraParams(extraParams)
+
+        val imageSearchModelsError: String?
+            get() = ToolModels.validate(imageSearchModels)
 
         val temperatureError: String?
             get() = temperature.trim().takeIf { it.isNotEmpty() }?.let {
@@ -74,7 +80,8 @@ class SettingsViewModel(
 
         val canSave: Boolean
             get() = baseUrl.isNotBlank() && model.isNotBlank() &&
-                extraParamsError == null && temperatureError == null && maxTokensError == null
+                extraParamsError == null && temperatureError == null && maxTokensError == null &&
+                imageSearchModelsError == null
     }
 
     private val form = MutableStateFlow(FormState())
@@ -98,7 +105,8 @@ class SettingsViewModel(
                 maxTokens = settings.maxTokens?.toString().orEmpty(),
                 imageDetail = settings.imageDetail,
                 includeUsage = settings.includeUsage,
-                historyImageLimit = settings.historyImageLimit,
+                historyImageTurns = settings.historyImageTurns,
+                imageSearchModels = settings.imageSearchModelsRaw,
                 extraParams = settings.extraParams,
                 themeMode = settings.themeMode,
                 loaded = true,
@@ -168,7 +176,8 @@ class SettingsViewModel(
                 maxTokens = current.maxTokens.trim().toIntOrNull(),
                 imageDetail = current.imageDetail,
                 includeUsage = current.includeUsage,
-                historyImageLimit = current.historyImageLimit,
+                historyImageTurns = current.historyImageTurns,
+                imageSearchModelsRaw = current.imageSearchModels.trim(),
                 extraParams = current.extraParams.trim(),
             )
             form.value = form.value.copy(providers = providers, status = "已保存")

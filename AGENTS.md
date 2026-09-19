@@ -13,9 +13,9 @@ ChatAiApp (Application)  →  懒加载单例：AppDatabase / SettingsRepository
 MainActivity             →  ChatAITheme + 主题模式 + 路由（Chat ↔ Settings）
 data/model               →  Conversation / Message / ChatConfig / Attachment / ToolSource / ConversationTitle
 data/db                  →  Room 2（schema v5）：ConversationEntity / MessageEntity / DAO / Mappers / Migrations / ToolCallCodec
-data/ai                  →  纯逻辑（可 JVM 单测）：ContextBuilder / AttachmentRetention / StreamAccumulator / ToolCallAccumulator / AgentLoop / ReasoningPreview / ReasoningDuration
+data/ai                  →  纯逻辑（可 JVM 单测）：ContextBuilder / AttachmentRetention / ToolImageInventory / StreamAccumulator / ToolCallAccumulator / AgentLoop / ToolBudget / DsmlStrip / ReasoningPreview / ReasoningDuration
 data/prefs               →  SettingsRepository（DataStore：providers_json + 全局生成参数，key 只存本机）
-data/provider            →  供应商目录：ProviderCatalog（presets/caps）+ ProviderConfigCodec（旧单配置懒迁移）
+data/provider            →  供应商目录：ProviderCatalog（presets/caps/toolModels）+ ProviderConfigCodec（旧单配置懒迁移）+ ToolModels（工具模型优先级）+ ToolBackends（后端解析）
 data/net                 →  ChatApi 接口 + OpenAiCompatibleChatApi（okhttp-sse）+ QwenResponsesClient / DashScopeUpload
 data/web                 →  联网工具：WebSearchProvider / DeepSeekNativeSearchProvider（Anthropic）/ QwenWebSearchProvider / ImageSearchProvider / QwenImageSearchProvider / WebFetcher / HtmlToText / WebTools
 data/media               →  图片压缩与私有目录存储（ImageCompressor / AttachmentStore / VideoMetadata / VideoPlanner / VideoUploadCoordinator）
@@ -27,8 +27,19 @@ ui/md                    →  MessageMarkdown（mikepenz，image 组件走 Remot
 ui/theme                 →  设计系统（Color / ChatColors / Type / Theme / SpikeMark）
 ```
 
-五条不该踩第二次的约定：
+不该踩第二次的约定：
 
+- **Agent 预算要显式告诉模型**：`ChatConfig.maxAgentSteps = 6`（轮工具，不含最后一步无工具收尾）。
+  每次工具结果都落一条**只给模型看**的 `ToolResult.modelNote`（`ContextBuilder` 拼在 `text` 之后，
+  UI 的 `ToolCallBlock` 只渲染 `text`）：`ToolBudget.note(remaining)` 报剩余轮次，余 0 时明说
+  「最后一轮、**不得输出任何工具调用标记**、按已有信息作答并如实说明未完成项」。空结果另有
+  `WebTools.empty*Note`（先查漏/换词，**不得编造图片 URL**）。这条同时是 DeepSeek 在无工具请求里
+  漏 DSML 标记的预防针。
+- **图片按轮次保留 + 逐张标注**：`AttachmentRetention.keptMessageIds(messages, retainTurns)` 的单位是
+  **轮次**（不是消息条数），且**最后一条带附件消息永远保留**——旧实现 `limit=0` 会把本轮刚发的图一起丢。
+  `ToolImageInventory` 是唯一真相源：同时产出全局编号与英文来源标注，`ContextBuilder` 把标注以
+  「文本块 + 图片块」交错插在每张图前；`find_similar_images` 的 `image_index` 用的是同一套 1..M 编号
+  （所以模型能对多张图逐张反向检索，结果里回带 `Used image k of M`）。
 - **视觉尺寸统一走 `ui/chat/ChatMetrics.kt`**（相对**视窗**而非父容器）：消息里图片缩略图 =
   视窗宽 20% 的正方形、顶消散尾巴 = 视窗高 4%（按钮行内不透明）、底消散引导 =
   视窗高 3%（贴 Composer 上沿）。调观感只动这些常量，各配纯函数单测。
@@ -44,14 +55,24 @@ ui/theme                 →  设计系统（Color / ChatColors / Type / Theme /
   配后端实现，不在 UI/请求层写 if-vendor。
 - **工具注入先算名单**：`ChatConfig.enabledTools` 由 `ChatRepository.resolveEnabledTools` 决定
   （🌐 开关 × 工具后端可用性），网络层只按名单组装 schema；四个客户端工具统一挂 🌐。
-- **工具后端与主对话供应商解耦（借道）**：`ToolBackendResolver` 解析出搜索/图搜各自的供应商与模型
-  （规则：显式 `search_provider` 设置 → 会话供应商 → preset 顺序回退；**要求 apiKey 非空**，
-  空条目不能遮蔽后面配好的后端；图搜固定取 Qwen）。工具子调用用**后端自己的 `ChatConfig`**
+- **工具后端与主对话供应商解耦（借道）**：`ToolBackendResolver` 解析出搜索/图搜各自的供应商
+  （**要求 apiKey 非空**，空条目不能遮蔽后面配好的后端；图搜固定取 Qwen）。文本搜索是**有序候选**
+  （显式 `search_provider` → 会话供应商 → preset 顺序补其余），运行时按序尝试，
+  **空结果或报错才借道下一个**（`ToolFallbackChain.firstUsable`）；图搜的**模型链**与对话模型解耦：
+  默认 `qwen3.8-27b` → `qwen3.8-max`（`ProviderPreset.toolModels`，设置页「图搜模型」可覆盖），
+  同样空/错才退下一个（实测 flash 对部分图返回空）。工具子调用用**后端自己的 `ChatConfig`**
   （model = 后端模型），所以 DeepSeek/GLM/任意会话都能借道 Qwen 的图搜与搜索。
 - **视频是双路由**（`VideoPlanner`）：≤5MB 内联 base64，>5MB 走 DashScope 临时上传得 `oss://`；
   **发送前预检门禁**（`resolvePendingVideos`）全部归位才发请求；能力门禁用
   `ProviderCatalog.supportsVideo(会话供应商)`（UI 附件面板与预检共用同一条判定，旧会话空绑定跟随激活）；
   本地文件是真相源，上传日志（`pendingKey`/`pendingPolicy` + `remoteUrl`）让崩溃后免二次上传（409=云端已完整）。
+- **图片一律不进 mikepenz 行内占位**：行内图在真机会压字/裁切（Compose 行高不随占位增长，库的
+  `inlineImageAsBlock` 兜底又依赖 ImageTransformer，本仓库没接）。`ImageRowSplitter` 把「整行只有图」
+  的图（单张也算）全抽成自有块级渲染；多张图行用 `LazyRow`（16 图不会再一次性发起下载）。
+  加载走 `RemoteImages` 三层：内存 LruCache 按堆 1/8（8~64MB）、OkHttp 磁盘缓存 48MB
+  （`RemoteImages.install` 挂 cacheDir）、全局并发闸门 4；失败占位带刷新图标，**点一下重载**
+  （三态 Loading/Loaded/Failed；重试必须先回 Loading——`produceState` 换 key 不重置 value，
+  不复位就没有任何点击反馈）。`MarkdownParseCache` 是进程级解析 LRU，滚动回看不重复解析。
 
 
 ## Build & test
@@ -64,11 +85,11 @@ ui/theme                 →  设计系统（Color / ChatColors / Type / Theme /
 .\gradlew.bat lint                 # AGP default; no formatter or typecheck task is configured
 ```
 
-单测全是 JVM 测试（407 个）：网络层用 MockWebServer，其余是纯函数（错误映射、压缩尺寸、
-能力表、供应商目录/配置迁移/工具后端解析、LaTeX 分段、Markdown 行内公式、图行分段、
-思考摘要/耗时格式化、视觉度量、Room 映射往返、工具调用累加/编解码、Agent 决策、
-上下文组装/工具应答配对/附件保留/视频规划、回合分组、HTML→文本、搜索与 Responses 响应解析、
-上传凭证/multipart）。
+单测全是 JVM 测试（452 个）：网络层用 MockWebServer，其余是纯函数（错误映射、压缩尺寸、
+能力表、供应商目录/配置迁移/工具后端解析、工具模型优先级、工具回退链、LaTeX 分段、
+Markdown 行内公式、图行分段、思考摘要/耗时格式化、视觉度量、Room 映射往返、工具调用累加/编解码、
+Agent 决策、工具预算、DSML 清洗、可见图片清单（编号/轮次标注）、上下文组装/工具应答配对/
+附件保留/视频规划、回合分组、HTML→文本、搜索与 Responses 响应解析、上传凭证/multipart）。
 
 ## AGP 9 DSL — differs from most examples you'll find
 
@@ -119,7 +140,11 @@ in the build script — keep it that way.
 `web_search_tool_result` 内容块。OpenAI 兼容面**拒绝** `web_search` 工具类型（`unknown variant`），
 主对话回路仍走 OpenAI 面 + 标准 function calling（`tools`/`tool_calls`），搜索只是被调用的一个函数。
 Anthropic 面有已知 bug：会把 `<｜｜DSML｜｜tool_calls>…`（`｜` = U+FF5C 全角竖线）漏进正文，务必
-`tool_choice` 强制只调搜索 + 客户端兜底剥离（见 `DeepSeekSearchParser.stripDsmlMarkup`，纯字符串、无 Regex）。
+`tool_choice` 强制只调搜索 + 客户端兜底剥离（`DsmlStrip.strip`，纯字符串、无 Regex；
+`DeepSeekSearchParser.stripDsmlMarkup` 只是它的代理）。**OpenAI 兼容面的主对话也会漏**：无工具可调用
+（Agent 预算耗尽的收尾步）时 `deepseek-flash` 会把同一套 DSML 语法写进 `content`（实测 684 字符、
+`tool_calls=null`）。所以 `ChatRepository` 在流式发布/checkpoint/落库三处都对 assistant 正文跑
+`DsmlStrip.strip`。
 Anthropic 面的 `available()` 不限制 host，兼容自建/转发代理基址。
 
 设计原则：**不为任何厂商特制**。线上只用标准交集（`image_url` data URL、`reasoning_effort`、
@@ -145,6 +170,13 @@ Chat Completions **共用一个基址**。
 - `tools:[{"type":"image_search"}]`（图搜图）：`input` 必须含 `input_image`，
   **base64 data URI 实测可用**（无需公网 URL）；返回同 `image_search_call.output` 形状；
   `output[]` 顺序不保证（实测 `message → call → message`），解析取最后一个 message。
+  **结果按图/按模型而变**（2026-09-19 复测）：同一张 fan-art 图片、同一 payload，
+  `qwen3.8-flash` 返回 `image_search_call.output="[]"`，`qwen3.8-max` 返回正常结果；
+  另一张图 flash 又有结果（照片类稳定）。即「图搜没结果」可能是**上游按模型路由的空结果**，
+  不是 App bug——排查时先重放同 payload 换模型对照。空结果时 `message` 里的图片 URL 不可信
+  （实测出现过 `example.com/image1.jpg` 幻觉与 favicon 噪声），**不要**拿正文抓图当兜底。
+  `qwen3.8-27b` 两个工具都实测可用（t2i ~26s/1.8k 字符、i2i ~70s/1.5k 字符），所以 App 把它作为
+  图搜模型链的首选（见上方「工具后端」约定）。
 - **`tool_choice` 不能强制内置工具**（传了也当没有，实测直接回 message）——靠提示词触发，
   三次实测 web_search/web_search_image/image_search 都成功调用。
 - `enable_thinking:false` 被接受且会去掉 `reasoning` 项（提速）；但**标准 `reasoning_effort` 同样有效**
@@ -253,6 +285,10 @@ Gotchas that cost real debugging time:
   改成跨行折叠空白（`ReasoningPreview`），行结构再怪也能出有意义的句子。
 - **错误信息要区分原因**。okhttp 的 header 校验失败（例如 API Key 里混进中文）曾经被报成
   「Base URL 无效」。URL 用 `toHttpUrlOrNull()` 单独校验，其余组装失败报「请求参数无效：<原因>」。
+- **判性能问题先摘掉调试器**。Studio 挂调试器时（解释执行）长消息的文本布局能在主线程阻塞十几秒
+  直到系统 ANR，`MainThreadWatchdog` 堆栈指向 `BasicTextKt.LayoutWithLinksAndInlineContent`；
+  同一内容不挂调试器时帧统计正常（99th < 10ms）。别把调试器放大后的成本当成真机常态。
+  Watchdog 会跳过「栈里只剩 Looper 空转」的假阳性（安装 APK / 系统冻结进程时会出现）。
 - **带 `tool_calls` 的 assistant 回合必须回传 `reasoning_content`**，否则思考模式 400。所以
   `ContextBuilder` 只在 assistant 且 `toolCalls` 非空时才带 `reasoning`（普通回合不回传，避免污染上下文）。
 - **每个 assistant `tool_calls` 都必须有配对的 `role=tool` 应答**，否则服务端 400。窗口截断会切出

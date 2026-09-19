@@ -120,4 +120,30 @@ class WebToolsTest {
         val text = WebTools.formatImageSearchResult("x", emptyList())
         assertTrue(text, text.contains("No images found"))
     }
+
+    @Test
+    fun parsesImageIndexAndRejectsInvalidValues() {
+        assertEquals(2, WebTools.imageIndexOf("{\"image_index\":2}"))
+        assertEquals(1, WebTools.imageIndexOf("{\"image_index\":\"1\"}"))
+        assertNull("缺省 = 用最近一张", WebTools.imageIndexOf("{}"))
+        assertNull(WebTools.imageIndexOf(""))
+        assertNull(WebTools.imageIndexOf("not json"))
+        assertNull("0 不是合法 1-based 序号", WebTools.imageIndexOf("{\"image_index\":0}"))
+        assertNull(WebTools.imageIndexOf("{\"image_index\":-1}"))
+    }
+
+    @Test
+    fun emptyResultNotesTellTheModelHowToRecover() {
+        assertTrue(WebTools.emptySearchNote("x").contains("Retry at most once"))
+        assertTrue(WebTools.emptyImageSearchNote("x").contains("Do not fabricate image URLs"))
+        assertTrue(WebTools.emptyImageSimilarNote().contains("Do not fabricate image URLs"))
+    }
+
+    @Test
+    fun findSimilarImagesSpecExposesOptionalImageIndex() {
+        val spec = WebTools.specs().single { it.function.name == WebTools.FIND_SIMILAR_IMAGES }
+        val params = spec.function.parameters.toString()
+        assertTrue(params, params.contains("image_index"))
+        assertTrue(spec.function.description.contains("[Image 2 | previous turn 1/2]"))
+    }
 }

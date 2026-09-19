@@ -17,7 +17,7 @@ class ToolBackendResolverTest {
             conversationProviderId = ProviderCatalog.DEEPSEEK,
             preferredSearchProviderId = ProviderCatalog.QWEN,
         )
-        assertEquals(ProviderCatalog.QWEN, backends.textProviderId)
+        assertEquals(ProviderCatalog.QWEN, backends.textProviderIds.first())
     }
 
     @Test
@@ -28,7 +28,7 @@ class ToolBackendResolverTest {
             conversationProviderId = ProviderCatalog.QWEN,
             preferredSearchProviderId = null,
         )
-        assertEquals(ProviderCatalog.QWEN, backends.textProviderId)
+        assertEquals(ProviderCatalog.QWEN, backends.textProviderIds.first())
     }
 
     /** 会话是自定义（无能力）→ 回退到 preset 顺序里第一个已配置的（DeepSeek）。 */
@@ -43,7 +43,7 @@ class ToolBackendResolverTest {
             conversationProviderId = ProviderCatalog.CUSTOM,
             preferredSearchProviderId = null,
         )
-        assertEquals(ProviderCatalog.QWEN, backends.textProviderId)
+        assertEquals(ProviderCatalog.QWEN, backends.textProviderIds.first())
     }
 
     @Test
@@ -54,8 +54,20 @@ class ToolBackendResolverTest {
             conversationProviderId = ProviderCatalog.CUSTOM,
             preferredSearchProviderId = null,
         )
-        assertEquals(ProviderCatalog.DEEPSEEK, backends.textProviderId)
+        assertEquals(ProviderCatalog.DEEPSEEK, backends.textProviderIds.first())
         assertEquals(ProviderCatalog.QWEN, backends.imageProviderId)
+    }
+
+    /** 文本搜索是**有序候选**：首选之后仍带着其余已配置后端，供运行时失败借道。 */
+    @Test
+    fun textSearchKeepsTheOtherBackendAsFallback() {
+        val backends = ToolBackendResolver.resolve(
+            providers = mapOf(ProviderCatalog.DEEPSEEK to ds, ProviderCatalog.QWEN to qw),
+            activeProviderId = ProviderCatalog.DEEPSEEK,
+            conversationProviderId = ProviderCatalog.DEEPSEEK,
+            preferredSearchProviderId = null,
+        )
+        assertEquals(listOf(ProviderCatalog.DEEPSEEK, ProviderCatalog.QWEN), backends.textProviderIds)
     }
 
     @Test
@@ -66,7 +78,7 @@ class ToolBackendResolverTest {
             conversationProviderId = ProviderCatalog.DEEPSEEK,
             preferredSearchProviderId = ProviderCatalog.QWEN,
         )
-        assertEquals(ProviderCatalog.DEEPSEEK, backends.textProviderId)
+        assertEquals(ProviderCatalog.DEEPSEEK, backends.textProviderIds.first())
         assertNull(backends.imageProviderId)
     }
 
@@ -81,7 +93,7 @@ class ToolBackendResolverTest {
             conversationProviderId = ProviderCatalog.CUSTOM,
             preferredSearchProviderId = ProviderCatalog.CUSTOM,
         )
-        assertEquals(ProviderCatalog.DEEPSEEK, backends.textProviderId)
+        assertEquals(ProviderCatalog.DEEPSEEK, backends.textProviderIds.first())
     }
 
     @Test
@@ -92,7 +104,7 @@ class ToolBackendResolverTest {
             conversationProviderId = null,
             preferredSearchProviderId = null,
         )
-        assertEquals(ProviderCatalog.QWEN, backends.textProviderId)
+        assertEquals(ProviderCatalog.QWEN, backends.textProviderIds.first())
     }
 
     @Test
@@ -137,7 +149,7 @@ class ToolBackendResolverTest {
             conversationProviderId = ProviderCatalog.DEEPSEEK,
             preferredSearchProviderId = null,
         )
-        assertEquals(ProviderCatalog.QWEN, backends.textProviderId)
+        assertEquals(ProviderCatalog.QWEN, backends.textProviderIds.first())
         assertEquals(ProviderCatalog.QWEN, backends.imageProviderId)
     }
 
@@ -156,7 +168,7 @@ class ToolBackendResolverTest {
             conversationProviderId = ProviderCatalog.DEEPSEEK,
             preferredSearchProviderId = ProviderCatalog.QWEN,
         )
-        assertEquals(ProviderCatalog.DEEPSEEK, backends.textProviderId)
+        assertEquals(ProviderCatalog.DEEPSEEK, backends.textProviderIds.first())
         assertNull(backends.imageProviderId)
     }
 }

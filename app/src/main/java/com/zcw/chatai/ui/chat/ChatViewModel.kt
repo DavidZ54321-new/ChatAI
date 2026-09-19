@@ -75,11 +75,11 @@ class ChatViewModel(
             conversationProviderId = null,
             preferredSearchProviderId = settings.searchProviderId,
         )
-        val textAvailable = backendIds.textProviderId?.let { providerId ->
+        val textAvailable = backendIds.textProviderIds.any { providerId ->
             settings.providers[providerId]?.let { providerEntry ->
                 searchProviders[providerId]?.available(providerEntry.baseUrl, providerEntry.apiKey)
-            }
-        } == true
+            } == true
+        }
         val imageAvailable = backendIds.imageProviderId?.let { providerId ->
             settings.providers[providerId]?.let { providerEntry ->
                 imageProviders[providerId]?.available(providerEntry.baseUrl, providerEntry.apiKey)

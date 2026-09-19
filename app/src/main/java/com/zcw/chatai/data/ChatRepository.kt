@@ -4,8 +4,12 @@ import androidx.room.withTransaction
 import com.zcw.chatai.data.ai.AgentLoop
 import com.zcw.chatai.data.ai.AttachmentRetention
 import com.zcw.chatai.data.ai.ContextBuilder
+import com.zcw.chatai.data.ai.DsmlStrip
 import com.zcw.chatai.data.ai.StreamAccumulator
+import com.zcw.chatai.data.ai.ToolBudget
 import com.zcw.chatai.data.ai.ToolCallAccumulator
+import com.zcw.chatai.data.ai.ToolFallbackChain
+import com.zcw.chatai.data.ai.ToolImageInventory
 import com.zcw.chatai.data.ai.ToolTurnGrouping
 import com.zcw.chatai.data.db.AppDatabase
 import com.zcw.chatai.data.db.AttachmentCodec
@@ -40,9 +44,11 @@ import com.zcw.chatai.data.prefs.toChatConfig
 import com.zcw.chatai.data.provider.ProviderCatalog
 import com.zcw.chatai.data.provider.ToolBackendResolver
 import com.zcw.chatai.data.web.HttpWebFetcher
+import com.zcw.chatai.data.web.ImageSearchOutcome
 import com.zcw.chatai.data.web.ImageSearchProvider
 import com.zcw.chatai.data.web.WebFetcher
 import com.zcw.chatai.data.web.WebSearchProvider
+import com.zcw.chatai.data.web.WebSearchResult
 import com.zcw.chatai.data.web.WebTools
 import android.os.SystemClock
 import android.util.Log
@@ -451,10 +457,16 @@ class ChatRepository(
 
     /** 工具后端（借道）的运行时上下文：供应商 id + 它自己的请求配置（含模型）。 */
     private data class ToolBackendContexts(
-        val text: ToolBackend?,
+        /** 文本搜索候选后端（有序）：会话/显式优先，失败逐个借道。 */
+        val text: List<ToolBackend>,
         val image: ToolBackend?,
     ) {
-        data class ToolBackend(val providerId: String, val config: ChatConfig)
+        data class ToolBackend(
+            val providerId: String,
+            val config: ChatConfig,
+            /** 仅 Qwen 图搜：模型优先级链（空/错逐个回退）；其它后端为空。 */
+            val models: List<String> = emptyList(),
+        )
     }
 
     private fun toolBackendContexts(settings: ChatSettings, config: ChatConfig): ToolBackendContexts {
@@ -476,18 +488,22 @@ class ChatRepository(
                 )
             }
         }
-        return ToolBackendContexts(text = backend(ids.textProviderId), image = backend(ids.imageProviderId))
+        // 图搜后端带模型链：与对话模型解耦，先 27b、空/错退 max。
+        val image = backend(ids.imageProviderId)?.let { backend ->
+            backend.copy(models = settings.imageSearchModels)
+        }
+        return ToolBackendContexts(text = ids.textProviderIds.mapNotNull(::backend), image = image)
     }
 
     /**
      * 本回合注入哪些工具：🌐 开着才注入；按**工具后端**（不是会话供应商）的可用性拼名单。
-     * 搜文字、图搜、抓取三者独立，任何一个后端不可用都不影响其余工具。
+     * 文本搜索有多个候选后端，任一可用即可注入（运行时逐个回退）；图搜/抓取独立判定。
      */
     private fun resolveEnabledTools(config: ChatConfig, contexts: ToolBackendContexts): List<String> {
         if (!config.webSearchEnabled) return emptyList()
-        val textAvailable = contexts.text?.let { backend ->
+        val textAvailable = contexts.text.any { backend ->
             searchProviders[backend.providerId]?.available(backend.config.baseUrl, backend.config.apiKey) == true
-        } == true
+        }
         val imageAvailable = contexts.image?.let { backend ->
             imageProviders[backend.providerId]?.available(backend.config.baseUrl, backend.config.apiKey) == true
         } == true
@@ -520,7 +536,7 @@ class ChatRepository(
             return null
         }
         val messages = db.messageDao().getByConversation(conversationId).map { it.toModel() }
-        val kept = AttachmentRetention.keptMessageIds(messages, config.historyImageLimit)
+        val kept = AttachmentRetention.keptMessageIds(messages, config.historyImageTurns)
         val videoMessages = messages.filter { message ->
             message.id in kept && message.attachments.any { it.kind == AttachmentKind.VIDEO }
         }
@@ -678,12 +694,15 @@ class ChatRepository(
             val decision = AgentLoop.decide(outcome.finishReason, outcome.toolCalls, steps, config.maxAgentSteps)
             when (decision) {
                 is AgentLoop.Decision.Continue -> {
-                    executeTools(conversationId, config, decision.toolCalls, toolContexts)
+                    // 这批工具跑完后的剩余轮次（下一次请求若 >= maxAgentSteps 就是无工具收尾）。
+                    val remaining = (config.maxAgentSteps - (steps + 1)).coerceAtLeast(0)
+                    executeTools(conversationId, config, decision.toolCalls, toolContexts, remaining)
                     steps++
                 }
 
                 AgentLoop.Decision.ForceFinal -> {
-                    executeTools(conversationId, config, outcome.toolCalls, toolContexts)
+                    // 预算已耗尽：这批工具是最后一批，预算提示固定 0。
+                    executeTools(conversationId, config, outcome.toolCalls, toolContexts, remainingRounds = 0)
                     steps++
                 }
 
@@ -707,7 +726,7 @@ class ChatRepository(
         val messages = withContext(Dispatchers.IO) {
             ContextBuilder.build(
                 history = history,
-                imageLimit = config.historyImageLimit,
+                imageTurns = config.historyImageTurns,
                 imageProvider = { attachment ->
                     attachmentStore.toRequestImage(attachment, config.imageDetail)
                 },
@@ -730,7 +749,7 @@ class ChatRepository(
                         StreamingMessage(
                             conversationId = conversationId,
                             messageId = messageId,
-                            content = accumulator.content,
+                            content = DsmlStrip.strip(accumulator.content),
                             reasoning = accumulator.reasoning,
                             reasoningMs = accumulator.reasoningMs,
                         ),
@@ -739,7 +758,7 @@ class ChatRepository(
                 if (update.checkpoint) {
                     db.messageDao().updateContent(
                         id = messageId,
-                        content = accumulator.content,
+                        content = DsmlStrip.strip(accumulator.content),
                         reasoning = accumulator.reasoning,
                         reasoningMs = accumulator.reasoningMs,
                         updatedAt = nowMs(),
@@ -783,6 +802,7 @@ class ChatRepository(
         config: ChatConfig,
         calls: List<ToolCall>,
         toolContexts: ToolBackendContexts,
+        remainingRounds: Int,
     ) {
         for (call in calls) {
             val toolMessageId = newId()
@@ -802,21 +822,30 @@ class ChatRepository(
                     completionTokens = null,
                     toolCallId = call.id,
                     toolResult = ToolCallCodec.encodeResult(
-                        ToolResult(status = ToolStatus.RUNNING, detail = activityLabel(call)),
+                        ToolResult(
+                            status = ToolStatus.RUNNING,
+                            detail = activityLabel(call),
+                            // 跑起来时也带上 kind，标题就不会先显示成「联网搜索」再跳成「文搜图」。
+                            kind = kindOf(call),
+                        ),
                     ),
                     createdAt = timestamp,
                     updatedAt = timestamp,
                 ),
             )
             var cancellation: CancellationException? = null
-            val result = try {
-                runTool(conversationId, call, toolContexts)
+            val raw = try {
+                runTool(conversationId, config, call, toolContexts)
             } catch (c: CancellationException) {
                 cancellation = c
                 ToolResult(status = ToolStatus.FAILED, detail = call.name, text = TOOL_CANCELLED_TEXT)
             } catch (t: Throwable) {
                 ToolResult(status = ToolStatus.FAILED, detail = call.name, text = t.message ?: "工具执行失败")
             }
+            // 预算提示统一挂在这里：成功/失败都带，模型不会误以为还有机会。
+            val result = raw.copy(
+                modelNote = ToolBudget.merge(raw.modelNote, ToolBudget.note(remainingRounds)),
+            )
             // 取消时也要把 RUNNING 行落定，否则界面会永远停在「搜索中」。
             withContext(NonCancellable) {
                 db.messageDao().updateToolResultContent(
@@ -833,23 +862,37 @@ class ChatRepository(
 
     private suspend fun runTool(
         conversationId: String,
+        config: ChatConfig,
         call: ToolCall,
         toolContexts: ToolBackendContexts,
     ): ToolResult = when (call.name) {
         WebTools.SEARCH -> {
             val query = WebTools.queryOf(call.arguments)
                 ?: return ToolResult(ToolStatus.FAILED, call.name, text = "缺少搜索词", kind = ToolKind.SEARCH)
-            val backend = toolContexts.text
-                ?: return ToolResult(ToolStatus.FAILED, query, text = "未配置联网搜索后端", kind = ToolKind.SEARCH)
-            val provider = searchProviders[backend.providerId]
-                ?: return ToolResult(ToolStatus.FAILED, query, text = "未配置联网搜索后端", kind = ToolKind.SEARCH)
-            val result = provider.search(query, WebTools.DEFAULT_MAX_RESULTS, backend.config)
+            val backends = toolContexts.text
+            if (backends.isEmpty()) {
+                return ToolResult(ToolStatus.FAILED, query, text = "未配置联网搜索后端", kind = ToolKind.SEARCH)
+            }
+            // 会话/显式后端优先；空结果或报错自动借道下一个已配置后端。
+            val attempts = mutableListOf<String>()
+            val result = ToolFallbackChain.firstUsable(
+                candidates = backends,
+                isEmpty = { r: WebSearchResult -> r.sources.isEmpty() && r.answer.isNullOrBlank() },
+            ) { backend ->
+                attempts += backend.providerId
+                searchProviders[backend.providerId]
+                    ?.search(query, WebTools.DEFAULT_MAX_RESULTS, backend.config)
+                    ?: throw ChatApiException("未配置联网搜索后端")
+            }
+            logFallback(call, attempts)
+            val empty = result.sources.isEmpty() && result.answer.isNullOrBlank()
             ToolResult(
                 status = ToolStatus.OK,
                 detail = query,
                 sources = result.sources,
                 text = WebTools.formatSearchResult(query, result),
                 kind = ToolKind.SEARCH,
+                modelNote = if (empty) WebTools.emptySearchNote(query) else null,
             )
         }
 
@@ -872,13 +915,23 @@ class ChatRepository(
                 ?: return ToolResult(ToolStatus.FAILED, query, text = "未配置图搜后端（需要通义千问）", kind = ToolKind.IMAGE_SEARCH)
             val provider = imageProviders[backend.providerId]
                 ?: return ToolResult(ToolStatus.FAILED, query, text = "未配置图搜后端（需要通义千问）", kind = ToolKind.IMAGE_SEARCH)
-            val outcome = provider.searchByText(query, WebTools.DEFAULT_IMAGE_RESULTS, backend.config)
+            // 模型链：先 27b，空结果/报错退 max（与对话模型解耦）。
+            val attempts = mutableListOf<String>()
+            val outcome = ToolFallbackChain.firstUsable(
+                candidates = backend.models.ifEmpty { listOf(backend.config.model) },
+                isEmpty = { r: ImageSearchOutcome -> r.images.isEmpty() },
+            ) { model ->
+                attempts += model
+                provider.searchByText(query, WebTools.DEFAULT_IMAGE_RESULTS, backend.config.copy(model = model))
+            }
+            logFallback(call, attempts)
             ToolResult(
                 status = ToolStatus.OK,
                 detail = query,
                 text = WebTools.formatImageSearchResult(query, outcome.images),
                 kind = ToolKind.IMAGE_SEARCH,
                 images = outcome.images,
+                modelNote = if (outcome.images.isEmpty()) WebTools.emptyImageSearchNote(query) else null,
             )
         }
 
@@ -897,35 +950,75 @@ class ChatRepository(
                     text = "未配置图搜后端（需要通义千问）",
                     kind = ToolKind.IMAGE_SIMILAR,
                 )
-            val dataUrl = latestImageDataUrl(conversationId)
-                ?: return ToolResult(
+            // 与上下文标注共用同一份可见图片清单：先按出站窗口裁剪，编号才不会错位。
+            val images = ToolImageInventory.visibleImages(
+                ContextBuilder.usableHistory(
+                    db.messageDao().getByConversation(conversationId).map { it.toModel() },
+                ),
+                config.historyImageTurns,
+            )
+            if (images.isEmpty()) {
+                return ToolResult(
                     ToolStatus.FAILED,
                     "以图搜图",
                     text = "当前会话里没有可用的图片，请先发送一张图片",
                     kind = ToolKind.IMAGE_SIMILAR,
                 )
-            val outcome = provider.searchByImage(dataUrl, null, WebTools.DEFAULT_IMAGE_RESULTS, backend.config)
+            }
+            val requested = WebTools.imageIndexOf(call.arguments)
+            val picked = if (requested == null) images.last() else images.getOrNull(requested - 1)
+                ?: return ToolResult(
+                    ToolStatus.FAILED,
+                    "以图搜图",
+                    text = "image_index=$requested 超出范围：本会话可见图片共 ${images.size} 张（1..${images.size}）",
+                    kind = ToolKind.IMAGE_SIMILAR,
+                )
+            val dataUrl = attachmentStore.toRequestImage(picked.attachment, null)?.dataUrl
+                ?: return ToolResult(
+                    ToolStatus.FAILED,
+                    "以图搜图",
+                    text = "第 ${picked.globalIndex} 张图片不可用（文件缺失）",
+                    kind = ToolKind.IMAGE_SIMILAR,
+                )
+            val attempts = mutableListOf<String>()
+            val outcome = ToolFallbackChain.firstUsable(
+                candidates = backend.models.ifEmpty { listOf(backend.config.model) },
+                isEmpty = { r: ImageSearchOutcome -> r.images.isEmpty() },
+            ) { model ->
+                attempts += model
+                provider.searchByImage(
+                    dataUrl,
+                    null,
+                    WebTools.DEFAULT_IMAGE_RESULTS,
+                    backend.config.copy(model = model),
+                )
+            }
+            logFallback(call, attempts)
+            val used = "Used image ${picked.globalIndex} of ${images.size} in this conversation."
             ToolResult(
                 status = ToolStatus.OK,
                 detail = "以图搜图",
-                text = WebTools.formatImageSearchResult("以图搜图", outcome.images),
+                text = "$used\n" + WebTools.formatImageSearchResult("以图搜图", outcome.images),
                 kind = ToolKind.IMAGE_SIMILAR,
                 images = outcome.images,
+                modelNote = if (outcome.images.isEmpty()) WebTools.emptyImageSimilarNote() else null,
             )
         }
 
         else -> ToolResult(ToolStatus.FAILED, call.name, text = "未知工具：${call.name}")
     }
 
-    /** 会话里最近一张用户图片的内联 data URL（以图搜图的输入）；没有则 null。 */
-    private suspend fun latestImageDataUrl(conversationId: String): String? {
-        val attachment = db.messageDao().getByConversation(conversationId)
-            .asReversed()
-            .asSequence()
-            .flatMap { it.toModel().attachments.asSequence() }
-            .firstOrNull { it.kind == AttachmentKind.IMAGE }
-            ?: return null
-        return attachmentStore.toRequestImage(attachment, null)?.dataUrl
+    private fun kindOf(call: ToolCall): ToolKind = when (call.name) {
+        WebTools.SEARCH -> ToolKind.SEARCH
+        WebTools.FETCH -> ToolKind.FETCH
+        WebTools.SEARCH_IMAGES -> ToolKind.IMAGE_SEARCH
+        WebTools.FIND_SIMILAR_IMAGES -> ToolKind.IMAGE_SIMILAR
+        else -> ToolKind.SEARCH
+    }
+
+    /** 只有真的发生回退才记一条：logcat 里没有 = 首选后端/模型直接成功。 */
+    private fun logFallback(call: ToolCall, attempts: List<String>) {
+        if (attempts.size > 1) Log.i(TAG, "${call.name} 回退：$attempts（末次生效）")
     }
 
     private fun activityLabel(call: ToolCall): String = when (call.name) {
@@ -1020,7 +1113,9 @@ class ChatRepository(
         } else {
             ApiErrorMapper.finishReasonMessage(accumulator.finishReason)
         }
-        val hasContent = accumulator.content.isNotBlank()
+        // 兜底剥离 DeepSeek 漏进正文的原生工具标记（渲染与落库用同一份清洗后的文本）。
+        val content = DsmlStrip.strip(accumulator.content)
+        val hasContent = content.isNotBlank()
         val resolvedStatus = when {
             status == MessageStatus.CANCELLED -> MessageStatus.CANCELLED
             status == MessageStatus.ERROR -> MessageStatus.ERROR
@@ -1034,7 +1129,7 @@ class ChatRepository(
         }
         db.messageDao().finalize(
             id = messageId,
-            content = accumulator.content,
+            content = content,
             reasoning = accumulator.reasoning.ifEmpty { null },
             status = resolvedStatus.name,
             errorMessage = resolvedError,

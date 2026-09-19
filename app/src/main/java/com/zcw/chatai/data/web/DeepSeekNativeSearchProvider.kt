@@ -27,8 +27,6 @@ object DeepSeekSearchParser {
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
-    private const val FULLWIDTH_BAR = '\uFF5C'
-
     fun parse(raw: String): WebSearchResult {
         val response = try {
             json.decodeFromString(AnthropicResponse.serializer(), raw)
@@ -60,52 +58,7 @@ object DeepSeekSearchParser {
     }
 
     /** 参见设计：Anthropic 端点已知会把原生工具标记漏进正文，这里兜底剥离。 */
-    fun stripDsmlMarkup(text: String): String {
-        var result = text
-        val open = "<${FULLWIDTH_BAR}${FULLWIDTH_BAR}DSML${FULLWIDTH_BAR}${FULLWIDTH_BAR}"
-        // 结束标记形如 `<｜｜/DSML｜｜tool_calls>`（斜杠在 DSML 之前），不是 `<｜｜DSML｜｜/...`。
-        val closeMarker = "<${FULLWIDTH_BAR}${FULLWIDTH_BAR}/DSML${FULLWIDTH_BAR}${FULLWIDTH_BAR}"
-        while (true) {
-            val start = result.indexOf(open)
-            if (start < 0) break
-            val close = result.indexOf(">", result.indexOf(closeMarker, start).takeIf { it >= 0 } ?: break)
-            if (close < 0) break
-            result = result.removeRange(start, close + 1)
-        }
-        // 清掉残留的孤立 DSML 标签（没有配对结束标记的情况）。
-        var cleaned = result
-        while (true) {
-            val start = cleaned.indexOf(open)
-            if (start < 0) break
-            val gt = cleaned.indexOf('>', start)
-            if (gt < 0) break
-            cleaned = cleaned.removeRange(start, gt + 1)
-        }
-        // 再清掉孤立的结束标记（只有 close、没有 open 的残段）。
-        while (true) {
-            val start = cleaned.indexOf(closeMarker)
-            if (start < 0) break
-            val gt = cleaned.indexOf('>', start)
-            if (gt < 0) break
-            cleaned = cleaned.removeRange(start, gt + 1)
-        }
-        return collapseBlankLines(cleaned).trim()
-    }
-
-    private fun collapseBlankLines(text: String): String {
-        val builder = StringBuilder()
-        var newlineCount = 0
-        text.forEach { ch ->
-            if (ch == '\n') {
-                newlineCount++
-                if (newlineCount <= 2) builder.append(ch)
-            } else {
-                newlineCount = 0
-                builder.append(ch)
-            }
-        }
-        return builder.toString()
-    }
+    fun stripDsmlMarkup(text: String): String = com.zcw.chatai.data.ai.DsmlStrip.strip(text)
 }
 
 /**

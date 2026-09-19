@@ -20,7 +20,7 @@ enum class ToolStatus { RUNNING, OK, FAILED }
 /** 工具语义分类：决定工具行标题与结果渲染方式（旧数据缺失时按 SEARCH 兜底）。 */
 enum class ToolKind { SEARCH, FETCH, IMAGE_SEARCH, IMAGE_SIMILAR }
 
-/** 一次工具调用的结构化结果：结构化字段给 UI，[text] 给模型。 */
+/** 一次工具调用的结构化结果：结构化字段给 UI，[text] 给模型，[modelNote] 只给模型。 */
 data class ToolResult(
     val status: ToolStatus,
     val detail: String,
@@ -28,4 +28,9 @@ data class ToolResult(
     val text: String = "",
     val kind: ToolKind = ToolKind.SEARCH,
     val images: List<SearchedImage> = emptyList(),
+    /**
+     * 仅随 [text] 一起发给模型的附注（工具预算、空结果提示等）；
+     * UI 只渲染 [text]，不显示这里的内容。
+     */
+    val modelNote: String? = null,
 )

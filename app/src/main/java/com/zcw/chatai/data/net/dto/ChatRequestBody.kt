@@ -58,6 +58,15 @@ object ChatRequestBody {
                 )
             }
             images.forEach { image ->
+                // 每张图前插一段来源标注（"第几张 / 哪一轮"），避免历史图与本轮图混淆。
+                image.label?.takeIf { it.isNotBlank() }?.let { label ->
+                    add(
+                        buildJsonObject {
+                            put("type", "text")
+                            put("text", label)
+                        },
+                    )
+                }
                 add(
                     buildJsonObject {
                         put("type", "image_url")

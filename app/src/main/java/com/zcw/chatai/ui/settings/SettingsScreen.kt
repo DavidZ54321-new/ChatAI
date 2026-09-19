@@ -162,7 +162,7 @@ fun SettingsScreen(
             ChoiceRow(
                 label = "联网搜索后端",
                 hint = "这些工具经对应供应商的 API 执行，与当前对话模型无关（借道），按次计费；" +
-                    "跟随会话 = 会话供应商支持就用它，否则回退到已配置的供应商",
+                    "选中项只是首选，失败（空结果或报错）会自动借道其它已配置的后端",
                 options = buildList {
                     add(null to "跟随会话")
                     ProviderCatalog.presets
@@ -171,6 +171,22 @@ fun SettingsScreen(
                 },
                 selected = state.searchProviderId,
                 onSelect = { value -> viewModel.update { it.copy(searchProviderId = value) } },
+            )
+            Field(
+                label = "图搜模型（按优先级）",
+                value = state.imageSearchModels,
+                onValueChange = { value -> viewModel.update { it.copy(imageSearchModels = value) } },
+                placeholder = ProviderCatalog.byId(ProviderCatalog.QWEN)?.toolModels
+                    ?.joinToString(",")
+                    ?: "qwen3.8-27b,qwen3.8-max",
+                singleLine = true,
+                error = state.imageSearchModelsError,
+            )
+            Text(
+                text = "文搜图 / 图搜图借道通义千问时按顺序尝试：先 27b，空结果或报错再退下一个；" +
+                    "留空用内置默认。与「通义千问」条目里的对话模型无关。",
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.onSurfaceVariant,
             )
             ImageSearchStatus(providers = state.providers)
 
@@ -220,16 +236,18 @@ fun SettingsScreen(
                 onSelect = { value -> viewModel.update { it.copy(imageDetail = value) } },
             )
             ChoiceRow(
-                label = "历史图片策略",
-                hint = "更早的图片在请求里替换为占位符，避免每轮重发全部图片",
+                label = "历史图片轮次",
+                hint = "保留「当前轮 + 最近 N 轮」的图片（单位是轮次，不是消息条数）；" +
+                    "每张图都带来源标注，当前轮的图永远保留",
                 options = listOf(
-                    -1 to "全部重发",
-                    2 to "最近 2 条",
-                    5 to "最近 5 条",
-                    0 to "不重发历史图片",
+                    1 to "最近 1 轮",
+                    2 to "最近 2 轮",
+                    3 to "最近 3 轮",
+                    -1 to "全部",
+                    0 to "只发当前轮",
                 ),
-                selected = state.historyImageLimit,
-                onSelect = { value -> viewModel.update { it.copy(historyImageLimit = value) } },
+                selected = state.historyImageTurns,
+                onSelect = { value -> viewModel.update { it.copy(historyImageTurns = value) } },
             )
 
             SectionTitle("外观")

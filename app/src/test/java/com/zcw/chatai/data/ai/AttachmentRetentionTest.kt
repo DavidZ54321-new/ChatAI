@@ -10,20 +10,28 @@ import org.junit.Test
 
 class AttachmentRetentionTest {
 
+    /** 回归：0 轮 = 只发当前轮，但当前轮那条永远保留（旧实现会连本轮图一起丢）。 */
     @Test
-    fun limitZeroKeepsNothing() {
+    fun zeroTurnsAlwaysKeepsTheLatestAttachmentMessage() {
         val history = listOf(withAttachment("u1"), withAttachment("u2"))
-        assertEquals(emptySet<String>(), AttachmentRetention.keptMessageIds(history, 0))
+        assertEquals(setOf("u2"), AttachmentRetention.keptMessageIds(history, 0))
     }
 
     @Test
-    fun negativeLimitKeepsAllAttachmentMessages() {
+    fun noAttachmentsAtAllKeepsNothing() {
+        val history = listOf(plain("u1"), plain("a1"))
+        assertEquals(emptySet<String>(), AttachmentRetention.keptMessageIds(history, 1))
+    }
+
+    @Test
+    fun negativeTurnsKeepsAllAttachmentMessages() {
         val history = listOf(withAttachment("u1"), plain("a1"), withAttachment("u2"))
         assertEquals(setOf("u1", "u2"), AttachmentRetention.keptMessageIds(history, -1))
     }
 
+    /** N 轮 = 当前轮 + 最近 N 轮（每条带附件消息 = 一轮）。 */
     @Test
-    fun onlyRecentNWithAttachmentsAreKept() {
+    fun oneTurnKeepsTheLastTwoAttachmentMessages() {
         val history = listOf(
             withAttachment("u1"),
             plain("a1"),
@@ -31,7 +39,7 @@ class AttachmentRetentionTest {
             plain("a2"),
             withAttachment("u3"),
         )
-        assertEquals(setOf("u2", "u3"), AttachmentRetention.keptMessageIds(history, 2))
+        assertEquals(setOf("u2", "u3"), AttachmentRetention.keptMessageIds(history, 1))
     }
 
     @Test
@@ -41,7 +49,7 @@ class AttachmentRetentionTest {
             plain("a1"), plain("a2"), plain("a3"),
             withAttachment("u2"),
         )
-        assertEquals(setOf("u1", "u2"), AttachmentRetention.keptMessageIds(history, 2))
+        assertEquals(setOf("u1", "u2"), AttachmentRetention.keptMessageIds(history, 1))
     }
 
     private fun withAttachment(id: String) = message(id, listOf(attachment(id)))

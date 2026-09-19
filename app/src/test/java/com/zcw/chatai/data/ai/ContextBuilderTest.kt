@@ -25,10 +25,26 @@ class ContextBuilderTest {
     private fun imageProvider(attachment: Attachment): ChatRequestImage? =
         if (attachment.relativePath.endsWith("missing.jpg")) null else image
 
+    /** 回归：图片编号与 find_similar_images 的 image_index 必须基于同一份出站窗口，长会话截断后不会错位。 */
+    @Test
+    fun usableHistoryIsTheWindowUsedForImageNumbering() {
+        val history = buildList {
+            add(message("old", Role.USER, "旧图", attachments = listOf(attachment("a0", "attachments/c/a0.jpg"))))
+            repeat(ContextBuilder.MAX_MESSAGES + 5) { add(message("m$it", Role.USER, "内容$it")) }
+        }
+        val windowed = ContextBuilder.usableHistory(history)
+        assertEquals(ContextBuilder.MAX_MESSAGES, windowed.size)
+        assertTrue(windowed.none { it.id == "old" })
+
+        // 全量历史里有 1 张图，但窗口里 0 张——工具必须按窗口取，否则编号会指向模型没看到的图。
+        assertEquals(1, ToolImageInventory.visibleImages(history, retainTurns = -1).size)
+        assertTrue(ToolImageInventory.visibleImages(windowed, retainTurns = -1).isEmpty())
+    }
+
     @Test
     fun keepsOnlyRecentMessages() {
         val history = (1..60).map { message("m$it", Role.USER, "内容$it") }
-        val built = ContextBuilder.build(history, imageLimit = 2, imageProvider = { image })
+        val built = ContextBuilder.build(history, imageTurns = 1, imageProvider = { image })
         assertEquals(ContextBuilder.MAX_MESSAGES, built.size)
         assertEquals("内容21", built.first().content)
         assertEquals("内容60", built.last().content)
@@ -42,7 +58,7 @@ class ContextBuilderTest {
             message("a2", Role.ASSISTANT, ""),
             message("u2", Role.SYSTEM, "系统消息"),
         )
-        val built = ContextBuilder.build(history, imageLimit = 2, imageProvider = { image })
+        val built = ContextBuilder.build(history, imageTurns = 1, imageProvider = { image })
         assertEquals(1, built.size)
         assertEquals("有内容", built.single().content)
         assertEquals("user", built.single().role)
@@ -57,7 +73,7 @@ class ContextBuilderTest {
             message("a2", Role.ASSISTANT, "嗯"),
             message("u3", Role.USER, "第三张图", attachments = listOf(attachment("a3", "attachments/c/a3.jpg"))),
         )
-        val built = ContextBuilder.build(history, imageLimit = 2, imageProvider = ::imageProvider)
+        val built = ContextBuilder.build(history, imageTurns = 1, imageProvider = ::imageProvider)
 
         val first = built.first()
         assertTrue(first.images.isEmpty())
@@ -68,25 +84,60 @@ class ContextBuilderTest {
         assertEquals(1, built[4].images.size)
     }
 
+    /** 回归：当前轮的图永远保留——即使配置成「只发当前轮」也不能丢本轮内容。 */
     @Test
-    fun imageLimitZeroSendsNoHistoryImages() {
+    fun imageTurnsZeroStillSendsTheCurrentImage() {
         val history = listOf(
             message("u1", Role.USER, "图", attachments = listOf(attachment("a1", "attachments/c/a1.jpg"))),
         )
-        val built = ContextBuilder.build(history, imageLimit = 0, imageProvider = ::imageProvider)
-        assertTrue(built.single().images.isEmpty())
-        assertTrue(built.single().content.contains(ContextBuilder.IMAGE_OMITTED))
+        val built = ContextBuilder.build(history, imageTurns = 0, imageProvider = ::imageProvider)
+        assertEquals(1, built.single().images.size)
+        assertFalse(built.single().content.contains(ContextBuilder.IMAGE_OMITTED))
     }
 
     @Test
-    fun imageLimitMinusOneSendsEverything() {
+    fun imageTurnsZeroOmitsOlderImagesButKeepsCurrent() {
+        val history = listOf(
+            message("u1", Role.USER, "图1", attachments = listOf(attachment("a1", "attachments/c/a1.jpg"))),
+            message("a1", Role.ASSISTANT, "看到了"),
+            message("u2", Role.USER, "图2", attachments = listOf(attachment("a2", "attachments/c/a2.jpg"))),
+        )
+        val built = ContextBuilder.build(history, imageTurns = 0, imageProvider = ::imageProvider)
+        assertTrue(built.first().images.isEmpty())
+        assertTrue(built.first().content.contains(ContextBuilder.IMAGE_OMITTED))
+        assertEquals(1, built.last().images.size)
+    }
+
+    @Test
+    fun imageTurnsMinusOneSendsEverything() {
         val history = listOf(
             message("u1", Role.USER, "图1", attachments = listOf(attachment("a1", "attachments/c/a1.jpg"))),
             message("u2", Role.USER, "图2", attachments = listOf(attachment("a2", "attachments/c/a2.jpg"))),
         )
-        val built = ContextBuilder.build(history, imageLimit = -1, imageProvider = ::imageProvider)
+        val built = ContextBuilder.build(history, imageTurns = -1, imageProvider = ::imageProvider)
         assertTrue(built.all { it.images.size == 1 })
         assertFalse(built.any { it.content.contains(ContextBuilder.IMAGE_OMITTED) })
+    }
+
+    /** 每张出站图片都带全局编号 + 轮次来源标注（英文），避免历史图与本轮图混淆。 */
+    @Test
+    fun labelsEveryVisibleImageWithGlobalIndexAndTurn() {
+        val history = listOf(
+            message("u1", Role.USER, "上一轮", attachments = listOf(attachment("a1", "attachments/c/a1.jpg"))),
+            message("a1", Role.ASSISTANT, "看到了"),
+            message(
+                "u2",
+                Role.USER,
+                "本轮",
+                attachments = listOf(attachment("a2", "attachments/c/a2.jpg"), attachment("a3", "attachments/c/a3.jpg")),
+            ),
+        )
+        val built = ContextBuilder.build(history, imageTurns = 1, imageProvider = ::imageProvider)
+        val previous = built.first().images.single()
+        val current = built.last().images
+        assertEquals("[Image 1 | previous turn 1/1]", previous.label)
+        assertEquals("[Image 2 | this turn 1/2]", current[0].label)
+        assertEquals("[Image 3 | this turn 2/2]", current[1].label)
     }
 
     @Test
@@ -94,7 +145,7 @@ class ContextBuilderTest {
         val history = listOf(
             message("u1", Role.USER, "图丢了", attachments = listOf(attachment("a1", "attachments/c/missing.jpg"))),
         )
-        val built = ContextBuilder.build(history, imageLimit = 2, imageProvider = ::imageProvider)
+        val built = ContextBuilder.build(history, imageTurns = 1, imageProvider = ::imageProvider)
         assertTrue(built.single().images.isEmpty())
         assertTrue(built.single().content.contains(ContextBuilder.IMAGE_MISSING))
     }
@@ -103,7 +154,7 @@ class ContextBuilderTest {
     fun textWithoutImagesKeepsPlainStringContent() {
         val built = ContextBuilder.build(
             listOf(message("u1", Role.USER, "纯文本")),
-            imageLimit = 2,
+            imageTurns = 1,
             imageProvider = ::imageProvider,
         )
         assertTrue(built.single().images.isEmpty())
@@ -117,7 +168,7 @@ class ContextBuilderTest {
             message(id = "a1", role = Role.ASSISTANT, content = "", toolCalls = calls, reasoningContent = "想"),
             message(id = "t1", role = Role.TOOL, content = "结果", toolCallId = "call_1"),
         )
-        val built = ContextBuilder.build(messages, imageLimit = 0, imageProvider = { null })
+        val built = ContextBuilder.build(messages, imageTurns = 0, imageProvider = { null })
         assertEquals(listOf("assistant", "tool"), built.map { it.role })
         assertEquals(calls, built[0].toolCalls)
         assertEquals("想", built[0].reasoning)
@@ -127,7 +178,7 @@ class ContextBuilderTest {
     @Test
     fun plainAssistantDoesNotEchoReasoning() {
         val messages = listOf(message(id = "a1", role = Role.ASSISTANT, content = "答案", reasoningContent = "想"))
-        val built = ContextBuilder.build(messages, imageLimit = 0, imageProvider = { null })
+        val built = ContextBuilder.build(messages, imageTurns = 0, imageProvider = { null })
         assertNull(built.single().reasoning)
     }
 
@@ -145,7 +196,7 @@ class ContextBuilderTest {
             add(message(id = "t0", role = Role.TOOL, content = "结果", toolCallId = "call_1"))
             repeat(39) { add(message(id = "u$it", role = Role.USER, content = "内容$it")) }
         }
-        val built = ContextBuilder.build(history, imageLimit = 0, imageProvider = { null })
+        val built = ContextBuilder.build(history, imageTurns = 0, imageProvider = { null })
         assertEquals(ContextBuilder.MAX_MESSAGES - 1, built.size)
         assertFalse(built.first().role == "tool")
         assertTrue(built.none { it.role == "tool" })
@@ -168,9 +219,38 @@ class ContextBuilderTest {
                 toolResult = ToolResult(status = ToolStatus.OK, detail = "d", text = ""),
             ),
         )
-        val built = ContextBuilder.build(messages, imageLimit = 0, imageProvider = { null })
+        val built = ContextBuilder.build(messages, imageTurns = 0, imageProvider = { null })
         assertEquals(2, built.size)
         assertEquals("真实结果", built[1].content)
+    }
+
+    @Test
+    fun toolResultModelNoteIsAppendedForTheModel() {
+        val messages = listOf(
+            message(
+                id = "a1",
+                role = Role.ASSISTANT,
+                content = "",
+                toolCalls = listOf(ToolCall("call_1", "web_search", "{}")),
+            ),
+            message(
+                id = "t1",
+                role = Role.TOOL,
+                content = "结果",
+                toolCallId = "call_1",
+                toolResult = ToolResult(
+                    status = ToolStatus.OK,
+                    detail = "d",
+                    text = "结果",
+                    modelNote = "[Tool budget] 1 more tool round(s) available this turn.",
+                ),
+            ),
+        )
+        val built = ContextBuilder.build(messages, imageTurns = 0, imageProvider = { null })
+        assertEquals(
+            "结果\n\n[Tool budget] 1 more tool round(s) available this turn.",
+            built[1].content,
+        )
     }
 
     @Test
@@ -190,7 +270,7 @@ class ContextBuilderTest {
                 toolResult = ToolResult(status = ToolStatus.OK, detail = "d", text = ""),
             ),
         )
-        val built = ContextBuilder.build(messages, imageLimit = 0, imageProvider = { null })
+        val built = ContextBuilder.build(messages, imageTurns = 0, imageProvider = { null })
         assertEquals(listOf("assistant", "tool"), built.map { it.role })
         assertEquals("call_1", built[1].toolCallId)
         assertTrue(built[1].content.isNotBlank())
@@ -213,7 +293,7 @@ class ContextBuilderTest {
             message(id = "u1", role = Role.USER, content = "你继续"),
             message(id = "t2", role = Role.TOOL, content = "结果2", toolCallId = "call_2"),
         )
-        val built = ContextBuilder.build(messages, imageLimit = 0, imageProvider = { null })
+        val built = ContextBuilder.build(messages, imageTurns = 0, imageProvider = { null })
         assertEquals(listOf("assistant", "tool", "tool", "user"), built.map { it.role })
         assertEquals(listOf("call_1", "call_2"), built.filter { it.role == "tool" }.map { it.toolCallId })
         assertEquals("结果2", built[2].content)
@@ -235,7 +315,7 @@ class ContextBuilderTest {
             message(id = "t1", role = Role.TOOL, content = "结果1", toolCallId = "call_1"),
             message(id = "u1", role = Role.USER, content = "你继续"),
         )
-        val built = ContextBuilder.build(messages, imageLimit = 0, imageProvider = { null })
+        val built = ContextBuilder.build(messages, imageTurns = 0, imageProvider = { null })
         assertEquals(listOf("assistant", "tool", "tool", "user"), built.map { it.role })
         assertEquals("call_2", built[2].toolCallId)
         assertEquals(ContextBuilder.TOOL_EMPTY, built[2].content)
@@ -248,7 +328,7 @@ class ContextBuilderTest {
             message(id = "t1", role = Role.TOOL, content = "孤儿", toolCallId = "call_x"),
             message(id = "a1", role = Role.ASSISTANT, content = "回答"),
         )
-        val built = ContextBuilder.build(messages, imageLimit = 0, imageProvider = { null })
+        val built = ContextBuilder.build(messages, imageTurns = 0, imageProvider = { null })
         assertEquals(listOf("user", "assistant"), built.map { it.role })
     }
 
@@ -263,7 +343,7 @@ class ContextBuilderTest {
                 reasoningContent = "",
             ),
         )
-        val built = ContextBuilder.build(messages, imageLimit = 0, imageProvider = { null })
+        val built = ContextBuilder.build(messages, imageTurns = 0, imageProvider = { null })
         // 缺应答的 tool_call 会合成占位应答，但 assistant 本体的空思考不回传。
         assertEquals(listOf("assistant", "tool"), built.map { it.role })
         assertNull(built.first().reasoning)
@@ -281,7 +361,7 @@ class ContextBuilderTest {
         )
         val built = ContextBuilder.build(
             history,
-            imageLimit = 2,
+            imageTurns = 1,
             imageProvider = { null },
             videoProvider = { video },
         )
@@ -301,7 +381,7 @@ class ContextBuilderTest {
         )
         val built = ContextBuilder.build(
             history,
-            imageLimit = 2,
+            imageTurns = 1,
             imageProvider = { null },
             videoProvider = { video },
         )
@@ -318,7 +398,7 @@ class ContextBuilderTest {
         )
         val built = ContextBuilder.build(
             history,
-            imageLimit = 2,
+            imageTurns = 1,
             imageProvider = { null },
             videoProvider = { null },
         )
@@ -338,7 +418,7 @@ class ContextBuilderTest {
         )
         val built = ContextBuilder.build(
             history,
-            imageLimit = 2,
+            imageTurns = 1,
             imageProvider = { image },
             videoProvider = { video },
         )
