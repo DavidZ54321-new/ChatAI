@@ -20,7 +20,7 @@ data/net                 →  ChatApi 接口 + OpenAiCompatibleChatApi（okhttp-
 data/web                 →  联网工具：WebSearchProvider / DeepSeekNativeSearchProvider（Anthropic）/ QwenWebSearchProvider / ImageSearchProvider / QwenImageSearchProvider / WebFetcher / HtmlToText / WebTools
 data/media               →  图片压缩与私有目录存储（ImageCompressor / AttachmentStore / VideoMetadata / VideoPlanner / VideoUploadCoordinator）
 data/ChatRepository      →  唯一业务入口：落库 → 视频预检 → 组上下文 → 有界 Agent 循环（流式 → 工具 → 再流式）
-ui/chat                  →  ChatScreen / ChatViewModel / ChatUiState / Composer / MessageItems / ReasoningBlock / ToolCallBlock / Attachments / RemoteImage / ChatMetrics
+ui/chat                  →  ChatScreen / ChatViewModel / ChatUiState / Composer / MessageItems / ReasoningBlock / ToolCallBlock / BlockScroll / Attachments / RemoteImage / ChatMetrics
 ui/drawer                →  ConversationDrawer
 ui/settings              →  SettingsScreen / SettingsViewModel（服务商切换/连接配置/生成参数）
 ui/md                    →  MessageMarkdown（mikepenz，image 组件走 RemoteImage）+ LatexSplitter + latex/（vendored Kai，Apache-2.0）
@@ -42,7 +42,11 @@ ui/theme                 →  设计系统（Color / ChatColors / Type / Theme /
   （所以模型能对多张图逐张反向检索，结果里回带 `Used image k of M`）。
 - **视觉尺寸统一走 `ui/chat/ChatMetrics.kt`**（相对**视窗**而非父容器）：消息里图片缩略图 =
   视窗宽 20% 的正方形、顶消散尾巴 = 视窗高 4%（按钮行内不透明）、底消散引导 =
-  视窗高 3%（贴 Composer 上沿）。调观感只动这些常量，各配纯函数单测。
+  视窗高 3%（贴 Composer 上沿）。**展开块（思考过程 / 工具调用结果）统一 = 视窗高 30% 上限**
+  （`expandedBlockMaxHeight` + `BlockScrollContainer`：超出在块内滚动、不撑长消息；只有内容**真的
+  超出上限**时才吞掉滚动余量，装得下的短块不会变成「点不动的死区」）。块内图行与纵向是不同轴的
+  嵌套滚动，Compose 的轴锁定本身就是「先启动的轴获胜」，不需要额外手势拦截。调观感只动这些常量，
+  各配纯函数单测。
 - **思考耗时的口径**：DB 里 `messages.reasoning_ms`（毫秒，**NULL = 未测量**，与「0ms 瞬间完成」
   区分开）。测量用 `SystemClock.elapsedRealtime()`（单调钟，墙钟被 NTP 跳会落库荒谬值），
   口径 = 回合开始 → **最后一个 reasoning 增量**（不是第一个正文增量：输出顺序不保证）。

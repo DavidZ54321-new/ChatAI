@@ -44,6 +44,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.boundsInParent
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -180,7 +181,11 @@ fun ChatScreen(
         } else {
             LazyColumn(
                 state = listState,
-                modifier = Modifier.fillMaxSize().nestedScroll(follow.nestedScrollConnection),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .nestedScroll(follow.nestedScrollConnection)
+                    // 定位门：切会话后先隐藏，等 jumpToEnd 定位完成再显示，避免看到顶部再瞬移。
+                    .graphicsLayer { alpha = if (follow.located) 1f else 0f },
                 contentPadding = PaddingValues(
                     // 含顶消散尾巴：停在顶部时第一条气泡在渐变之下，实色。
                     top = topBand.height,
@@ -209,6 +214,7 @@ fun ChatScreen(
                                 group = group.items,
                                 streamingMessageId = state.streamingMessageId,
                                 isCurrentTurn = state.isTurnActive && index == groups.lastIndex,
+                                onUserExpand = follow.unpin,
                                 meta = state.messages.lastOrNull { it.role == Role.ASSISTANT }
                                     ?.takeIf { last -> group.items.any { it.id == last.id } }
                                     ?.let { metaOf(it) },
@@ -262,9 +268,9 @@ fun ChatScreen(
             onOverflow = { overflowOpen = true },
             modifier = Modifier.align(Alignment.TopCenter),
         )
-        if (messages.isNotEmpty() && !follow.atBottom) {
+        if (messages.isNotEmpty() && (!follow.following || !follow.atBottom)) {
             ScrollToBottomButton(
-                onClick = follow.scrollToEnd,
+                onClick = follow.jumpToBottom,
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(end = 16.dp, bottom = 170.dp),

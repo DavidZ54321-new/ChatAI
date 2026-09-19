@@ -9,11 +9,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.Icon
@@ -29,13 +27,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
-import androidx.compose.ui.input.nestedscroll.NestedScrollSource
-import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import com.zcw.chatai.R
 import com.zcw.chatai.data.ai.collapseReasoningWhitespace
@@ -59,6 +53,8 @@ fun ReasoningBlock(
     answerStarted: Boolean,
     reasoningMs: Long?,
     modifier: Modifier = Modifier,
+    /** 用户展开时回调：让外层列表临时松钉，别把正在读的内容拽走。 */
+    onUserExpand: () -> Unit = {},
 ) {
     if (reasoning.isBlank() && !isStreaming) return
     val scheme = MaterialTheme.colorScheme
@@ -73,7 +69,10 @@ fun ReasoningBlock(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { expandedByUser = !expandedByUser }
+                .clickable {
+                    if (!expandedByUser) onUserExpand()
+                    expandedByUser = !expandedByUser
+                }
                 .padding(vertical = 4.dp),
         ) {
             Icon(
@@ -109,13 +108,11 @@ fun ReasoningBlock(
             )
         }
         if (expandedByUser) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 220.dp)
-                    // 到底后不要把剩余滚动量交给外层 LazyColumn。
-                    .nestedScroll(IsolateReasoningNestedScroll)
-                    .verticalScroll(rememberScrollState()),
+            // 高度上限与工具结果块统一（视窗高 30%），超出在块内滚动、不撑长消息。
+            BlockScrollContainer(
+                maxHeight = ChatMetrics.expandedBlockMaxHeight(
+                    LocalWindowInfo.current.containerDpSize.height,
+                ),
             ) {
                 Text(
                     text = reasoning.ifBlank { "……" },
@@ -153,15 +150,4 @@ private fun ReasoningTicker(
             modifier = if (followEnd) Modifier else Modifier.basicMarquee(),
         )
     }
-}
-
-/** 吃掉思考区自己用不完的滚动量和 fling，避免穿透到聊天列表。 */
-private object IsolateReasoningNestedScroll : NestedScrollConnection {
-    override fun onPostScroll(
-        consumed: Offset,
-        available: Offset,
-        source: NestedScrollSource,
-    ): Offset = available
-
-    override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity = available
 }

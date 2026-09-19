@@ -85,4 +85,13 @@ class ChatMetricsTest {
         assertEquals(1.dp, tinyBottom.height)
         assertEquals(1f, tinyBottom.opaqueStop, 0.001f)
     }
+
+    @Test
+    fun expandedBlockIsThirtyPercentOfViewportHeight() {
+        // Pixel 6a：914dp 视窗 → 274.2dp（思考块与工具结果块共用同一上限）。
+        assertEquals(274.2f, ChatMetrics.expandedBlockMaxHeight(914.dp).value, 0.001f)
+        // 视窗高未知/为 0：不设上限（heightIn(max = Unspecified) 是 no-op）。
+        assertTrue(ChatMetrics.expandedBlockMaxHeight(0.dp).value.isNaN())
+        assertTrue(ChatMetrics.expandedBlockMaxHeight(Dp.Unspecified).value.isNaN())
+    }
 }

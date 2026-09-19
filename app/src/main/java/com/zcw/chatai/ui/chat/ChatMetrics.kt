@@ -38,6 +38,12 @@ object ChatMetrics {
     /** 单张图的高度上限 = 视窗高 55%（竖长图不占满整屏，横图仍由宽度上限约束）。 */
     const val MARKDOWN_SINGLE_IMAGE_MAX_HEIGHT_FRACTION = 0.55f
 
+    /**
+     * 展开块（思考过程 / 工具调用结果）的高度上限 = 视窗高 30%；
+     * 超出部分在块内滚动，不把整条消息撑长（也不穿透外层列表）。
+     */
+    const val EXPANDED_BLOCK_MAX_HEIGHT_FRACTION = 0.30f
+
     /** 加载占位的最小宽度，避免行内出现「什么都没有」的空档。 */
     val MARKDOWN_IMAGE_MIN_WIDTH: Dp = 120.dp
 
@@ -56,6 +62,12 @@ object ChatMetrics {
     fun markdownSingleImageMaxHeight(windowHeight: Dp): Dp {
         if (!windowHeight.isSpecified || windowHeight.value <= 0f) return Dp.Unspecified
         return (windowHeight * MARKDOWN_SINGLE_IMAGE_MAX_HEIGHT_FRACTION).coerceAtLeast(1.dp)
+    }
+
+    /** 展开块的高度上限；视窗高未知时返回 [Dp.Unspecified]（heightIn 会忽略它）。 */
+    fun expandedBlockMaxHeight(windowHeight: Dp): Dp {
+        if (!windowHeight.isSpecified || windowHeight.value <= 0f) return Dp.Unspecified
+        return (windowHeight * EXPANDED_BLOCK_MAX_HEIGHT_FRACTION).coerceAtLeast(1.dp)
     }
 
     /**

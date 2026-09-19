@@ -84,6 +84,8 @@ fun AssistantTurnItem(
     group: List<ChatMessageItem>,
     streamingMessageId: String?,
     isCurrentTurn: Boolean,
+    /** 用户展开工具/思考详情时回调：让列表临时松钉，别把内容拽走。 */
+    onUserExpand: () -> Unit,
     meta: String?,
     onLongPress: (ChatMessageItem) -> Unit,
     onRetry: (ChatMessageItem) -> Unit,
@@ -101,11 +103,12 @@ fun AssistantTurnItem(
         ) {
             group.forEach { message ->
                 if (message.role == Role.TOOL) {
-                    message.toolResult?.let { ToolCallBlock(it) }
+                    message.toolResult?.let { ToolCallBlock(it, onUserExpand = onUserExpand) }
                 } else {
                     AssistantStep(
                         message = message,
                         isStreaming = message.id == streamingMessageId,
+                        onUserExpand = onUserExpand,
                         onLongPress = { onLongPress(message) },
                         onRetry = { onRetry(message) },
                         onContinue = onContinue,
@@ -131,6 +134,7 @@ fun AssistantTurnItem(
 private fun AssistantStep(
     message: ChatMessageItem,
     isStreaming: Boolean,
+    onUserExpand: () -> Unit,
     onLongPress: () -> Unit,
     onRetry: () -> Unit,
     onContinue: (() -> Unit)?,
@@ -143,6 +147,7 @@ private fun AssistantStep(
                 isStreaming = isStreaming,
                 answerStarted = message.content.isNotEmpty(),
                 reasoningMs = message.reasoningMs,
+                onUserExpand = onUserExpand,
             )
         } else if (isStreaming && message.content.isEmpty()) {
             StreamingIndicator()

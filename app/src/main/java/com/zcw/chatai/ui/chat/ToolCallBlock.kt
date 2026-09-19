@@ -28,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.zcw.chatai.data.model.SearchedImage
@@ -41,7 +42,12 @@ import com.zcw.chatai.ui.theme.ChatTheme
  * 折叠模式沿用 [ReasoningBlock]：无背景、无边框，就是正文上方的一行。
  */
 @Composable
-fun ToolCallBlock(result: ToolResult, modifier: Modifier = Modifier) {
+fun ToolCallBlock(
+    result: ToolResult,
+    modifier: Modifier = Modifier,
+    /** 用户展开时回调：让外层列表临时松钉，别把正在读的内容拽走。 */
+    onUserExpand: () -> Unit = {},
+) {
     val scheme = MaterialTheme.colorScheme
     var expanded by rememberSaveable { mutableStateOf(false) }
     var preview by remember { mutableStateOf<SearchedImage?>(null) }
@@ -52,7 +58,10 @@ fun ToolCallBlock(result: ToolResult, modifier: Modifier = Modifier) {
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { expanded = !expanded }
+                .clickable {
+                    if (!expanded) onUserExpand()
+                    expanded = !expanded
+                }
                 .padding(vertical = 4.dp),
         ) {
             Text(
@@ -87,47 +96,54 @@ fun ToolCallBlock(result: ToolResult, modifier: Modifier = Modifier) {
             )
         }
         if (expanded) {
-            if (result.images.isNotEmpty()) {
-                LazyRow(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 8.dp, top = 4.dp, bottom = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    items(items = result.images, key = { it.url }) { image ->
-                        RemoteImage(
-                            url = image.url,
-                            contentDescription = image.title.ifBlank { "搜索结果图片" },
-                            maxEdge = 512,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .size(92.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(ChatTheme.colors.surfaceSoft)
-                                .clickable { preview = image },
-                        )
+            // 与思考块统一：视窗高 30% 上限，超出在块内滚动，不把整条消息撑长。
+            BlockScrollContainer(
+                maxHeight = ChatMetrics.expandedBlockMaxHeight(
+                    LocalWindowInfo.current.containerDpSize.height,
+                ),
+            ) {
+                if (result.images.isNotEmpty()) {
+                    LazyRow(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 8.dp, top = 4.dp, bottom = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        items(items = result.images, key = { it.url }) { image ->
+                            RemoteImage(
+                                url = image.url,
+                                contentDescription = image.title.ifBlank { "搜索结果图片" },
+                                maxEdge = 512,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .size(92.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(ChatTheme.colors.surfaceSoft)
+                                    .clickable { preview = image },
+                            )
+                        }
                     }
                 }
-            }
-            result.sources.forEach { source ->
-                Text(
-                    text = source.title ?: source.url,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = scheme.primary,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 8.dp, bottom = 2.dp),
-                )
-            }
-            if (result.text.isNotBlank()) {
-                Text(
-                    text = result.text.take(2000),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = scheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 8.dp, top = 4.dp),
-                )
+                result.sources.forEach { source ->
+                    Text(
+                        text = source.title ?: source.url,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = scheme.primary,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 8.dp, bottom = 2.dp),
+                    )
+                }
+                if (result.text.isNotBlank()) {
+                    Text(
+                        text = result.text.take(2000),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 8.dp, top = 4.dp),
+                    )
+                }
             }
         }
     }

@@ -19,6 +19,7 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -312,17 +313,25 @@ private fun MarkdownBlock(text: String, cacheable: Boolean) {
 /**
  * 已定稿的消息优先命中 [MarkdownParseCache]（库自带的 `rememberMarkdownState` 不跨 item 复用，
  * 滚动回看会反复解析）；流式中的消息走库的 conflate 解析路径，不把每个增量前缀塞进缓存。
+ *
+ * 定稿切换（`cacheable` 由 false 变 true）时**不能丢掉流式已解析的文档**：否则会先渲染
+ * `State.Loading()` 空白一帧，最后一条消息高度塌陷又弹回，看起来就是「结束后闪一下」。
+ * 这里把流式期间「内容 → 解析结果」暂存起来，定稿首帧拿它兜底（内容相同或是其前缀即可用），
+ * 再用 `produceState` 解析最终内容并写缓存。
  */
 @Composable
 private fun rememberParsedMarkdown(content: String, cacheable: Boolean): State {
-    if (cacheable) {
-        // 命中缓存直接返回，连一次 Loading 都不闪。
-        MarkdownParseCache.get(content)?.let { return it }
-    } else {
+    val retained = remember { mutableStateOf<Pair<String, State>?>(null) }
+    if (!cacheable) {
         val streaming by rememberMarkdownState(content, retainState = true).state.collectAsState()
+        SideEffect { retained.value = content to streaming }
         return streaming
     }
-    val parsed by produceState<State>(initialValue = State.Loading(), content) {
+    val exact = MarkdownParseCache.get(content)
+    val seed = retained.value
+        ?.takeIf { (text, state) -> state is State.Success && (text == content || content.startsWith(text)) }
+        ?.second
+    val parsed by produceState<State>(initialValue = exact ?: seed ?: State.Loading(), content) {
         val hit = MarkdownParseCache.get(content)
         if (hit != null) {
             value = hit
