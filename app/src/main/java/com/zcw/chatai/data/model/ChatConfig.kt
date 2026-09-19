@@ -41,4 +41,8 @@ data class ChatConfig(
     val sessionId: String? = null,
     /** 是否发送会话头（由供应商预设决定，见 `ProviderPreset.sendSessionHeader`）。 */
     val sendSessionHeader: Boolean = false,
+    /** Anthropic 工具面 v1 基址（已解析；空则搜索客户端按 layout 从 [baseUrl] 推导）。 */
+    val anthropicBaseUrl: String = "",
+    /** Responses 工具面 v1 基址（已解析；空则从 [baseUrl] 推导）。 */
+    val responsesBaseUrl: String = "",
 )

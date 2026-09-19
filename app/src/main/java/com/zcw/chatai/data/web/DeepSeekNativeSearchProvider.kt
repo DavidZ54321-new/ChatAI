@@ -5,6 +5,7 @@ import com.zcw.chatai.data.model.ToolSource
 import com.zcw.chatai.data.net.ApiErrorMapper
 import com.zcw.chatai.data.net.ChatApiException
 import com.zcw.chatai.data.net.EndpointUrl
+import com.zcw.chatai.data.net.OpenAiCompatibleChatApi
 import com.zcw.chatai.data.net.TransientNetwork
 import java.util.concurrent.TimeUnit
 import kotlinx.serialization.Serializable
@@ -62,8 +63,8 @@ object DeepSeekSearchParser {
 }
 
 /**
- * 默认搜索后端：调用 DeepSeek 的 Anthropic 兼容面，用服务端 `web_search` 工具。
- * OpenAI 兼容面不支持该工具类型，只有这条路；客户端只发一次普通 HTTPS 请求。
+ * Anthropic Messages 原生搜索：DeepSeek 与 OpenCode Go 共用。
+ * OpenAI 兼容面不支持该工具类型；URL 布局由 [ChatConfig.providerId] 的 preset 决定。
  */
 class DeepSeekNativeSearchProvider(
     private val client: OkHttpClient = defaultClient(),
@@ -72,11 +73,14 @@ class DeepSeekNativeSearchProvider(
     override val id: String = "deepseek-native"
 
     override fun available(baseUrl: String, apiKey: String): Boolean =
-        apiKey.isNotBlank() && EndpointUrl.anthropicMessages(baseUrl) != null
+        apiKey.isNotBlank() && EndpointUrl.originOf(baseUrl) != null
 
     override suspend fun search(query: String, maxResults: Int, config: ChatConfig): WebSearchResult {
-        val url = EndpointUrl.anthropicMessages(config.baseUrl)
-            ?: throw ChatApiException("请先在设置中填写 Base URL")
+        val url = EndpointUrl.anthropicMessagesFor(
+            providerId = config.providerId,
+            chatBaseUrl = config.baseUrl,
+            override = config.anthropicBaseUrl,
+        ) ?: throw ChatApiException("请先在设置中填写 Base URL")
         val payload = buildJsonObject {
             put("model", config.model)
             put("max_tokens", 2048)
@@ -98,7 +102,7 @@ class DeepSeekNativeSearchProvider(
             putJsonArray("tools") {
                 add(
                     buildJsonObject {
-                        put("type", "web_search_20250305")
+                        put("type", "web_search_20260209")
                         put("name", "web_search")
                         put("max_uses", maxResults.coerceIn(1, 5))
                     },
@@ -115,6 +119,19 @@ class DeepSeekNativeSearchProvider(
             .header("x-api-key", config.apiKey)
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
+            .header("User-Agent", OpenAiCompatibleChatApi.USER_AGENT)
+            .apply {
+                if (config.sendSessionHeader) {
+                    header(
+                        "x-opencode-session",
+                        config.sessionId?.takeIf { it.isNotBlank() }
+                            ?: OpenAiCompatibleChatApi.FALLBACK_SESSION,
+                    )
+                    if (config.apiKey.isNotEmpty()) {
+                        header("Authorization", "Bearer ${config.apiKey}")
+                    }
+                }
+            }
             .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
             .build()
         return try {

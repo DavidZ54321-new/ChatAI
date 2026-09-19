@@ -33,4 +33,9 @@ data class ToolResult(
      * UI 只渲染 [text]，不显示这里的内容。
      */
     val modelNote: String? = null,
+    /**
+     * 实际服务的后端（文本搜索是供应商 id，图搜是 `供应商/模型`）。
+     * 只用于诊断（回答"这次走了哪个后端"），UI 不显示，不进模型上下文。
+     */
+    val backendId: String? = null,
 )

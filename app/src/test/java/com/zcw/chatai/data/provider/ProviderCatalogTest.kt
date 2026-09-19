@@ -24,7 +24,7 @@ class ProviderCatalogTest {
         assertTrue("网关强制会话头", go.sendSessionHeader)
         assertTrue("vision-exp 模型能读图", go.caps.image)
         assertTrue(!go.caps.video)
-        assertTrue(!go.caps.textSearch)
+        assertTrue("Go 文本搜索走 Anthropic /messages", go.caps.textSearch)
         assertTrue(!go.caps.imageSearch)
     }
 
@@ -90,6 +90,11 @@ class ProviderCatalogTest {
         assertTrue(deepseek.textSearch)
         assertFalse(deepseek.imageSearch)
         assertFalse(deepseek.video)
+
+        val go = ProviderCatalog.byId(ProviderCatalog.OPENCODE_GO)!!.caps
+        assertTrue(go.textSearch)
+        assertFalse(go.imageSearch)
+        assertFalse(go.video)
 
         val custom = ProviderCatalog.byId(ProviderCatalog.CUSTOM)!!.caps
         assertFalse(custom.textSearch)

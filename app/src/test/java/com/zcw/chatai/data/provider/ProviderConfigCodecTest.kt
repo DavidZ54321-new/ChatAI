@@ -25,6 +25,20 @@ class ProviderConfigCodecTest {
     }
 
     @Test
+    fun roundTripKeepsToolEndpointOverrides() {
+        val providers = mapOf(
+            ProviderCatalog.DEEPSEEK to ProviderEntry(
+                baseUrl = "https://api.deepseek.com/v1",
+                apiKey = "sk-ds",
+                model = "deepseek-flash",
+                anthropicBaseUrl = "https://proxy.example/anthropic/v1",
+                responsesBaseUrl = "https://proxy.example/v1",
+            ),
+        )
+        assertEquals(providers, ProviderConfigCodec.decode(ProviderConfigCodec.encode(providers)))
+    }
+
+    @Test
     fun unknownFieldsAreIgnored() {
         val decoded = ProviderConfigCodec.decode(
             """{"qwen":{"baseUrl":"u","apiKey":"k","model":"m","future_field":1}}""",

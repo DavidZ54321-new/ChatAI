@@ -126,7 +126,7 @@ class ToolCallCodecTest {
             ),
         )
         assertEquals(
-            """{"status":"OK","detail":"kotlin","sources":[{"url":"https://a","title":"A","snippet":"snippet","publishedAt":"2026-01-01"}],"text":"Search results","kind":"SEARCH","images":[],"modelNote":null}""",
+            """{"status":"OK","detail":"kotlin","sources":[{"url":"https://a","title":"A","snippet":"snippet","publishedAt":"2026-01-01"}],"text":"Search results","kind":"SEARCH","images":[],"modelNote":null,"backendId":null}""",
             encoded,
         )
     }
@@ -147,6 +147,18 @@ class ToolCallCodecTest {
         val decoded = ToolCallCodec.decodeResult("""{"status":"OK","detail":"d","text":"t"}""")
         assertEquals(ToolStatus.OK, decoded?.status)
         assertNull(decoded?.modelNote)
+        assertNull(decoded?.backendId)
+    }
+
+    @Test
+    fun roundTripsBackendId() {
+        val result = ToolResult(
+            status = ToolStatus.OK,
+            detail = "d",
+            text = "t",
+            backendId = "opencode-go",
+        )
+        assertEquals(result, ToolCallCodec.decodeResult(ToolCallCodec.encodeResult(result)))
     }
 
     @Test

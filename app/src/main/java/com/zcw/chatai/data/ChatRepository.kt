@@ -491,14 +491,10 @@ class ChatRepository(
             preferredSearchProviderId = settings.searchProviderId,
         )
         fun backend(id: String?): ToolBackendContexts.ToolBackend? = id?.let { providerId ->
-            settings.providers[providerId]?.let { entry ->
+            settings.providers[providerId]?.let {
                 ToolBackendContexts.ToolBackend(
                     providerId = providerId,
-                    config = settings.toChatConfig(providerId).copy(
-                        baseUrl = entry.baseUrl,
-                        apiKey = entry.apiKey,
-                        model = entry.model,
-                    ),
+                    config = settings.toChatConfig(providerId).copy(sessionId = config.sessionId),
                 )
             }
         }
@@ -888,15 +884,28 @@ class ChatRepository(
                 return ToolResult(ToolStatus.FAILED, query, text = "未配置联网搜索后端", kind = ToolKind.SEARCH)
             }
             // 会话/显式后端优先；空结果或报错自动借道下一个已配置后端。
+            // 全挂时也把试过的名单带上：诊断"走了谁"最有用的恰恰是失败现场。
             val attempts = mutableListOf<String>()
-            val result = ToolFallbackChain.firstUsable(
-                candidates = backends,
-                isEmpty = { r: WebSearchResult -> r.sources.isEmpty() && r.answer.isNullOrBlank() },
-            ) { backend ->
-                attempts += backend.providerId
-                searchProviders[backend.providerId]
-                    ?.search(query, WebTools.DEFAULT_MAX_RESULTS, backend.config)
-                    ?: throw ChatApiException("未配置联网搜索后端")
+            val result = try {
+                ToolFallbackChain.firstUsable(
+                    candidates = backends,
+                    isEmpty = { r: WebSearchResult -> r.sources.isEmpty() && r.answer.isNullOrBlank() },
+                ) { backend ->
+                    attempts += backend.providerId
+                    searchProviders[backend.providerId]
+                        ?.search(query, WebTools.DEFAULT_MAX_RESULTS, backend.config)
+                        ?: throw ChatApiException("未配置联网搜索后端")
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (t: Throwable) {
+                return ToolResult(
+                    ToolStatus.FAILED,
+                    query,
+                    text = t.message ?: "搜索失败",
+                    kind = ToolKind.SEARCH,
+                    backendId = attempts.lastOrNull(),
+                )
             }
             logFallback(call, attempts)
             val empty = result.sources.isEmpty() && result.answer.isNullOrBlank()
@@ -907,6 +916,7 @@ class ChatRepository(
                 text = WebTools.formatSearchResult(query, result),
                 kind = ToolKind.SEARCH,
                 modelNote = if (empty) WebTools.emptySearchNote(query) else null,
+                backendId = attempts.lastOrNull(),
             )
         }
 
@@ -929,14 +939,26 @@ class ChatRepository(
                 ?: return ToolResult(ToolStatus.FAILED, query, text = "未配置图搜后端（需要通义千问）", kind = ToolKind.IMAGE_SEARCH)
             val provider = imageProviders[backend.providerId]
                 ?: return ToolResult(ToolStatus.FAILED, query, text = "未配置图搜后端（需要通义千问）", kind = ToolKind.IMAGE_SEARCH)
-            // 模型链：先 27b，空结果/报错退 max（与对话模型解耦）。
+            // 模型链：先 27b，空结果/报错退 max（与对话模型解耦）；全挂也记名单。
             val attempts = mutableListOf<String>()
-            val outcome = ToolFallbackChain.firstUsable(
-                candidates = backend.models.ifEmpty { listOf(backend.config.model) },
-                isEmpty = { r: ImageSearchOutcome -> r.images.isEmpty() },
-            ) { model ->
-                attempts += model
-                provider.searchByText(query, WebTools.DEFAULT_IMAGE_RESULTS, backend.config.copy(model = model))
+            val outcome = try {
+                ToolFallbackChain.firstUsable(
+                    candidates = backend.models.ifEmpty { listOf(backend.config.model) },
+                    isEmpty = { r: ImageSearchOutcome -> r.images.isEmpty() },
+                ) { model ->
+                    attempts += model
+                    provider.searchByText(query, WebTools.DEFAULT_IMAGE_RESULTS, backend.config.copy(model = model))
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (t: Throwable) {
+                return ToolResult(
+                    ToolStatus.FAILED,
+                    query,
+                    text = t.message ?: "图片搜索失败",
+                    kind = ToolKind.IMAGE_SEARCH,
+                    backendId = "${backend.providerId}/${attempts.lastOrNull()}",
+                )
             }
             logFallback(call, attempts)
             ToolResult(
@@ -946,6 +968,7 @@ class ChatRepository(
                 kind = ToolKind.IMAGE_SEARCH,
                 images = outcome.images,
                 modelNote = if (outcome.images.isEmpty()) WebTools.emptyImageSearchNote(query) else null,
+                backendId = "${backend.providerId}/${attempts.lastOrNull()}",
             )
         }
 
@@ -995,16 +1018,28 @@ class ChatRepository(
                     kind = ToolKind.IMAGE_SIMILAR,
                 )
             val attempts = mutableListOf<String>()
-            val outcome = ToolFallbackChain.firstUsable(
-                candidates = backend.models.ifEmpty { listOf(backend.config.model) },
-                isEmpty = { r: ImageSearchOutcome -> r.images.isEmpty() },
-            ) { model ->
-                attempts += model
-                provider.searchByImage(
-                    dataUrl,
-                    null,
-                    WebTools.DEFAULT_IMAGE_RESULTS,
-                    backend.config.copy(model = model),
+            val outcome = try {
+                ToolFallbackChain.firstUsable(
+                    candidates = backend.models.ifEmpty { listOf(backend.config.model) },
+                    isEmpty = { r: ImageSearchOutcome -> r.images.isEmpty() },
+                ) { model ->
+                    attempts += model
+                    provider.searchByImage(
+                        dataUrl,
+                        null,
+                        WebTools.DEFAULT_IMAGE_RESULTS,
+                        backend.config.copy(model = model),
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (t: Throwable) {
+                return ToolResult(
+                    ToolStatus.FAILED,
+                    "以图搜图",
+                    text = t.message ?: "以图搜图失败",
+                    kind = ToolKind.IMAGE_SIMILAR,
+                    backendId = "${backend.providerId}/${attempts.lastOrNull()}",
                 )
             }
             logFallback(call, attempts)
@@ -1016,6 +1051,7 @@ class ChatRepository(
                 kind = ToolKind.IMAGE_SIMILAR,
                 images = outcome.images,
                 modelNote = if (outcome.images.isEmpty()) WebTools.emptyImageSimilarNote() else null,
+                backendId = "${backend.providerId}/${attempts.lastOrNull()}",
             )
         }
 

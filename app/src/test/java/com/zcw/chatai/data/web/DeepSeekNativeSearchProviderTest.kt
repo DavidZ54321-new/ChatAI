@@ -2,6 +2,8 @@ package com.zcw.chatai.data.web
 
 import com.zcw.chatai.data.model.ChatConfig
 import com.zcw.chatai.data.net.ChatApiException
+import com.zcw.chatai.data.net.OpenAiCompatibleChatApi
+import com.zcw.chatai.data.provider.ProviderCatalog
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancelAndJoin
@@ -53,7 +55,7 @@ class DeepSeekNativeSearchProviderTest {
         assertEquals("test-key", recorded.getHeader("x-api-key"))
         assertEquals("2023-06-01", recorded.getHeader("anthropic-version"))
         val payload = recorded.body.readUtf8()
-        assertTrue(payload, payload.contains("\"web_search_20250305\""))
+        assertTrue(payload, payload.contains("\"web_search_20260209\""))
         assertTrue(payload, payload.contains("\"tool_choice\":{\"type\":\"tool\",\"name\":\"web_search\"}"))
     }
 
@@ -136,6 +138,38 @@ class DeepSeekNativeSearchProviderTest {
         assertTrue(provider.available("https://api.deepseek.com/v1", "k"))
         assertTrue(!provider.available("https://api.deepseek.com/v1", ""))
         assertTrue(!provider.available("", "k"))
+    }
+
+    @Test
+    fun openCodeGoUsesCompatMessagesAndSessionHeader() = runBlocking {
+        server.enqueue(okResponse())
+        DeepSeekNativeSearchProvider().search(
+            "kotlin",
+            5,
+            config().copy(
+                providerId = ProviderCatalog.OPENCODE_GO,
+                sendSessionHeader = true,
+                sessionId = "conv-1",
+            ),
+        )
+        val recorded = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+        assertEquals("/v1/messages", recorded.path)
+        assertEquals("test-key", recorded.getHeader("x-api-key"))
+        assertEquals("conv-1", recorded.getHeader("x-opencode-session"))
+        assertEquals("Bearer test-key", recorded.getHeader("Authorization"))
+        assertEquals(OpenAiCompatibleChatApi.USER_AGENT, recorded.getHeader("User-Agent"))
+        val payload = recorded.body.readUtf8()
+        assertTrue(payload, payload.contains("\"web_search_20260209\""))
+    }
+
+    @Test
+    fun deepSeekDoesNotSendSessionHeader() = runBlocking {
+        server.enqueue(okResponse())
+        DeepSeekNativeSearchProvider().search("kotlin", 5, config())
+        val recorded = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+        assertEquals("/anthropic/v1/messages", recorded.path)
+        assertEquals(null, recorded.getHeader("x-opencode-session"))
+        assertEquals(null, recorded.getHeader("Authorization"))
     }
 
     private fun okResponse() = MockResponse()

@@ -53,9 +53,21 @@ object ProviderConfigCodec {
         )
     }
 
-    private fun ProviderEntry.toDto() = ProviderEntryDto(baseUrl = baseUrl, apiKey = apiKey, model = model)
+    private fun ProviderEntry.toDto() = ProviderEntryDto(
+        baseUrl = baseUrl,
+        apiKey = apiKey,
+        model = model,
+        anthropicBaseUrl = anthropicBaseUrl,
+        responsesBaseUrl = responsesBaseUrl,
+    )
 
-    private fun ProviderEntryDto.toModel() = ProviderEntry(baseUrl = baseUrl, apiKey = apiKey, model = model)
+    private fun ProviderEntryDto.toModel() = ProviderEntry(
+        baseUrl = baseUrl,
+        apiKey = apiKey,
+        model = model,
+        anthropicBaseUrl = anthropicBaseUrl,
+        responsesBaseUrl = responsesBaseUrl,
+    )
 }
 
 @Serializable
@@ -63,4 +75,6 @@ private data class ProviderEntryDto(
     val baseUrl: String = "",
     val apiKey: String = "",
     val model: String = "",
+    val anthropicBaseUrl: String = "",
+    val responsesBaseUrl: String = "",
 )

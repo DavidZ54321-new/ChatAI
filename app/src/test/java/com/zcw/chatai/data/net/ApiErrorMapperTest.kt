@@ -123,4 +123,17 @@ class ApiErrorMapperTest {
         assertTrue(ApiErrorMapper.isVideoRelated("不支持视频输入"))
         assertFalse(ApiErrorMapper.isVideoRelated("invalid api key"))
     }
+
+    /** 回归：Go 网关未挂载的模型报 503 `Endpoint is unavailable`，重试无用，应该提示换模型。 */
+    @Test
+    fun flagsUnavailableEndpointInsteadOfRetry() {
+        val message = ApiErrorMapper.httpError(
+            503,
+            "Upstream request failed: Endpoint is unavailable.",
+        )
+        assertTrue(message, message.contains("换个模型"))
+        assertFalse(message, message.contains("稍后重试"))
+        // 普通 503 仍是稍后重试。
+        assertTrue(ApiErrorMapper.httpError(503, null).contains("稍后重试"))
+    }
 }

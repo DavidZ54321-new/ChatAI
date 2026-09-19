@@ -1,11 +1,15 @@
 package com.zcw.chatai.data.net
 
+import com.zcw.chatai.data.provider.AnthropicBaseLayout
+import com.zcw.chatai.data.provider.ProviderCatalog
+
 object EndpointUrl {
     private const val COMPLETIONS_PATH = "/chat/completions"
     private const val MODELS_PATH = "/models"
     private const val RESPONSES_PATH = "/responses"
     private const val VERSION_PATH = "/v1"
     private const val ANTHROPIC_PATH = "/anthropic"
+    private const val APPS_ANTHROPIC_PATH = "/apps/anthropic"
     private const val MESSAGES_PATH = "/messages"
 
     fun chatCompletions(baseUrl: String): String? {
@@ -48,15 +52,53 @@ object EndpointUrl {
         return completions.removeSuffix(COMPLETIONS_PATH) + MODELS_PATH
     }
 
-    /** DeepSeek 的 Anthropic 兼容面：`{origin}/anthropic/v1/messages`。 */
-    fun anthropicMessages(baseUrl: String): String? {
-        val base = baseUrl.trim().trimEnd('/').removeSuffix(COMPLETIONS_PATH)
-        if (base.isEmpty()) return null
-        var root = base
-        if (root.endsWith(VERSION_PATH, ignoreCase = true)) root = root.dropLast(VERSION_PATH.length)
-        if (root.endsWith(ANTHROPIC_PATH, ignoreCase = true)) root = root.dropLast(ANTHROPIC_PATH.length)
-        root = root.trimEnd('/')
-        if (root.isEmpty()) return null
-        return root + ANTHROPIC_PATH + VERSION_PATH + MESSAGES_PATH
+    /** Chat 兼容面的 `/v1` 根（去掉 `/chat/completions`）。 */
+    fun compatV1Root(baseUrl: String): String? {
+        val completions = chatCompletions(baseUrl) ?: return null
+        return completions.removeSuffix(COMPLETIONS_PATH)
+    }
+
+    /**
+     * Anthropic 工具面的 v1 基址（不含 `/messages`）。
+     * [override] 非空时原样采用（可带或不带 `/messages`）。
+     */
+    fun anthropicBase(
+        chatBaseUrl: String,
+        layout: AnthropicBaseLayout,
+        override: String = "",
+    ): String? {
+        val custom = override.trim().trimEnd('/').removeSuffix(MESSAGES_PATH).trimEnd('/')
+        if (custom.isNotEmpty()) return custom
+        val origin = originOf(chatBaseUrl) ?: return null
+        return when (layout) {
+            AnthropicBaseLayout.ORIGIN_ANTHROPIC -> origin + ANTHROPIC_PATH + VERSION_PATH
+            AnthropicBaseLayout.ORIGIN_APPS_ANTHROPIC -> origin + APPS_ANTHROPIC_PATH + VERSION_PATH
+            AnthropicBaseLayout.SAME_V1 -> compatV1Root(chatBaseUrl)
+        }
+    }
+
+    fun anthropicMessages(
+        chatBaseUrl: String,
+        layout: AnthropicBaseLayout = AnthropicBaseLayout.ORIGIN_ANTHROPIC,
+        override: String = "",
+    ): String? {
+        val base = anthropicBase(chatBaseUrl, layout, override) ?: return null
+        return if (base.endsWith(MESSAGES_PATH)) base else base + MESSAGES_PATH
+    }
+
+    fun anthropicMessagesFor(
+        providerId: String,
+        chatBaseUrl: String,
+        override: String = "",
+    ): String? {
+        val layout = ProviderCatalog.byId(providerId)?.anthropicBaseLayout
+            ?: AnthropicBaseLayout.SAME_V1
+        return anthropicMessages(chatBaseUrl, layout, override)
+    }
+
+    fun responsesBase(chatBaseUrl: String, override: String = ""): String? {
+        val custom = override.trim()
+        if (custom.isNotEmpty()) return compatV1Root(custom) ?: custom.trim().trimEnd('/')
+        return compatV1Root(chatBaseUrl)
     }
 }

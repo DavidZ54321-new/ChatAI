@@ -32,6 +32,9 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -63,6 +66,7 @@ fun SettingsScreen(
     val state by viewModel.state.collectAsState()
     val colors = ChatTheme.colors
     val scheme = MaterialTheme.colorScheme
+    var toolEndpointsExpanded by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -115,13 +119,64 @@ fun SettingsScreen(
 
             SectionTitle("接口")
             Field(
-                label = "Base URL",
+                label = "Base URL（Chat 兼容）",
                 value = state.baseUrl,
                 onValueChange = { value -> viewModel.update { it.copy(baseUrl = value) } },
                 placeholder = ProviderCatalog.byId(state.activeProviderId)?.defaultBaseUrl?.takeIf { it.isNotBlank() }
                     ?: "https://…",
                 keyboardType = KeyboardType.Uri,
             )
+            Text(
+                text = if (toolEndpointsExpanded) "收起工具端点" else "其它协议端点（搜索/图搜，非主对话）",
+                style = MaterialTheme.typography.labelLarge,
+                color = scheme.primary,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { toolEndpointsExpanded = !toolEndpointsExpanded }
+                    .padding(vertical = 4.dp),
+            )
+            if (toolEndpointsExpanded) {
+                Field(
+                    label = "Anthropic Base URL",
+                    value = state.displayedAnthropicBase,
+                    onValueChange = { value ->
+                        viewModel.update {
+                            it.copy(
+                                anthropicBaseUrl = SettingsViewModel.storedOverride(
+                                    value,
+                                    SettingsViewModel.derivedAnthropicBase(it.activeProviderId, it.baseUrl),
+                                ),
+                            )
+                        }
+                    },
+                    placeholder = SettingsViewModel.derivedAnthropicBase(state.activeProviderId, state.baseUrl)
+                        .ifBlank { "https://…/v1" },
+                    keyboardType = KeyboardType.Uri,
+                )
+                Field(
+                    label = "Responses Base URL",
+                    value = state.displayedResponsesBase,
+                    onValueChange = { value ->
+                        viewModel.update {
+                            it.copy(
+                                responsesBaseUrl = SettingsViewModel.storedOverride(
+                                    value,
+                                    SettingsViewModel.derivedResponsesBase(it.baseUrl),
+                                ),
+                            )
+                        }
+                    },
+                    placeholder = SettingsViewModel.derivedResponsesBase(state.baseUrl)
+                        .ifBlank { "https://…/v1" },
+                    keyboardType = KeyboardType.Uri,
+                )
+                Text(
+                    text = "留空或改回推导值即跟随 Chat Base URL。DeepSeek 搜索走 Anthropic，" +
+                        "通义千问搜索/图搜走 Responses，OpenCode Go 搜索走同一 v1 根的 /messages。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = scheme.onSurfaceVariant,
+                )
+            }
             Field(
                 label = "API Key",
                 value = state.apiKey,
@@ -338,10 +393,10 @@ private fun ProviderNote(providerId: String) {
             "通义千问：联网搜索/文搜图/图搜图走 Responses API（搜索 4 元/千次、文搜图 24 元/千次、" +
                 "图搜图 48 元/千次）；视频 ≤5MB 内联发送，更大的自动走免费临时上传（48 小时有效）。"
         ProviderCatalog.DEEPSEEK ->
-            "DeepSeek：联网搜索走 Anthropic 兼容面，暂不支持视频。"
+            "DeepSeek：联网搜索走 Anthropic 兼容面（web_search_20260209），暂不支持视频。抓取由本机完成。"
         ProviderCatalog.OPENCODE_GO ->
-            "OpenCode Go：聚合网关（订阅制）。DeepSeek/GLM/Kimi/Qwen 等走 OpenAI 兼容面可用；" +
-                "Grok/GPT/Muse 仅支持 Responses 面，本应用暂不可用；不支持视频。"
+            "OpenCode Go：主对话走 Chat 兼容面；联网搜索借道同一 v1 根的 Anthropic /messages。" +
+                "Grok/GPT/Muse 仅支持 Responses 面，本应用主对话暂不可用；不支持视频。抓取由本机完成。"
         else ->
             "自定义端点：使用标准 OpenAI 兼容接口；连接与密钥只存在本机。"
     }

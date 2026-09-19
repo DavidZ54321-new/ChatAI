@@ -62,6 +62,7 @@ object ToolCallCodec {
         kind = kind.name,
         images = images.map { ImageDto(it.index, it.title, it.url) },
         modelNote = modelNote,
+        backendId = backendId,
     )
 
     private fun ToolResultDto.toModel() = ToolResult(
@@ -75,6 +76,7 @@ object ToolCallCodec {
         images = images.filter { it.url.isNotBlank() }
             .map { SearchedImage(index = it.index, title = it.title, url = it.url) },
         modelNote = modelNote?.takeIf { it.isNotBlank() },
+        backendId = backendId?.takeIf { it.isNotBlank() },
     )
 }
 
@@ -91,6 +93,8 @@ private data class ToolResultDto(
     val images: List<ImageDto> = emptyList(),
     /** 只给模型的附注（工具预算/空结果提示）；旧数据没有该字段。 */
     val modelNote: String? = null,
+    /** 实际服务的后端；旧数据没有该字段。 */
+    val backendId: String? = null,
 )
 
 @Serializable

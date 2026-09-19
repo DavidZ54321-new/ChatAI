@@ -12,6 +12,8 @@ import com.zcw.chatai.data.prefs.ReasoningEffort
 import com.zcw.chatai.data.prefs.SettingsRepository
 import com.zcw.chatai.data.prefs.ThemeMode
 import com.zcw.chatai.data.prefs.toChatConfig
+import com.zcw.chatai.data.net.EndpointUrl
+import com.zcw.chatai.data.provider.AnthropicBaseLayout
 import com.zcw.chatai.data.provider.ProviderCatalog
 import com.zcw.chatai.data.provider.ProviderEntry
 import com.zcw.chatai.data.provider.ToolModels
@@ -36,6 +38,9 @@ class SettingsViewModel(
         val baseUrl: String = "",
         val apiKey: String = "",
         val model: String = "",
+        /** 空 = 用该供应商规则从 Chat Base 推导。 */
+        val anthropicBaseUrl: String = "",
+        val responsesBaseUrl: String = "",
         val systemPrompt: String = "",
         val temperature: String = "",
         val reasoningEffort: ReasoningEffort = ReasoningEffort.FOLLOW_DEFAULT,
@@ -82,6 +87,23 @@ class SettingsViewModel(
             get() = baseUrl.isNotBlank() && model.isNotBlank() &&
                 extraParamsError == null && temperatureError == null && maxTokensError == null &&
                 imageSearchModelsError == null
+
+        val displayedAnthropicBase: String
+            get() = anthropicBaseUrl.ifBlank { derivedAnthropicBase(activeProviderId, baseUrl) }
+
+        val displayedResponsesBase: String
+            get() = responsesBaseUrl.ifBlank { derivedResponsesBase(baseUrl) }
+
+        fun toEntry(): ProviderEntry {
+            val chat = baseUrl.trim()
+            return ProviderEntry(
+                baseUrl = chat,
+                apiKey = apiKey.trim(),
+                model = model.trim(),
+                anthropicBaseUrl = storedOverride(anthropicBaseUrl, derivedAnthropicBase(activeProviderId, chat)),
+                responsesBaseUrl = storedOverride(responsesBaseUrl, derivedResponsesBase(chat)),
+            )
+        }
     }
 
     private val form = MutableStateFlow(FormState())
@@ -99,6 +121,8 @@ class SettingsViewModel(
                 baseUrl = entry.baseUrl,
                 apiKey = entry.apiKey,
                 model = entry.model,
+                anthropicBaseUrl = entry.anthropicBaseUrl,
+                responsesBaseUrl = entry.responsesBaseUrl,
                 systemPrompt = settings.systemPrompt,
                 temperature = settings.temperature?.toString().orEmpty(),
                 reasoningEffort = settings.reasoningEffort,
@@ -126,11 +150,7 @@ class SettingsViewModel(
         val current = form.value
         if (id == current.activeProviderId) return
         val stash = current.providers + (
-            current.activeProviderId to ProviderEntry(
-                baseUrl = current.baseUrl.trim(),
-                apiKey = current.apiKey.trim(),
-                model = current.model.trim(),
-            )
+            current.activeProviderId to current.toEntry()
             )
         val preset = ProviderCatalog.byId(id)
         val target = stash[id] ?: ProviderEntry(
@@ -144,6 +164,8 @@ class SettingsViewModel(
             baseUrl = target.baseUrl,
             apiKey = target.apiKey,
             model = target.model,
+            anthropicBaseUrl = target.anthropicBaseUrl,
+            responsesBaseUrl = target.responsesBaseUrl,
             models = emptyList(),
             status = null,
             error = null,
@@ -158,11 +180,7 @@ class SettingsViewModel(
     fun save() {
         val current = form.value
         if (!current.canSave) return
-        val entry = ProviderEntry(
-            baseUrl = current.baseUrl.trim(),
-            apiKey = current.apiKey.trim(),
-            model = current.model.trim(),
-        )
+        val entry = current.toEntry()
         // 整表落盘：把当前编辑值写回表里，其它供应商保留（含切走时暂存的未保存修改）。
         val providers = current.providers + (current.activeProviderId to entry)
         viewModelScope.launch {
@@ -223,6 +241,20 @@ class SettingsViewModel(
         }
 
         /** 附加参数必须是 JSON 对象；空串合法（表示不附加）。 */
+        fun derivedAnthropicBase(providerId: String, chatBaseUrl: String): String =
+            EndpointUrl.anthropicBase(
+                chatBaseUrl,
+                ProviderCatalog.byId(providerId)?.anthropicBaseLayout ?: AnthropicBaseLayout.SAME_V1,
+            ).orEmpty()
+
+        fun derivedResponsesBase(chatBaseUrl: String): String =
+            EndpointUrl.responsesBase(chatBaseUrl).orEmpty()
+
+        fun storedOverride(displayed: String, derived: String): String {
+            val trimmed = displayed.trim()
+            return if (trimmed.isEmpty() || trimmed == derived) "" else trimmed
+        }
+
         fun validateExtraParams(text: String): String? {
             val trimmed = text.trim()
             if (trimmed.isEmpty()) return null

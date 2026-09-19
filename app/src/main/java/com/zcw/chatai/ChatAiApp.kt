@@ -10,12 +10,14 @@ import com.zcw.chatai.data.media.AttachmentStore
 import com.zcw.chatai.data.media.VideoUploadCoordinator
 import com.zcw.chatai.data.net.ChatApi
 import com.zcw.chatai.data.net.DashScopeUpload
+import com.zcw.chatai.data.net.FailoverChatApi
 import com.zcw.chatai.data.net.OpenAiCompatibleChatApi
 import com.zcw.chatai.data.prefs.SettingsRepository
 import com.zcw.chatai.data.provider.ProviderCatalog
 import com.zcw.chatai.data.web.DeepSeekNativeSearchProvider
 import com.zcw.chatai.data.web.HttpWebFetcher
 import com.zcw.chatai.data.web.ImageSearchProvider
+import com.zcw.chatai.data.web.OpenCodeGoSearchRouter
 import com.zcw.chatai.data.web.QwenImageSearchProvider
 import com.zcw.chatai.data.web.QwenWebSearchProvider
 import com.zcw.chatai.data.web.WebFetcher
@@ -36,14 +38,17 @@ class ChatAiApp : Application() {
 
     val settingsRepository: SettingsRepository by lazy { SettingsRepository(this) }
 
-    val chatApi: ChatApi by lazy { OpenAiCompatibleChatApi() }
+    /** 主对话：chat 面挂掉的模型（如 Go 的 Luna/Grok/Muse）自动换 Responses 面，无感。 */
+    val chatApi: ChatApi by lazy { FailoverChatApi(OpenAiCompatibleChatApi()) }
 
     val attachmentStore: AttachmentStore by lazy { AttachmentStore(this) }
 
-    /** 按供应商选搜索后端：DeepSeek 走 Anthropic 兼容面，Qwen 走 Responses 原生工具。 */
+    /** 按供应商选搜索后端：DeepSeek 走 Anthropic 面，Qwen 走 Responses，Go 按模型路由两面。 */
     val webSearchProviders: Map<String, WebSearchProvider> by lazy {
+        val anthropicSearch = DeepSeekNativeSearchProvider()
         mapOf(
-            ProviderCatalog.DEEPSEEK to DeepSeekNativeSearchProvider(),
+            ProviderCatalog.DEEPSEEK to anthropicSearch,
+            ProviderCatalog.OPENCODE_GO to OpenCodeGoSearchRouter(messages = anthropicSearch),
             ProviderCatalog.QWEN to QwenWebSearchProvider(),
         )
     }

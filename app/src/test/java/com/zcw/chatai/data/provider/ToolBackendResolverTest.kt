@@ -8,6 +8,7 @@ class ToolBackendResolverTest {
 
     private val ds = ProviderEntry("https://api.deepseek.com/v1", "k-ds", "deepseek-flash")
     private val qw = ProviderEntry("https://dashscope.aliyuncs.com/compatible-mode/v1", "k-qw", "qwen3.8-flash")
+    private val go = ProviderEntry("https://opencode.ai/zen/go/v1", "k-go", "deepseek-v4.1-flash")
 
     @Test
     fun explicitSearchChoiceWins() {
@@ -170,5 +171,31 @@ class ToolBackendResolverTest {
         )
         assertEquals(ProviderCatalog.DEEPSEEK, backends.textProviderIds.first())
         assertNull(backends.imageProviderId)
+    }
+
+    @Test
+    fun openCodeGoIsATextSearchBackend() {
+        val onlyGo = ToolBackendResolver.resolve(
+            providers = mapOf(ProviderCatalog.OPENCODE_GO to go),
+            activeProviderId = ProviderCatalog.OPENCODE_GO,
+            conversationProviderId = ProviderCatalog.OPENCODE_GO,
+            preferredSearchProviderId = null,
+        )
+        assertEquals(listOf(ProviderCatalog.OPENCODE_GO), onlyGo.textProviderIds)
+
+        val all = ToolBackendResolver.resolve(
+            providers = mapOf(
+                ProviderCatalog.DEEPSEEK to ds,
+                ProviderCatalog.QWEN to qw,
+                ProviderCatalog.OPENCODE_GO to go,
+            ),
+            activeProviderId = ProviderCatalog.OPENCODE_GO,
+            conversationProviderId = ProviderCatalog.OPENCODE_GO,
+            preferredSearchProviderId = null,
+        )
+        assertEquals(
+            listOf(ProviderCatalog.OPENCODE_GO, ProviderCatalog.DEEPSEEK, ProviderCatalog.QWEN),
+            all.textProviderIds,
+        )
     }
 }

@@ -16,27 +16,40 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
- * Qwen（DashScope）Responses API 的最小客户端：POST 一个 JSON、拿回完整 JSON 文本。
+ * Responses API 的最小客户端：POST 一个 JSON、拿回完整 JSON 文本。
  *
- * 只服务**侧信道工具调用**（联网搜索/文搜图/图搜图），主对话回路仍是 Chat Completions。
- * 工具调用天然慢（实测 web_search 一轮 ~86s），超时给得宽；响应体走 [awaitBody] 循环读到 EOF，
- * 不发生「长 JSON 从中间截断」的静默失败。
+ * 主力是 Qwen（DashScope），同时服务 OpenCode Go 网关 Luna/Grok/Muse 的
+ * `/responses` 搜索面——只差在请求头，见 [execute] 的 `sendSessionHeader` 分支。
+ * 只服务**侧信道工具调用**（联网搜索/文搜图/图搜图），主对话回路仍是 Chat Completions.
+ * 工具调用天然慢（实测 Qwen web_search 一轮 ~86s、Go Grok ~25s），超时给得宽；
+ * 响应体走 [awaitBody] 循环读到 EOF，不发生「长 JSON 从中间截断」的静默失败。
  */
 class QwenResponsesClient(
     private val client: OkHttpClient = defaultClient(),
 ) {
 
     suspend fun execute(config: ChatConfig, payload: JsonObject): String {
-        val url = EndpointUrl.responses(config.baseUrl)
+        val url = EndpointUrl.responses(config.responsesBaseUrl.ifBlank { config.baseUrl })
             ?: throw ChatApiException("请先在设置中填写 Base URL")
         val httpUrl = url.toHttpUrlOrNull()
             ?: throw ChatApiException("Base URL 无效：$url")
         val request = Request.Builder()
             .url(httpUrl)
             .header("Accept", "application/json")
+            .header("User-Agent", OpenAiCompatibleChatApi.USER_AGENT)
             .apply {
                 if (config.apiKey.isNotEmpty()) {
                     header("Authorization", "Bearer ${config.apiKey}")
+                }
+                // Go 之类网关要求稳定会话头 + x-api-key（实测缺了对话面直接 400）；
+                // Qwen 的 sendSessionHeader 为 false，走不到这里，行为不变。
+                if (config.sendSessionHeader) {
+                    header("x-api-key", config.apiKey)
+                    header(
+                        "x-opencode-session",
+                        config.sessionId?.takeIf { it.isNotBlank() }
+                            ?: OpenAiCompatibleChatApi.FALLBACK_SESSION,
+                    )
                 }
             }
             .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))

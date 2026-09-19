@@ -35,6 +35,11 @@ object ApiErrorMapper {
             status == 413 -> "请求体过大，请减少图片/视频数量或降低图片精度"
             status == 422 -> "服务端不接受该参数：${detail ?: "参数错误（422）"}"
             status == 429 -> "请求过于频繁或已达速率上限，请稍后重试"
+            // 网关把「该模型没挂到这个协议面」也报成 503（实测 OpenCode Go 的
+            // grok-4.6 / gpt-5.6-luna / muse-spark 走 chat/completions 全是
+            // `Endpoint is unavailable`）——这不是稍后重试能解决的，得换模型。
+            status in listOf(502, 503, 504) && detail != null && isEndpointUnavailable(detail) ->
+                "该模型在当前接口上不可用，换个模型试试：$detail"
             status == 500 -> "服务端出错了（500），请稍后重试"
             status == 502 || status == 503 || status == 504 -> "服务暂时不可用，请稍后重试"
             status >= 500 -> "服务端异常（$status），请稍后重试"
@@ -61,6 +66,10 @@ object ApiErrorMapper {
             "unsupported model" in lower ||
             "does not support" in lower
     }
+
+    /** 模型没挂到当前协议面（`Endpoint is unavailable`）：换模型，重试无用。 */
+    fun isEndpointUnavailable(detail: String): Boolean =
+        "endpoint is unavailable" in detail.lowercase()
 
     /** 工具应答缺失/错序导致的 400（`insufficient tool messages following tool_calls message`）。 */
     fun isToolPairingRelated(detail: String): Boolean {

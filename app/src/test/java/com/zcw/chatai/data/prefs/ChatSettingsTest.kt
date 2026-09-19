@@ -78,6 +78,8 @@ class ChatSettingsTest {
         )
         assertTrue(go.toChatConfig().sendSessionHeader)
         assertFalse(settings.toChatConfig(ProviderCatalog.QWEN).sendSessionHeader)
+        assertEquals("https://opencode.ai/zen/go/v1", go.toChatConfig().anthropicBaseUrl)
+        assertEquals("https://ds.example/anthropic/v1", settings.toChatConfig(ProviderCatalog.DEEPSEEK).anthropicBaseUrl)
     }
 
     @Test

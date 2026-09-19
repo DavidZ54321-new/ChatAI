@@ -1,5 +1,7 @@
 package com.zcw.chatai.data.net
 
+import com.zcw.chatai.data.provider.AnthropicBaseLayout
+import com.zcw.chatai.data.provider.ProviderCatalog
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -85,6 +87,71 @@ class EndpointUrlTest {
         )
         assertNull(EndpointUrl.anthropicMessages(""))
         assertNull(EndpointUrl.anthropicMessages("   "))
+    }
+
+    @Test
+    fun anthropicLayoutSameV1KeepsCompatRoot() {
+        assertEquals(
+            "https://opencode.ai/zen/go/v1/messages",
+            EndpointUrl.anthropicMessages(
+                "https://opencode.ai/zen/go/v1",
+                AnthropicBaseLayout.SAME_V1,
+            ),
+        )
+        assertEquals(
+            "https://opencode.ai/zen/go/v1",
+            EndpointUrl.anthropicBase("https://opencode.ai/zen/go/v1", AnthropicBaseLayout.SAME_V1),
+        )
+    }
+
+    @Test
+    fun anthropicLayoutAppsAnthropicUsesOrigin() {
+        assertEquals(
+            "https://dashscope.aliyuncs.com/apps/anthropic/v1",
+            EndpointUrl.anthropicBase(
+                "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                AnthropicBaseLayout.ORIGIN_APPS_ANTHROPIC,
+            ),
+        )
+        assertEquals(
+            "https://dashscope.aliyuncs.com/apps/anthropic/v1/messages",
+            EndpointUrl.anthropicMessagesFor(
+                ProviderCatalog.QWEN,
+                "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            ),
+        )
+    }
+
+    @Test
+    fun anthropicOverrideWinsOverLayout() {
+        assertEquals(
+            "https://proxy.example/v1/messages",
+            EndpointUrl.anthropicMessages(
+                "https://api.deepseek.com/v1",
+                AnthropicBaseLayout.ORIGIN_ANTHROPIC,
+                override = "https://proxy.example/v1",
+            ),
+        )
+        assertEquals(
+            "https://proxy.example/v1/messages",
+            EndpointUrl.anthropicMessages(
+                "https://api.deepseek.com/v1",
+                AnthropicBaseLayout.ORIGIN_ANTHROPIC,
+                override = "https://proxy.example/v1/messages",
+            ),
+        )
+    }
+
+    @Test
+    fun catalogLayoutsMatchPresets() {
+        assertEquals(
+            "https://api.deepseek.com/anthropic/v1/messages",
+            EndpointUrl.anthropicMessagesFor(ProviderCatalog.DEEPSEEK, "https://api.deepseek.com/v1"),
+        )
+        assertEquals(
+            "https://opencode.ai/zen/go/v1/messages",
+            EndpointUrl.anthropicMessagesFor(ProviderCatalog.OPENCODE_GO, "https://opencode.ai/zen/go/v1"),
+        )
     }
 
     @Test

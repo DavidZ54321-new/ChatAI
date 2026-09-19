@@ -8,6 +8,19 @@ data class ProviderCaps(
     val imageSearch: Boolean = false,
 )
 
+/**
+ * 从 Chat 兼容 Base URL 推导 Anthropic 工具面的规则。
+ * 主对话仍走 Chat Completions；这两面只给搜索等侧信道工具。
+ */
+enum class AnthropicBaseLayout {
+    /** DeepSeek：`{origin}/anthropic/v1`。 */
+    ORIGIN_ANTHROPIC,
+    /** 通义千问：`{origin}/apps/anthropic/v1`（不是 compatible-mode）。 */
+    ORIGIN_APPS_ANTHROPIC,
+    /** OpenCode Go / 自定义：与 Chat 同一个 `/v1` 根。 */
+    SAME_V1,
+}
+
 data class ProviderPreset(
     val id: String,
     val displayName: String,
@@ -21,6 +34,7 @@ data class ProviderPreset(
      * 图搜（文搜图/图搜图）用它，与对话模型解耦——见 `ToolModels`。
      */
     val toolModels: List<String> = emptyList(),
+    val anthropicBaseLayout: AnthropicBaseLayout = AnthropicBaseLayout.SAME_V1,
 )
 
 /** 一套供应商连接配置（DataStore `providers_json` 的持久化单元）。 */
@@ -28,6 +42,10 @@ data class ProviderEntry(
     val baseUrl: String,
     val apiKey: String,
     val model: String,
+    /** Anthropic 工具面 Base；空 = 按 [ProviderPreset.anthropicBaseLayout] 从 [baseUrl] 推导。 */
+    val anthropicBaseUrl: String = "",
+    /** Responses 工具面 Base；空 = 与 Chat 同一个 `/v1` 根。 */
+    val responsesBaseUrl: String = "",
 )
 
 /**
@@ -48,6 +66,7 @@ object ProviderCatalog {
             defaultBaseUrl = "https://api.deepseek.com/v1",
             defaultModel = "deepseek-flash",
             caps = ProviderCaps(textSearch = true),
+            anthropicBaseLayout = AnthropicBaseLayout.ORIGIN_ANTHROPIC,
         ),
         ProviderPreset(
             id = QWEN,
@@ -57,15 +76,17 @@ object ProviderCatalog {
             caps = ProviderCaps(video = true, textSearch = true, imageSearch = true),
             // 图搜借道 Qwen 时优先 27b，空结果/报错再退 max（实测 flash 对部分图返回空）。
             toolModels = listOf("qwen3.8-27b", "qwen3.8-max"),
+            anthropicBaseLayout = AnthropicBaseLayout.ORIGIN_APPS_ANTHROPIC,
         ),
         ProviderPreset(
             id = OPENCODE_GO,
             displayName = "OpenCode Go",
             defaultBaseUrl = "https://opencode.ai/zen/go/v1",
             defaultModel = "deepseek-v4.1-flash",
-            // 聚合网关：不带原生搜索/图搜工具；vision-exp 模型支持图片，不支持视频。
-            caps = ProviderCaps(image = true),
+            // 文本搜索走同一 v1 根的 Anthropic `/messages`（与 DeepSeek 同协议）；不支持视频。
+            caps = ProviderCaps(image = true, textSearch = true),
             sendSessionHeader = true,
+            anthropicBaseLayout = AnthropicBaseLayout.SAME_V1,
         ),
         ProviderPreset(
             id = CUSTOM,

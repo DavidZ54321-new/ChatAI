@@ -55,14 +55,18 @@ ui/theme                 →  设计系统（Color / ChatColors / Type / Theme /
   `conversations.provider_id` 绑定会话（**空串 = 跟随激活供应商**；v4→v5 迁移的旧会话先统一回填空串，
   `resolveConfig`/`ChatUiState` 再解析成激活供应商——不能写死 deepseek，旧配置可能是 Qwen/自建端点）；
   连接参数按会话的供应商取（`ChatSettings.toChatConfig(providerId)`），生成参数全局。
-  设置页保存**整张 providers 表**（切走供应商时暂存的编辑也一并落盘）。加新供应商=加一条 preset +
-  配后端实现，不在 UI/请求层写 if-vendor。
+  设置页保存**整张 providers 表**（切走供应商时暂存的编辑也一并落盘）。每个供应商除 Chat Base URL 外
+  还有 Anthropic / Responses 两个**工具面**基址（空 = 按 `AnthropicBaseLayout` 从 Chat Base 推导；
+  新安装预设必须是对的：DeepSeek `{origin}/anthropic/v1`，Qwen `{origin}/apps/anthropic/v1`，
+  OpenCode Go 同 Chat v1）。加新供应商=加一条 preset + 配后端实现，不在 UI/请求层写 if-vendor。
 - **工具注入先算名单**：`ChatConfig.enabledTools` 由 `ChatRepository.resolveEnabledTools` 决定
   （🌐 开关 × 工具后端可用性），网络层只按名单组装 schema；四个客户端工具统一挂 🌐。
 - **工具后端与主对话供应商解耦（借道）**：`ToolBackendResolver` 解析出搜索/图搜各自的供应商
   （**要求 apiKey 非空**，空条目不能遮蔽后面配好的后端；图搜固定取 Qwen）。文本搜索是**有序候选**
   （显式 `search_provider` → 会话供应商 → preset 顺序补其余），运行时按序尝试，
-  **空结果或报错才借道下一个**（`ToolFallbackChain.firstUsable`）；图搜的**模型链**与对话模型解耦：
+  **空结果或报错才借道下一个**（`ToolFallbackChain.firstUsable`）。文本搜索实现只有两种协议：
+  Anthropic Messages（DeepSeek 与 OpenCode Go 共用 `DeepSeekNativeSearchProvider`）和 Qwen Responses。
+  图搜的**模型链**与对话模型解耦：
   默认 `qwen3.8-27b` → `qwen3.8-max`（`ProviderPreset.toolModels`，设置页「图搜模型」可覆盖），
   同样空/错才退下一个（实测 flash 对部分图返回空）。工具子调用用**后端自己的 `ChatConfig`**
   （model = 后端模型），所以 DeepSeek/GLM/任意会话都能借道 Qwen 的图搜与搜索。
@@ -89,7 +93,7 @@ ui/theme                 →  设计系统（Color / ChatColors / Type / Theme /
 .\gradlew.bat lint                 # AGP default; no formatter or typecheck task is configured
 ```
 
-单测全是 JVM 测试（452 个）：网络层用 MockWebServer，其余是纯函数（错误映射、压缩尺寸、
+单测全是 JVM 测试（507 个）：网络层用 MockWebServer，其余是纯函数（错误映射、压缩尺寸、
 能力表、供应商目录/配置迁移/工具后端解析、工具模型优先级、工具回退链、LaTeX 分段、
 Markdown 行内公式、图行分段、思考摘要/耗时格式化、视觉度量、Room 映射往返、工具调用累加/编解码、
 Agent 决策、工具预算、DSML 清洗、可见图片清单（编号/轮次标注）、上下文组装/工具应答配对/
@@ -140,8 +144,10 @@ in the build script — keep it that way.
 - `GET /models` 是标准 OpenAI 端点（实测返回两个模型），设置页的「拉取模型列表/测试连接」用它。
 
 **联网搜索只在 Anthropic 兼容面**（`https://api.deepseek.com/anthropic/v1/messages`）：用服务端工具
-`{"type":"web_search_20250305","name":"web_search","max_uses":N}`，回 `server_tool_use` +
-`web_search_tool_result` 内容块。OpenAI 兼容面**拒绝** `web_search` 工具类型（`unknown variant`），
+`{"type":"web_search_20260209","name":"web_search","max_uses":N}`，回 `server_tool_use` +
+`web_search_tool_result` 内容块。官方还认旧的 `web_search_20250305`，App 用 20260209。
+OpenAI 兼容面**拒绝** `web_search` 工具类型（`unknown variant`），
+Anthropic 面**不支持** `web_fetch_20250910`（422，只认上述两个 search variant）；`web_fetch` 仍是本机 `HttpWebFetcher`。
 主对话回路仍走 OpenAI 面 + 标准 function calling（`tools`/`tool_calls`），搜索只是被调用的一个函数。
 Anthropic 面有已知 bug：会把 `<｜｜DSML｜｜tool_calls>…`（`｜` = U+FF5C 全角竖线）漏进正文，务必
 `tool_choice` 强制只调搜索 + 客户端兜底剥离（`DsmlStrip.strip`，纯字符串、无 Regex；
@@ -205,16 +211,30 @@ Chat Completions **共用一个基址**。
 ## OpenCode Go（第三方聚合网关）的事实（2026-09 真 key 实测，勿凭记忆改）
 
 - 基址 `https://opencode.ai/zen/go/v1`（`GET /models` 实测 37 个模型，标准 OpenAI 形状）；
-  同一域名下有三种协议面：`/chat/completions`、`/v1/messages`、`/v1/responses`。
-- **`x-opencode-session` 是强制头**：缺了直接 `400 MissingSessionID`（文档说"应当"是委婉说法）。
+  同一 `/v1` 根下有三种协议面：`/chat/completions`（主对话）、`/messages`（Anthropic 工具）、`/responses`。
+- **文本搜索走 Anthropic `/v1/messages`**，与 DeepSeek 同协议（`web_search_20260209`），
+  **不是** chat/completions，也不是 Console Hosted Websearch（$0.01）。要 `x-api-key`
+  （只带 Bearer 会 401 Missing API key）+ `x-opencode-session`。`glm-5.3-flash` 打 `/messages` 会 503，
+  回退链借道下一个有 key 的后端。`web_fetch_20250910` 实测 422，抓取仍走本机。
+- **`x-opencode-session` 是强制头**：缺了对话面直接 `400 MissingSessionID`（文档说"应当"是委婉说法）。
   客户端还应自报 UA（`ChatAI/1.0`）。预设 `opencode-go` 用 `sendSessionHeader` 开关这一行为；
   无会话上下文的请求（模型列表/测试连接）用兜底值 `chatai`。
 - **chat/completions 实测可用**：`deepseek-v4.1-flash`、`deepseek-v4-flash`、`glm-5.3-flash`、`hy3`、
   **`qwen3.8-flash`**（文档只把它列在 `/v1/messages`，但兼容面实际也能用）。流式/`usage`/
   `reasoning_content`/`tool_calls` 增量全部标准；function calling 实测可用（借道工具靠它）。
-- **只在 Responses 面**：`grok-4.6`（401 `Model … is not supported for format oa-compat`）、
-  `gpt-5.6-luna`（500）→ 本应用暂不可用；`ApiErrorMapper` 已把这类 401 映射成「不支持当前接口格式」
-  而不是误报 API Key 无效。
+- **Luna/Grok/Muse 的 chat 面已下线（2026-09-20 复测）**：`grok-4.6` / `gpt-5.6-luna` /
+  `muse-spark-1.3` 打 `/chat/completions` 全是 **503 `Endpoint is unavailable`**（之前是 grok 401/luna 500，
+  现在统一成 503）。`ApiErrorMapper` 遇到该字串报「换个模型」而不是「稍后重试」。
+  但三者的 **`/responses` 面是活的**：流式具名事件 + function tools 实测可用（grok），
+  所以主对话有兜底——`FailoverChatApi`（`data/net`）按 `GoDialogueFace` 的模型表
+  把这三个模型的首选面排成 Responses：零内容时 chat 报错才换面（一旦流出任何增量就不再换，
+  防重复计费）；deepseek 系等 chat 面模型**不换面**（它们的 Responses 面会空转，换了更糟）。
+  Responses 面实现（`ResponsesChatApi`）：`reasoning`/`max_tokens`/`extraParams` 一律不发
+  （`reasoning:{effort:none}` 实测 400）；`function_call` 的配对键是 `call_id`（不是条目 id）；
+  有视频的回合直接拒绝进兜底（该面无视频语义）。
+- 搜索后端同路由器的另一张表：`OpenCodeGoSearchRouter`（`data/web`）+ `GoSearchFace`
+  按模型选 `/messages` 还是 `/responses`；和对话面的 `GoDialogueFace` 是同一模型表、不同语义，
+  故意各写一份。**谁服务的落库可查**：`ToolResult.backendId`（文本=供应商 id，图搜=`供应商/模型`）。
 - 视觉：`deepseek-v4-flash-vision-exp` 接受 `image_url` data URL（实测描述准确，91 token）；
   `video_url` 回 422（不支持视频）。
 - `glm-5.3-flash` 思考默认开且会吃 `max_tokens`（给 200 直接 `finish=length`）；默认别发 max_tokens。

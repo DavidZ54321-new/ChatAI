@@ -9,6 +9,8 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.zcw.chatai.data.model.ChatConfig
+import com.zcw.chatai.data.net.EndpointUrl
+import com.zcw.chatai.data.provider.AnthropicBaseLayout
 import com.zcw.chatai.data.provider.ProviderCatalog
 import com.zcw.chatai.data.provider.ProviderConfigCodec
 import com.zcw.chatai.data.provider.ProviderEntry
@@ -119,6 +121,13 @@ fun ChatSettings.toChatConfig(providerId: String = activeProviderId): ChatConfig
         providerId = providerId,
         sendSessionHeader = ProviderCatalog.byId(providerId)?.sendSessionHeader == true,
         webSearchEnabled = false,
+        anthropicBaseUrl = EndpointUrl.anthropicBase(
+            entry.baseUrl,
+            ProviderCatalog.byId(providerId)?.anthropicBaseLayout
+                ?: AnthropicBaseLayout.SAME_V1,
+            entry.anthropicBaseUrl,
+        ).orEmpty(),
+        responsesBaseUrl = EndpointUrl.responsesBase(entry.baseUrl, entry.responsesBaseUrl).orEmpty(),
     )
 }
 
