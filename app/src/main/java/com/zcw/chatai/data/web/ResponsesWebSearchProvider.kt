@@ -3,6 +3,7 @@ package com.zcw.chatai.data.web
 import com.zcw.chatai.data.model.ChatConfig
 import com.zcw.chatai.data.net.EndpointUrl
 import com.zcw.chatai.data.net.QwenResponsesClient
+import com.zcw.chatai.data.web.qwen.QwenResponsesParser
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
@@ -16,7 +17,7 @@ import kotlinx.serialization.json.putJsonArray
  * - 网关头（`x-api-key` / `x-opencode-session` / UA）由 [QwenResponsesClient]
  *   按 [ChatConfig.sendSessionHeader] 统一补，不在这里拼。
  *
- * 解析复用 [QwenResponsesParser.parseTextSearch]（`web_search_call.action.sources`
+ * 解析复用 [com.zcw.chatai.data.web.qwen.QwenResponsesParser.parseTextSearch]（`web_search_call.action.sources`
  * + 最后一个 `message.output_text`）；形状不对会退化为空结果，外层回退链再借道
  * 其它已配置后端（DeepSeek 官方等），不把整轮标红。
  */

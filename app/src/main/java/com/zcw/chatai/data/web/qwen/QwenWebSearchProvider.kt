@@ -1,4 +1,4 @@
-package com.zcw.chatai.data.web
+package com.zcw.chatai.data.web.qwen
 
 import com.zcw.chatai.data.model.ChatConfig
 import com.zcw.chatai.data.net.EndpointUrl
@@ -15,14 +15,14 @@ import kotlinx.serialization.json.putJsonArray
  */
 class QwenWebSearchProvider(
     private val client: QwenResponsesClient = QwenResponsesClient(),
-) : WebSearchProvider {
+) : com.zcw.chatai.data.web.WebSearchProvider {
 
     override val id: String = "qwen-responses"
 
     override fun available(baseUrl: String, apiKey: String): Boolean =
         apiKey.isNotBlank() && EndpointUrl.responses(baseUrl) != null
 
-    override suspend fun search(query: String, maxResults: Int, config: ChatConfig): WebSearchResult {
+    override suspend fun search(query: String, maxResults: Int, config: ChatConfig): com.zcw.chatai.data.web.WebSearchResult {
         val payload = buildJsonObject {
             put("model", config.model)
             put(

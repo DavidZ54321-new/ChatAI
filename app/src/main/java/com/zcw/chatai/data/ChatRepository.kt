@@ -1025,12 +1025,13 @@ class ChatRepository(
                     text = "未配置图搜后端（需要通义千问）",
                     kind = ToolKind.IMAGE_SIMILAR,
                 )
-            // 与上下文标注共用同一份可见图片清单：先按出站窗口裁剪，编号才不会错位。
+            // 与上下文标注共用同一份可见图片清单：先按出站窗口裁剪，编号才不会错位；
+            // 绝对轮次按全量历史算（与 ContextBuilder.build 同口径，标注稳定、保 KV 前缀缓存）。
+            val allMessages = db.messageDao().getByConversation(conversationId).map { it.toModel() }
             val images = ToolImageInventory.visibleImages(
-                ContextBuilder.usableHistory(
-                    db.messageDao().getByConversation(conversationId).map { it.toModel() },
-                ),
+                ContextBuilder.usableHistory(allMessages),
                 config.historyImageTurns,
+                ToolImageInventory.turnNumbers(allMessages),
             )
             if (images.isEmpty()) {
                 return ToolResult(

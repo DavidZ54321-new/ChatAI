@@ -37,8 +37,26 @@ class ContextBuilderTest {
         assertTrue(windowed.none { it.id == "old" })
 
         // 全量历史里有 1 张图，但窗口里 0 张——工具必须按窗口取，否则编号会指向模型没看到的图。
-        assertEquals(1, ToolImageInventory.visibleImages(history, retainTurns = -1).size)
-        assertTrue(ToolImageInventory.visibleImages(windowed, retainTurns = -1).isEmpty())
+        // 轮次表按全量算（生产口径），窗口里没图就是没图，不回落、不错位。
+        val turns = ToolImageInventory.turnNumbers(history)
+        assertEquals(1, ToolImageInventory.visibleImages(history, retainTurns = -1, turns).size)
+        assertTrue(ToolImageInventory.visibleImages(windowed, retainTurns = -1, turns).isEmpty())
+    }
+
+    /** 超长会话被窗口截断后，窗口内图片的标注仍是全量历史里的绝对轮次（KV 前缀缓存不被改写）。 */
+    @Test
+    fun truncatedHistoryKeepsAbsoluteImageTurns() {
+        val history = buildList {
+            add(message("u_old", Role.USER, "旧图", attachments = listOf(attachment("a0", "attachments/c/a0.jpg"))))
+            repeat(ContextBuilder.MAX_MESSAGES + 5) { add(message("pad$it", Role.USER, "内容$it")) }
+            add(message("u_new", Role.USER, "新图", attachments = listOf(attachment("a1", "attachments/c/a1.jpg"))))
+        }
+        val built = ContextBuilder.build(history, imageTurns = -1, imageProvider = ::imageProvider)
+        val labels = built.flatMap { it.images }.mapNotNull { it.label }
+        // 旧图被截掉，只剩新图；轮次是全量里的绝对值（最后一条 user），不是窗口内的 1。
+        assertEquals(1, labels.size)
+        val lastUserTurn = history.count { it.role == Role.USER }
+        assertEquals("[Image 1 | turn $lastUserTurn 1/1]", labels.single())
     }
 
     @Test
@@ -135,9 +153,9 @@ class ContextBuilderTest {
         val built = ContextBuilder.build(history, imageTurns = 1, imageProvider = ::imageProvider)
         val previous = built.first().images.single()
         val current = built.last().images
-        assertEquals("[Image 1 | previous turn 1/1]", previous.label)
-        assertEquals("[Image 2 | this turn 1/2]", current[0].label)
-        assertEquals("[Image 3 | this turn 2/2]", current[1].label)
+        assertEquals("[Image 1 | turn 1 1/1]", previous.label)
+        assertEquals("[Image 2 | turn 2 1/2]", current[0].label)
+        assertEquals("[Image 3 | turn 2 2/2]", current[1].label)
     }
 
     @Test

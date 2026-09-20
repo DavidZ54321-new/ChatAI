@@ -1,4 +1,4 @@
-package com.zcw.chatai.data.web
+package com.zcw.chatai.data.web.opencode
 
 /**
  * OpenCode Go 网关按**模型**选搜索面（纯函数，JVM 可测）。

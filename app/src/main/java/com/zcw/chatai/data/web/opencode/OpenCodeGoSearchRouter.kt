@@ -1,7 +1,11 @@
-package com.zcw.chatai.data.web
+package com.zcw.chatai.data.web.opencode
 
 import com.zcw.chatai.data.model.ChatConfig
 import com.zcw.chatai.data.net.EndpointUrl
+import com.zcw.chatai.data.web.ResponsesWebSearchProvider
+import com.zcw.chatai.data.web.WebSearchProvider
+import com.zcw.chatai.data.web.WebSearchResult
+import com.zcw.chatai.data.web.deepseek.DeepSeekNativeSearchProvider
 import kotlinx.coroutines.CancellationException
 
 /**
@@ -13,7 +17,7 @@ import kotlinx.coroutines.CancellationException
  *   外层 [com.zcw.chatai.data.ChatRepository] 的跨供应商回退链会继续借道
  *   其它已配置后端（DeepSeek 官方/Qwen 等）。
  *
- * 换实现不动主回路：对仓库层它就是一个普通的 [WebSearchProvider]。
+ * 换实现不动主回路：对仓库层它就是一个普通的 [com.zcw.chatai.data.web.WebSearchProvider]。
  */
 class OpenCodeGoSearchRouter(
     private val messages: WebSearchProvider = DeepSeekNativeSearchProvider(),

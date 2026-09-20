@@ -3,6 +3,7 @@ package com.zcw.chatai.data.web
 import com.zcw.chatai.data.model.ChatConfig
 import com.zcw.chatai.data.model.ToolSource
 import com.zcw.chatai.data.net.ChatApiException
+import com.zcw.chatai.data.web.opencode.OpenCodeGoSearchRouter
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue

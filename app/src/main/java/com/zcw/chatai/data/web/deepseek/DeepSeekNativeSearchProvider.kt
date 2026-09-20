@@ -1,5 +1,6 @@
-package com.zcw.chatai.data.web
+package com.zcw.chatai.data.web.deepseek
 
+import com.zcw.chatai.data.ai.DsmlStrip
 import com.zcw.chatai.data.model.ChatConfig
 import com.zcw.chatai.data.model.ToolSource
 import com.zcw.chatai.data.net.ApiErrorMapper
@@ -7,6 +8,10 @@ import com.zcw.chatai.data.net.ChatApiException
 import com.zcw.chatai.data.net.EndpointUrl
 import com.zcw.chatai.data.net.OpenAiCompatibleChatApi
 import com.zcw.chatai.data.net.TransientNetwork
+import com.zcw.chatai.data.web.WebSearchProvider
+import com.zcw.chatai.data.web.WebSearchResult
+import com.zcw.chatai.data.web.awaitBody
+import kotlinx.coroutines.CancellationException
 import java.util.concurrent.TimeUnit
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -22,6 +27,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import kotlin.text.get
 
 /** 解析 DeepSeek Anthropic Messages 响应里的 `web_search_tool_result`。纯函数，JVM 可测。 */
 object DeepSeekSearchParser {
@@ -59,7 +65,7 @@ object DeepSeekSearchParser {
     }
 
     /** 参见设计：Anthropic 端点已知会把原生工具标记漏进正文，这里兜底剥离。 */
-    fun stripDsmlMarkup(text: String): String = com.zcw.chatai.data.ai.DsmlStrip.strip(text)
+    fun stripDsmlMarkup(text: String): String = DsmlStrip.strip(text)
 }
 
 /**
@@ -142,7 +148,7 @@ class DeepSeekNativeSearchProvider(
             DeepSeekSearchParser.parse(http.text)
         } catch (e: ChatApiException) {
             throw e
-        } catch (e: kotlinx.coroutines.CancellationException) {
+        } catch (e: CancellationException) {
             // 协程取消必须原样向上传播，不能被包装成普通失败。
             throw e
         } catch (t: Exception) {

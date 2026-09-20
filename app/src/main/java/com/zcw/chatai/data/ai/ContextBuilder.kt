@@ -62,7 +62,10 @@ object ContextBuilder {
 
         val keepAttachments = AttachmentRetention.keptMessageIds(usable, imageTurns)
         // 图片编号/来源标注的唯一真相源：与 image_index、保留规则共用同一份清单。
-        val labels = ToolImageInventory.visibleImages(usable, imageTurns)
+        // 绝对轮次按全量历史算（新消息/窗口截断都不改写历史标注，保 KV 前缀缓存），
+        // 可见清单仍按出站窗口取。
+        val turnNumbers = ToolImageInventory.turnNumbers(history)
+        val labels = ToolImageInventory.visibleImages(usable, imageTurns, turnNumbers)
             .associate { it.attachment.id to ToolImageInventory.label(it) }
 
         // 服务端硬校验：assistant(tool_calls) 后面必须**连续**跟着每个 call 的应答。

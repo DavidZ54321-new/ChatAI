@@ -194,7 +194,8 @@ object WebTools {
             description = "Reverse image search (image-to-image): find web images visually similar to one " +
                 "of the user's images in this conversation. User images are numbered 1..N in the order " +
                 "they appear, and each image block in the request is preceded by a label like " +
-                "\"[Image 2 | previous turn 1/2]\". Pass image_index to pick which image to search " +
+                "\"[Image 2 | turn 3 1/2]\" (turn = the absolute user round the image came from; " +
+                "larger turns are more recent). Pass image_index to pick which image to search " +
                 "(1-based); omit it to use the most recent image. Call it once per image when the user " +
                 "asks to search several images.",
             parameters = buildJsonObject {

@@ -1,8 +1,10 @@
-package com.zcw.chatai.data.web
+package com.zcw.chatai.data.web.qwen
 
 import com.zcw.chatai.data.model.ChatConfig
 import com.zcw.chatai.data.net.EndpointUrl
 import com.zcw.chatai.data.net.QwenResponsesClient
+import com.zcw.chatai.data.web.ImageSearchOutcome
+import com.zcw.chatai.data.web.ImageSearchProvider
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
@@ -87,6 +89,9 @@ class QwenImageSearchProvider(
             callTypes = listOf("web_search_image_call", "image_search_call"),
         )
         val capped = if (maxResults in 1 until images.size) images.take(maxResults) else images
-        return ImageSearchOutcome(images = capped, answer = QwenResponsesParser.lastMessageText(raw))
+        return ImageSearchOutcome(
+            images = capped,
+            answer = QwenResponsesParser.lastMessageText(raw)
+        )
     }
 }

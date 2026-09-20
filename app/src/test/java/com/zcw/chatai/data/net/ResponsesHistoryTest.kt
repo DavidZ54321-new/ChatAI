@@ -73,7 +73,7 @@ class ResponsesHistoryTest {
                         ChatRequestImage(
                             dataUrl = "data:image/jpeg;base64,AAA",
                             detail = "low",
-                            label = "[Image 1 | this turn 1/1]",
+                            label = "[Image 1 | turn 1 1/1]",
                         ),
                     ),
                 ),

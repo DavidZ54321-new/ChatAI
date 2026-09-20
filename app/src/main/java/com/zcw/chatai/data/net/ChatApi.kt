@@ -33,7 +33,7 @@ data class ChatRequestMessage(
 data class ChatRequestImage(
     val dataUrl: String,
     val detail: String? = null,
-    /** 来源标注（如 `[Image 3 | previous turn 2/2]`），以文本块形式插在该图片块前面。 */
+    /** 来源标注（如 `[Image 3 | turn 5 2/2]`），以文本块形式插在该图片块前面。 */
     val label: String? = null,
 )
 

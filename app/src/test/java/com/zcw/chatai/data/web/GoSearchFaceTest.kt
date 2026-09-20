@@ -1,5 +1,6 @@
 package com.zcw.chatai.data.web
 
+import com.zcw.chatai.data.web.opencode.GoSearchFace
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test

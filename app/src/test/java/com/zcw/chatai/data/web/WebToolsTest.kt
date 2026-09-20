@@ -144,6 +144,6 @@ class WebToolsTest {
         val spec = WebTools.specs().single { it.function.name == WebTools.FIND_SIMILAR_IMAGES }
         val params = spec.function.parameters.toString()
         assertTrue(params, params.contains("image_index"))
-        assertTrue(spec.function.description.contains("[Image 2 | previous turn 1/2]"))
+        assertTrue(spec.function.description.contains("[Image 2 | turn 3 1/2]"))
     }
 }

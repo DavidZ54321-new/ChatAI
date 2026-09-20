@@ -14,12 +14,12 @@ import com.zcw.chatai.data.net.FailoverChatApi
 import com.zcw.chatai.data.net.OpenAiCompatibleChatApi
 import com.zcw.chatai.data.prefs.SettingsRepository
 import com.zcw.chatai.data.provider.ProviderCatalog
-import com.zcw.chatai.data.web.DeepSeekNativeSearchProvider
+import com.zcw.chatai.data.web.deepseek.DeepSeekNativeSearchProvider
 import com.zcw.chatai.data.web.HttpWebFetcher
 import com.zcw.chatai.data.web.ImageSearchProvider
-import com.zcw.chatai.data.web.OpenCodeGoSearchRouter
-import com.zcw.chatai.data.web.QwenImageSearchProvider
-import com.zcw.chatai.data.web.QwenWebSearchProvider
+import com.zcw.chatai.data.web.opencode.OpenCodeGoSearchRouter
+import com.zcw.chatai.data.web.qwen.QwenImageSearchProvider
+import com.zcw.chatai.data.web.qwen.QwenWebSearchProvider
 import com.zcw.chatai.data.web.WebFetcher
 import com.zcw.chatai.data.web.WebSearchProvider
 import com.zcw.chatai.ui.chat.RemoteImages

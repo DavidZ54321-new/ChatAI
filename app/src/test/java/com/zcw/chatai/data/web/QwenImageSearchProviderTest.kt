@@ -2,6 +2,7 @@ package com.zcw.chatai.data.web
 
 import com.zcw.chatai.data.model.ChatConfig
 import com.zcw.chatai.data.net.ChatApiException
+import com.zcw.chatai.data.web.qwen.QwenImageSearchProvider
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse

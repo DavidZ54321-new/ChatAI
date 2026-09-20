@@ -1,5 +1,6 @@
 package com.zcw.chatai.data.web
 
+import com.zcw.chatai.data.web.deepseek.DeepSeekSearchParser
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

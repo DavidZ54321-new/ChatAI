@@ -4,13 +4,13 @@ import com.zcw.chatai.data.model.ChatConfig
 import com.zcw.chatai.data.net.ChatApiException
 import com.zcw.chatai.data.net.OpenAiCompatibleChatApi
 import com.zcw.chatai.data.provider.ProviderCatalog
+import com.zcw.chatai.data.web.deepseek.DeepSeekNativeSearchProvider
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.SocketPolicy

@@ -17,13 +17,13 @@ class ToolImageInventoryTest {
             assistant("a1"),
             userWith("u2", "a2", "a3"),
         )
-        val images = ToolImageInventory.visibleImages(history, retainTurns = 1)
+        val images = ToolImageInventory.visibleImages(history, retainTurns = 1, ToolImageInventory.turnNumbers(history))
         assertEquals(listOf(1, 2, 3), images.map { it.globalIndex })
         assertEquals(
             listOf(
-                "[Image 1 | previous turn 1/1]",
-                "[Image 2 | this turn 1/2]",
-                "[Image 3 | this turn 2/2]",
+                "[Image 1 | turn 1 1/1]",
+                "[Image 2 | turn 2 1/2]",
+                "[Image 3 | turn 2 2/2]",
             ),
             images.map { ToolImageInventory.label(it) },
         )
@@ -37,23 +37,67 @@ class ToolImageInventoryTest {
             assistant("a1"),
             userWith("u2", "a2"),
         )
-        val images = ToolImageInventory.visibleImages(history, retainTurns = 0)
+        val images = ToolImageInventory.visibleImages(history, retainTurns = 0, ToolImageInventory.turnNumbers(history))
         assertEquals(listOf("a2"), images.map { it.attachment.id })
-        assertEquals("[Image 1 | this turn 1/1]", ToolImageInventory.label(images.single()))
+        assertEquals("[Image 1 | turn 2 1/1]", ToolImageInventory.label(images.single()))
     }
 
     @Test
-    fun turnLabelCountsUserMessagesNotAttachmentMessages() {
+    fun turnNumberCountsUserMessagesNotAttachmentMessages() {
         val history = listOf(
             userWith("u1", "a1"),
             assistant("a1"),
-            userText("u2"), // 中间一轮纯文本，不应把 u1 说成上一轮
+            userText("u2"), // 中间一轮纯文本，u1 仍是第 1 轮（绝对轮次不断号重排）
             assistant("a2"),
             userWith("u3", "a3"),
         )
-        val images = ToolImageInventory.visibleImages(history, retainTurns = -1)
-        assertEquals("[Image 1 | 2 turns back 1/1]", ToolImageInventory.label(images[0]))
-        assertEquals("[Image 2 | this turn 1/1]", ToolImageInventory.label(images[1]))
+        val images = ToolImageInventory.visibleImages(history, retainTurns = -1, ToolImageInventory.turnNumbers(history))
+        assertEquals("[Image 1 | turn 1 1/1]", ToolImageInventory.label(images[0]))
+        assertEquals("[Image 2 | turn 3 1/1]", ToolImageInventory.label(images[1]))
+    }
+
+    @Test
+    fun appendingNewTurnsKeepsExistingLabelsStable() {
+        // KV 前缀缓存要求：新消息只追加，历史标注的字节必须原样保留。
+        val before = listOf(
+            userWith("u1", "a1"),
+            assistant("a1"),
+            userWith("u2", "a2"),
+        )
+        val beforeLabels = ToolImageInventory.visibleImages(before, retainTurns = -1, ToolImageInventory.turnNumbers(before))
+            .map { ToolImageInventory.label(it) }
+        val after = before + listOf(
+            assistant("a2"),
+            userText("u3"),
+            assistant("a3"),
+            userWith("u4", "a3"),
+        )
+        val afterLabels = ToolImageInventory.visibleImages(after, retainTurns = -1, ToolImageInventory.turnNumbers(after))
+            .map { ToolImageInventory.label(it) }
+        assertEquals(beforeLabels, afterLabels.take(beforeLabels.size))
+        assertEquals("[Image 1 | turn 1 1/1]", afterLabels[0])
+        assertEquals("[Image 2 | turn 2 1/1]", afterLabels[1])
+        assertEquals("[Image 3 | turn 4 1/1]", afterLabels[2])
+    }
+
+    @Test
+    fun windowedViewKeepsAbsoluteTurnsFromFullHistory() {
+        // 生产模式：轮次表按全量历史算，可见清单按出站窗口取——
+        // 旧图被截掉时幸存者保留绝对轮次（不重排为 turn 1），且与 build 口径一致。
+        val full = listOf(
+            userWith("u1", "a1"),
+            assistant("a1"),
+            userText("u2"),
+            assistant("a2"),
+            userWith("u3", "a2"),
+            assistant("a3"),
+        )
+        val turns = ToolImageInventory.turnNumbers(full)
+        val window = full.takeLast(3)
+        val images = ToolImageInventory.visibleImages(window, retainTurns = -1, turns)
+        assertEquals(1, images.size)
+        assertEquals("a2", images.single().attachment.id)
+        assertEquals("[Image 1 | turn 3 1/1]", ToolImageInventory.label(images.single()))
     }
 
     private fun userWith(id: String, vararg attachmentIds: String) =

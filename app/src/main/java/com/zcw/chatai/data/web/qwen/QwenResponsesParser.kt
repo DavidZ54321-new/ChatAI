@@ -1,13 +1,15 @@
-package com.zcw.chatai.data.web
+package com.zcw.chatai.data.web.qwen
 
 import com.zcw.chatai.data.model.SearchedImage
 import com.zcw.chatai.data.model.ToolSource
+import com.zcw.chatai.data.web.WebSearchResult
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
+import kotlin.text.get
 
 /**
  * Qwen Responses API 的非流式响应解析（纯函数，JVM 可测）。
@@ -43,7 +45,11 @@ object QwenResponsesParser {
                 }
             }
         }
-        return WebSearchResult(answer = messageText(output), sources = sources.values.toList())
+        return WebSearchResult(
+            answer = messageText(
+                output
+            ), sources = sources.values.toList()
+        )
     }
 
     /**
