@@ -5,6 +5,7 @@ import com.zcw.chatai.data.ai.AgentLoop
 import com.zcw.chatai.data.ai.AttachmentRetention
 import com.zcw.chatai.data.ai.ContextBuilder
 import com.zcw.chatai.data.ai.DsmlStrip
+import com.zcw.chatai.data.ai.EnvNote
 import com.zcw.chatai.data.ai.StreamAccumulator
 import com.zcw.chatai.data.ai.ToolBudget
 import com.zcw.chatai.data.ai.ToolCallAccumulator
@@ -196,12 +197,20 @@ class ChatRepository(
     // ---------- 会话 ----------
 
     /**
-     * 新建会话。[model] / [providerId] 用来把「会话还不存在时用户已经选好的绑定」一次性落库，
-     * 缺省则跟随当前激活供应商。
+     * 新建会话。[model] / [providerId] / [personaId] 用来把「会话还不存在时用户已经选好的绑定」
+     * 一次性落库，缺省则跟随当前激活供应商/角色（激活角色已被会话内切换同步更新，
+     * 所以新会话自然「记住上次选择」）。
      */
-    suspend fun createConversation(model: String? = null, providerId: String? = null): String {
+    suspend fun createConversation(
+        model: String? = null,
+        providerId: String? = null,
+        personaId: String? = null,
+    ): String {
         val settings = settingsRepository.settings.first()
         val boundProviderId = providerId?.takeIf { it.isNotBlank() } ?: settings.activeProviderId
+        // 已删除的角色不落库：直接回退激活（与 buildState 的显示回退同一条规则，不在库里留死绑定）。
+        val boundPersonaId = personaId?.takeIf { it.isNotBlank() && it in settings.personas }
+            ?: settings.resolvedActivePersonaId
         val id = newId()
         val timestamp = nowMs()
         db.conversationDao().upsert(
@@ -217,6 +226,7 @@ class ChatRepository(
                 messageCount = 0,
                 isPinned = false,
                 providerId = boundProviderId,
+                personaId = boundPersonaId,
             ),
         )
         return id
@@ -239,6 +249,18 @@ class ChatRepository(
     suspend fun setConversationProvider(id: String, providerId: String, model: String) {
         if (providerId.isBlank() || model.isBlank()) return
         db.conversationDao().updateProviderAndModel(id, providerId, model, nowMs())
+    }
+
+    /**
+     * 切换会话绑定的角色，并同步激活角色（新会话记住上次选择）。
+     * 提示词与生成参数不落库——`resolveConfig` 按 persona_id 实时取，所以这里只改绑定。
+     * 先写会话绑定再写激活：激活写失败时当次会话仍已生效，下次打开回退到旧激活前提示一次即可。
+     */
+    suspend fun setConversationPersona(id: String, personaId: String) {
+        if (personaId.isBlank()) return
+        db.conversationDao().updatePersona(id, personaId, nowMs())
+        runCatching { settingsRepository.updateActivePersona(personaId) }
+            .onFailure { reportError(id, it, "记住角色选择失败") }
     }
 
     /** 删除会话：文件与行一起清掉。跑在仓库自己的 scope 上，界面退出也不会半途而废。 */
@@ -629,8 +651,9 @@ class ChatRepository(
     }
 
     /**
-     * 会话的请求配置：连接参数按会话绑定的供应商取，生成参数仍是全局。
-     * 供应商已被删除 → 给可读错误并返回 null（不向错误端点发请求）。
+     * 会话的请求配置：连接参数按会话绑定的供应商取，提示词与生成参数按会话绑定的角色取。
+     * 供应商已被删除 → 给可读错误并返回 null（不向错误端点发请求）；
+     * 角色已被删除 → 静默回退到激活角色（`toChatConfig` 内处理，不打断请求）。
      */
     private suspend fun resolveConfig(settings: ChatSettings, conversationId: String): ChatConfig? {
         val conversation = db.conversationDao().getById(conversationId)
@@ -643,10 +666,10 @@ class ChatRepository(
             )
             return null
         }
-        val base = settings.toChatConfig(providerId)
+        // system_prompt 死列不再读取：提示词统一按 persona_id 实时解析。
+        val base = settings.toChatConfig(providerId, conversation?.personaId)
         return base.copy(
             model = conversation?.model?.takeIf { it.isNotBlank() } ?: base.model,
-            systemPrompt = conversation?.systemPrompt?.takeIf { it.isNotBlank() } ?: base.systemPrompt,
             webSearchEnabled = conversation?.webSearchEnabled == true,
             // 网关要求稳定会话 id（Go 实测缺了 400）；用会话 id 最自然。
             sessionId = conversationId,
@@ -739,6 +762,13 @@ class ChatRepository(
         history: List<Message>,
         resolvedVideos: Map<String, ChatRequestVideo>,
     ): TurnOutcome {
+        // 时间尾条在本机组装：任何异常都吞掉 → 不追加，主请求不受影响。
+        // 走可注入的 nowMs（与其它落库时间戳同一时钟），别直调 System。
+        val envNote = if (config.includeEnvTime) {
+            runCatching { EnvNote.format(nowMs()) }.getOrNull()
+        } else {
+            null
+        }
         val messages = withContext(Dispatchers.IO) {
             ContextBuilder.build(
                 history = history,
@@ -748,6 +778,7 @@ class ChatRepository(
                 },
                 videoProvider = { attachment -> resolvedVideos[attachment.id] },
                 documentProvider = { attachment -> attachmentStore.documentText(attachment) },
+                envNote = envNote,
             )
         }
         // 计时从这里开始（含首 token 延迟），和 UI 上「已深度思考」的口径一致。

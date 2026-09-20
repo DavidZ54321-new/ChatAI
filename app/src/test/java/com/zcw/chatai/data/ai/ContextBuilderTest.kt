@@ -447,6 +447,54 @@ class ContextBuilderTest {
         durationMs = 3_000,
     )
 
+    @Test
+    fun envNoteIsAppendedAsTrailingSystemMessage() {
+        val history = listOf(
+            message("u1", Role.USER, "你好"),
+            message("a1", Role.ASSISTANT, "你好！"),
+        )
+        val built = ContextBuilder.build(
+            history,
+            imageTurns = 1,
+            imageProvider = { image },
+            envNote = "当前时间：2026年9月20日 星期日 14:32:05",
+        )
+        assertEquals(3, built.size)
+        val last = built.last()
+        assertEquals("system", last.role)
+        assertEquals("当前时间：2026年9月20日 星期日 14:32:05", last.content)
+        // 历史本身不受影响。
+        assertEquals("你好", built.first().content)
+    }
+
+    @Test
+    fun envNoteSurvivesWindowTruncation() {
+        val history = (1..60).map { message("m$it", Role.USER, "内容$it") }
+        val built = ContextBuilder.build(
+            history,
+            imageTurns = 1,
+            imageProvider = { image },
+            envNote = "当前时间：2026年9月20日 星期日 14:32:05",
+        )
+        // 窗口 40 条 + 尾条 1 条：尾条在截断之后加，永远占末位。
+        assertEquals(ContextBuilder.MAX_MESSAGES + 1, built.size)
+        assertEquals("system", built.last().role)
+    }
+
+    @Test
+    fun blankOrNullEnvNoteAppendsNothing() {
+        val history = listOf(message("u1", Role.USER, "你好"))
+        val without = ContextBuilder.build(history, imageTurns = 1, imageProvider = { image })
+        val blank = ContextBuilder.build(
+            history,
+            imageTurns = 1,
+            imageProvider = { image },
+            envNote = "   ",
+        )
+        assertEquals(without, blank)
+        assertEquals(1, without.size)
+    }
+
     private fun message(
         id: String,
         role: Role,

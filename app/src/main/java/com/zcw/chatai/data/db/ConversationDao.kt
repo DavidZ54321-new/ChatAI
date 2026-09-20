@@ -31,6 +31,10 @@ interface ConversationDao {
     @Query("UPDATE conversations SET provider_id = :providerId, model = :model, updated_at = :updatedAt WHERE id = :id")
     suspend fun updateProviderAndModel(id: String, providerId: String, model: String, updatedAt: Long)
 
+    /** 换角色只改绑定：提示词与生成参数按 persona_id 实时解析，不落库。 */
+    @Query("UPDATE conversations SET persona_id = :personaId, updated_at = :updatedAt WHERE id = :id")
+    suspend fun updatePersona(id: String, personaId: String, updatedAt: Long)
+
     @Query("UPDATE conversations SET last_message_preview = :preview, message_count = :count, updated_at = :updatedAt WHERE id = :id")
     suspend fun updateSummary(id: String, preview: String, count: Int, updatedAt: Long)
 

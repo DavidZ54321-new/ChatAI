@@ -1,5 +1,7 @@
 package com.zcw.chatai.data.prefs
 
+import com.zcw.chatai.data.persona.PersonaConfigCodec
+import com.zcw.chatai.data.persona.PersonaEntry
 import com.zcw.chatai.data.provider.ProviderCatalog
 import com.zcw.chatai.data.provider.ProviderEntry
 import org.junit.Assert.assertEquals
@@ -10,16 +12,25 @@ import org.junit.Test
 
 class ChatSettingsTest {
 
+    private val personas = mapOf(
+        "default" to PersonaEntry(
+            name = "默认",
+            systemPrompt = "be nice",
+            temperature = 0.7,
+            reasoningEffort = ReasoningEffort.OFF,
+            maxTokens = 1024,
+        ),
+        "translator" to PersonaEntry(name = "翻译官", systemPrompt = "translate"),
+    )
+
     private val settings = ChatSettings.Default.copy(
         providers = mapOf(
             ProviderCatalog.DEEPSEEK to ProviderEntry("https://ds.example/v1", "sk-ds", "deepseek-flash"),
             ProviderCatalog.QWEN to ProviderEntry("https://qw.example/v1", "sk-qw", "qwen3.8-max"),
         ),
         activeProviderId = ProviderCatalog.DEEPSEEK,
-        systemPrompt = "be nice",
-        temperature = 0.7,
-        reasoningEffort = ReasoningEffort.OFF,
-        maxTokens = 1024,
+        personas = personas,
+        activePersonaId = "default",
         historyImageTurns = 5,
     )
 
@@ -30,7 +41,7 @@ class ChatSettingsTest {
         assertEquals("sk-qw", qwen.apiKey)
         assertEquals("qwen3.8-max", qwen.model)
         assertEquals(ProviderCatalog.QWEN, qwen.providerId)
-        // 生成参数是全局的，与供应商无关
+        // 生成参数来自激活角色，与供应商无关
         assertEquals("be nice", qwen.systemPrompt)
         assertEquals("none", qwen.reasoningEffort)
         assertEquals(1024, qwen.maxTokens)
@@ -45,6 +56,19 @@ class ChatSettingsTest {
     }
 
     @Test
+    fun toChatConfigUsesBoundPersona() {
+        val bound = settings.toChatConfig(ProviderCatalog.DEEPSEEK, "translator")
+        assertEquals("translate", bound.systemPrompt)
+        assertNull(bound.temperature)
+        // 空串 = 跟随激活角色
+        val follow = settings.toChatConfig(ProviderCatalog.DEEPSEEK, "")
+        assertEquals("be nice", follow.systemPrompt)
+        // 绑定了已删除的角色 → 回退激活角色
+        val deleted = settings.toChatConfig(ProviderCatalog.DEEPSEEK, "deleted-id")
+        assertEquals("be nice", deleted.systemPrompt)
+    }
+
+    @Test
     fun missingProviderFallsBackToActiveConnectionButKeepsRequestedId() {
         val deleted = settings.toChatConfig("deleted-id")
         assertEquals("https://ds.example/v1", deleted.baseUrl)
@@ -54,14 +78,20 @@ class ChatSettingsTest {
     @Test
     fun blankExtraParamsBecomesNull() {
         assertNull(settings.toChatConfig().extraParams)
-        assertEquals("{\"top_k\":20}", settings.copy(extraParams = "{\"top_k\":20}").toChatConfig().extraParams)
+        val withExtra = settings.copy(
+            personas = mapOf("p" to PersonaEntry(name = "P", extraParams = "{\"top_k\":20}")),
+            activePersonaId = "p",
+        )
+        assertEquals("{\"top_k\":20}", withExtra.toChatConfig().extraParams)
     }
 
     @Test
-    fun defaultSettingsHaveDeepseekActive() {
+    fun defaultSettingsHaveDeepseekActiveAndDefaultPersona() {
         assertEquals(ProviderCatalog.DEEPSEEK, ChatSettings.Default.activeProviderId)
         assertEquals(ChatSettings.DEFAULT_BASE_URL, ChatSettings.Default.activeProvider.baseUrl)
         assertEquals(ChatSettings.DEFAULT_MODEL, ChatSettings.Default.activeProvider.model)
+        assertEquals(PersonaConfigCodec.DEFAULT_ID, ChatSettings.Default.activePersonaId)
+        assertEquals(PersonaConfigCodec.DEFAULT_NAME, ChatSettings.Default.activePersona.name)
     }
 
     @Test

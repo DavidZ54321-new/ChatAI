@@ -18,6 +18,7 @@ import com.zcw.chatai.data.model.Conversation
 import com.zcw.chatai.data.model.Message
 import com.zcw.chatai.data.model.MessageStatus
 import com.zcw.chatai.data.model.Role
+import com.zcw.chatai.data.persona.PersonaEntry
 import com.zcw.chatai.data.prefs.SettingsRepository
 import com.zcw.chatai.data.provider.ProviderCatalog
 import com.zcw.chatai.data.provider.ToolBackendResolver
@@ -109,6 +110,9 @@ class ChatViewModel(
             activeProviderId = settings.activeProviderId,
             pendingModel = binding?.model,
             pendingProviderId = binding?.providerId,
+            personas = settings.personas,
+            activePersonaId = settings.resolvedActivePersonaId,
+            pendingPersonaId = binding?.personaId,
         )
     }
 
@@ -154,6 +158,9 @@ class ChatViewModel(
                         binding.providerId != null && binding.model != null ->
                             repository.setConversationProvider(id, binding.providerId, binding.model)
                         binding.model != null -> repository.setConversationModel(id, binding.model)
+                    }
+                    if (binding.personaId != null) {
+                        repository.setConversationPersona(id, binding.personaId)
                     }
                 }
                 pendingBinding.value = null
@@ -311,7 +318,11 @@ class ChatViewModel(
         discardPending()
         viewModelScope.launch {
             val binding = pendingBinding.value
-            conversationId.value = repository.createConversation(binding?.model, binding?.providerId)
+            conversationId.value = repository.createConversation(
+                binding?.model,
+                binding?.providerId,
+                binding?.personaId,
+            )
             pendingBinding.value = null
         }
     }
@@ -362,10 +373,39 @@ class ChatViewModel(
             }
             val id = conversationId.value
             if (id == null) {
-                pendingBinding.value = PendingBinding(model = model, providerId = providerId)
+                // 保留用户先选好的角色绑定：整体替换会把 pendingPersonaId 丢掉。
+                pendingBinding.update { current ->
+                    (current ?: PendingBinding(model = null, providerId = null, personaId = null))
+                        .copy(model = model, providerId = providerId)
+                }
                 return@launch
             }
             repository.setConversationProvider(id, providerId, model)
+        }
+    }
+
+    /**
+     * 切换当前会话的角色，并同步激活角色（新会话记住上次选择）。
+     * 还没有会话时记成待落库绑定 + 同步激活，等建会话时一次性落库。
+     */
+    fun setPersona(personaId: String) {
+        if (personaId.isBlank()) return
+        viewModelScope.launch {
+            val settings = settingsRepository.settings.first()
+            if (personaId !in settings.personas) {
+                notice.value = "该角色已被删除"
+                return@launch
+            }
+            val id = conversationId.value
+            if (id == null) {
+                pendingBinding.update { current ->
+                    (current ?: PendingBinding(model = null, providerId = null, personaId = null))
+                        .copy(personaId = personaId)
+                }
+                settingsRepository.updateActivePersona(personaId)
+                return@launch
+            }
+            repository.setConversationPersona(id, personaId)
         }
     }
 
@@ -387,11 +427,11 @@ class ChatViewModel(
         super.onCleared()
     }
 
-    /** 拿当前会话；没有就建一个（带上待落库的模型/供应商绑定）。加锁避免并发各建一条空会话。 */
+    /** 拿当前会话；没有就建一个（带上待落库的模型/供应商/角色绑定）。加锁避免并发各建一条空会话。 */
     private suspend fun ensureConversation(): String = conversationLock.withLock {
         conversationId.value?.let { return@withLock it }
         val binding = pendingBinding.value
-        val created = repository.createConversation(binding?.model, binding?.providerId)
+        val created = repository.createConversation(binding?.model, binding?.providerId, binding?.personaId)
         pendingBinding.value = null
         conversationId.value = created
         created
@@ -447,11 +487,18 @@ class ChatViewModel(
         val model = conversation?.model?.takeIf { it.isNotBlank() }
             ?: composer.pendingModel?.takeIf { it.isNotBlank() }
             ?: composer.defaultModel
+        // 角色与供应商同一回退语义：会话绑定 → 待落库 → 激活；已删除的绑定静默跟随激活。
+        val rawPersonaId = conversation?.personaId?.takeIf { it.isNotBlank() }
+            ?: composer.pendingPersonaId?.takeIf { it.isNotBlank() }
+        val personaId = rawPersonaId?.takeIf { it in composer.personas }
+            ?: composer.activePersonaId
         return ChatUiState(
             conversationId = id,
             title = conversation?.title ?: "新对话",
             model = model,
             providerId = providerId,
+            personaId = personaId,
+            personaName = composer.personas[personaId]?.name.orEmpty(),
             messages = items,
             isStreaming = activeStream != null,
             streamingMessageId = activeStream?.messageId,
@@ -513,9 +560,16 @@ class ChatViewModel(
         /** 还没有会话时用户先选好的绑定；建会话时落库。 */
         val pendingModel: String? = null,
         val pendingProviderId: String? = null,
+        val personas: Map<String, PersonaEntry> = emptyMap(),
+        val activePersonaId: String = "",
+        val pendingPersonaId: String? = null,
     )
 
-    private data class PendingBinding(val model: String?, val providerId: String?)
+    private data class PendingBinding(
+        val model: String?,
+        val providerId: String?,
+        val personaId: String? = null,
+    )
 
     companion object {
         fun factory(

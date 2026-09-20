@@ -13,4 +13,6 @@ data class Conversation(
     val webSearchEnabled: Boolean = false,
     /** 绑定的供应商 id；决定用哪套连接配置与原生工具。空串 = 跟随当前激活供应商。 */
     val providerId: String = "",
+    /** 绑定的角色 id；决定提示词与生成参数。空串 = 跟随当前激活角色。 */
+    val personaId: String = "",
 )

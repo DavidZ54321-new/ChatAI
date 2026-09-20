@@ -32,19 +32,23 @@ import com.zcw.chatai.ui.theme.ChatTheme
 import kotlinx.coroutines.flow.first
 
 /**
- * 模型与供应商选择：模型字段和设置页是同一个「单输入框 + 下拉候选」组件
+ * 模型、供应商与角色选择：模型字段和设置页是同一个「单输入框 + 下拉候选」组件
  * （[ModelAutocompleteField]），输入即筛选、点候选即生效，想手输就敲完按回车。
  * - 顶部切换**本会话**的供应商（未配置 API Key 的不可选，给可读提示）；
- * - 选择写到**当前会话**上（conversations.provider_id / model），不影响其它会话。
+ * - 中段切换**本会话**的角色（提示词 + 生成参数，只影响今后的回答）；
+ * - 选择写到**当前会话**上（conversations.provider_id / model / persona_id），不影响其它会话；
+ *   角色切换会同步默认角色，新会话记住上次选择。
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ModelPickerSheet(
     currentModel: String,
     providerId: String,
+    personaId: String,
     onDismiss: () -> Unit,
     onSelect: (String) -> Unit,
     onSelectProvider: (String) -> Unit,
+    onSelectPersona: (String) -> Unit,
     onOpenSettings: () -> Unit,
 ) {
     val app = LocalContext.current.applicationContext as ChatAiApp
@@ -73,6 +77,8 @@ fun ModelPickerSheet(
     val colors = ChatTheme.colors
     val scheme = MaterialTheme.colorScheme
     val providerName = ProviderCatalog.displayName(providerId)
+    val personas = settings?.personas.orEmpty()
+    val personaName = personas[personaId]?.name?.takeIf { it.isNotBlank() } ?: "默认"
     val manual = query.trim()
 
     // 候选列表是独立的 Popup 浮层，弹层本身按内容自适应即可——不能固定高度，
@@ -85,7 +91,7 @@ fun ModelPickerSheet(
             modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
         )
         Text(
-            text = "当前：$providerName · ${currentModel.ifBlank { "未设置" }}",
+            text = "当前：$providerName · ${currentModel.ifBlank { "未设置" }} · $personaName",
             style = MaterialTheme.typography.labelMedium,
             color = colors.codeHeaderText,
             modifier = Modifier.padding(horizontal = 24.dp),
@@ -155,6 +161,33 @@ fun ModelPickerSheet(
                     style = MaterialTheme.typography.labelLarge,
                     color = colors.codeOnBackground,
                     modifier = Modifier.clickable(onClick = onOpenSettings),
+                )
+            }
+        }
+        Text(
+            text = "角色",
+            style = MaterialTheme.typography.labelLarge,
+            color = colors.codeHeaderText,
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 2.dp),
+        )
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp),
+        ) {
+            personas.entries.forEach { (id, entry) ->
+                val active = id == personaId
+                Text(
+                    text = entry.name.ifBlank { "未命名" },
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (active) scheme.onPrimary else colors.codeOnBackground,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(if (active) scheme.primary else colors.codeButtonBackground)
+                        .clickable { if (!active) onSelectPersona(id) }
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
                 )
             }
         }

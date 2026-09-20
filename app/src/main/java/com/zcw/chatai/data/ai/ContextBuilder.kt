@@ -51,6 +51,12 @@ object ContextBuilder {
         imageProvider: (Attachment) -> ChatRequestImage?,
         videoProvider: (Attachment) -> ChatRequestVideo? = { null },
         documentProvider: (Attachment) -> String? = { null },
+        /**
+         * 上下文尾条的环境注记（当前时间等），以 `system` 身份追加在**最后**：
+         * 在窗口截断之后加，永远占末位；图片编号只认 USER 行附件，不受影响；
+         * null = 不追加（开关关闭或取值失败时，主流程与今天逐字一致）。
+         */
+        envNote: String? = null,
     ): List<ChatRequestMessage> {
         val usable = usableHistory(history)
 
@@ -96,6 +102,9 @@ object ContextBuilder {
 
                 else -> wire += toWire(message, keepAttachments, labels, imageProvider, videoProvider, documentProvider)
             }
+        }
+        envNote?.takeIf { it.isNotBlank() }?.let { note ->
+            wire += ChatRequestMessage(role = Role.SYSTEM.wire, content = note)
         }
         return wire
     }

@@ -24,6 +24,8 @@ data class ChatConfig(
     val maxTokens: Int? = null,
     val imageDetail: String? = null,
     val includeUsage: Boolean = true,
+    /** 上下文末尾是否追加当前时间尾条（设置开关，默认开；取值失败时不追加）。 */
+    val includeEnvTime: Boolean = true,
     val historyImageTurns: Int = 1,
     val extraParams: String? = null,
     /** 本回合是否注入 web_search/web_fetch 工具。 */

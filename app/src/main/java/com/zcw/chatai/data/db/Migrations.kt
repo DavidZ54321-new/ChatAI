@@ -69,3 +69,18 @@ val MIGRATION_4_5 = object : Migration(4, 5) {
         db.execSQL("UPDATE conversations SET provider_id = ''")
     }
 }
+
+/**
+ * v5 → v6：会话绑定角色。
+ *
+ * - `conversations.persona_id`：`personas_json` 表的 key；空串 = 跟随当前激活角色
+ *   （与 `provider_id` 同语义，旧会话统一回填空串，行为与旧版全局提示词一致）。
+ * - `conversations.system_prompt` 列保留但不再读取：历史写入恒为 null，
+ *   提示词统一按 persona_id 实时解析。
+ */
+val MIGRATION_5_6 = object : Migration(5, 6) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE conversations ADD COLUMN persona_id TEXT NOT NULL DEFAULT ''")
+        db.execSQL("UPDATE conversations SET persona_id = ''")
+    }
+}

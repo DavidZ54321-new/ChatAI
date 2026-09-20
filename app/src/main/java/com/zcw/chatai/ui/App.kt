@@ -84,12 +84,14 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
             ModelPickerSheet(
                 currentModel = state.model,
                 providerId = state.providerId,
+                personaId = state.personaId,
                 onDismiss = { showModelPicker = false },
                 onSelect = { model ->
                     viewModel.setModel(model)
                     showModelPicker = false
                 },
                 onSelectProvider = viewModel::setProvider,
+                onSelectPersona = viewModel::setPersona,
                 onOpenSettings = {
                     showModelPicker = false
                     showSettings = true

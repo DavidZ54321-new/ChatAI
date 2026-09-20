@@ -17,6 +17,7 @@ fun ConversationEntity.toModel(): Conversation = Conversation(
     isPinned = isPinned,
     webSearchEnabled = webSearchEnabled,
     providerId = providerId,
+    personaId = personaId,
 )
 
 fun Conversation.toEntity(): ConversationEntity = ConversationEntity(
@@ -31,6 +32,7 @@ fun Conversation.toEntity(): ConversationEntity = ConversationEntity(
     isPinned = isPinned,
     webSearchEnabled = webSearchEnabled,
     providerId = providerId,
+    personaId = personaId,
 )
 
 fun MessageEntity.toModel(): Message = Message(

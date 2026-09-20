@@ -50,6 +50,9 @@ data class ChatUiState(
     val model: String = "",
     /** 会话绑定的供应商 id（决定模型列表与能力提示）。 */
     val providerId: String = "",
+    /** 会话绑定的角色 id（空 = 跟随激活角色）；名称用于顶栏/弹层展示。 */
+    val personaId: String = "",
+    val personaName: String = "",
     val messages: List<ChatMessageItem> = emptyList(),
     val isStreaming: Boolean = false,
     val streamingMessageId: String? = null,

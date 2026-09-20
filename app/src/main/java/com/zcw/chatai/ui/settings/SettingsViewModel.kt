@@ -8,7 +8,6 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.zcw.chatai.data.net.ChatApi
 import com.zcw.chatai.data.prefs.ChatSettings
 import com.zcw.chatai.data.prefs.ImageDetail
-import com.zcw.chatai.data.prefs.ReasoningEffort
 import com.zcw.chatai.data.prefs.SettingsRepository
 import com.zcw.chatai.data.prefs.ThemeMode
 import com.zcw.chatai.data.prefs.toChatConfig
@@ -41,16 +40,14 @@ class SettingsViewModel(
         /** 空 = 用该供应商规则从 Chat Base 推导。 */
         val anthropicBaseUrl: String = "",
         val responsesBaseUrl: String = "",
-        val systemPrompt: String = "",
-        val temperature: String = "",
-        val reasoningEffort: ReasoningEffort = ReasoningEffort.FOLLOW_DEFAULT,
-        val maxTokens: String = "",
+        /** 提示词与生成参数已搬进角色表（角色管理页维护），这里只读激活角色名做提示。 */
+        val activePersonaName: String = "",
         val imageDetail: ImageDetail = ImageDetail.FOLLOW_DEFAULT,
         val includeUsage: Boolean = true,
+        val includeEnvTime: Boolean = true,
         val historyImageTurns: Int = ChatSettings.DEFAULT_HISTORY_IMAGE_TURNS,
         /** 图搜模型链（逗号分隔的原始输入）；空 = 用内置默认。 */
         val imageSearchModels: String = "",
-        val extraParams: String = "",
         val themeMode: ThemeMode = ThemeMode.SYSTEM,
         val loaded: Boolean = false,
         val models: List<String> = emptyList(),
@@ -58,34 +55,11 @@ class SettingsViewModel(
         val status: String? = null,
         val error: String? = null,
     ) {
-        val extraParamsError: String?
-            get() = validateExtraParams(extraParams)
-
         val imageSearchModelsError: String?
             get() = ToolModels.validate(imageSearchModels)
 
-        val temperatureError: String?
-            get() = temperature.trim().takeIf { it.isNotEmpty() }?.let {
-                val value = it.toDoubleOrNull()
-                when {
-                    value == null -> "请输入数字"
-                    value < 0.0 || value > 2.0 -> "取值范围 0 ~ 2"
-                    else -> null
-                }
-            }
-
-        val maxTokensError: String?
-            get() = maxTokens.trim().takeIf { it.isNotEmpty() }?.let {
-                when {
-                    it.toIntOrNull() == null -> "请输入整数"
-                    it.toInt() <= 0 -> "必须大于 0"
-                    else -> null
-                }
-            }
-
         val canSave: Boolean
             get() = baseUrl.isNotBlank() && model.isNotBlank() &&
-                extraParamsError == null && temperatureError == null && maxTokensError == null &&
                 imageSearchModelsError == null
 
         val displayedAnthropicBase: String
@@ -123,15 +97,12 @@ class SettingsViewModel(
                 model = entry.model,
                 anthropicBaseUrl = entry.anthropicBaseUrl,
                 responsesBaseUrl = entry.responsesBaseUrl,
-                systemPrompt = settings.systemPrompt,
-                temperature = settings.temperature?.toString().orEmpty(),
-                reasoningEffort = settings.reasoningEffort,
-                maxTokens = settings.maxTokens?.toString().orEmpty(),
+                activePersonaName = settings.activePersona.name,
                 imageDetail = settings.imageDetail,
                 includeUsage = settings.includeUsage,
+                includeEnvTime = settings.includeEnvTime,
                 historyImageTurns = settings.historyImageTurns,
                 imageSearchModels = settings.imageSearchModelsRaw,
-                extraParams = settings.extraParams,
                 themeMode = settings.themeMode,
                 loaded = true,
             )
@@ -182,21 +153,21 @@ class SettingsViewModel(
         if (!current.canSave) return
         val entry = current.toEntry()
         // 整表落盘：把当前编辑值写回表里，其它供应商保留（含切走时暂存的未保存修改）。
+        // 角色表不在此保存（角色管理页整表落盘），这里只透传当前快照避免覆盖。
         val providers = current.providers + (current.activeProviderId to entry)
         viewModelScope.launch {
+            val snapshot = settingsRepository.settings.first()
             settingsRepository.updateConfig(
                 providers = providers,
                 activeProviderId = current.activeProviderId,
                 searchProviderId = current.searchProviderId,
-                systemPrompt = current.systemPrompt,
-                temperature = current.temperature.trim().toDoubleOrNull(),
-                reasoningEffort = current.reasoningEffort,
-                maxTokens = current.maxTokens.trim().toIntOrNull(),
+                personas = snapshot.personas,
+                activePersonaId = snapshot.resolvedActivePersonaId,
                 imageDetail = current.imageDetail,
                 includeUsage = current.includeUsage,
+                includeEnvTime = current.includeEnvTime,
                 historyImageTurns = current.historyImageTurns,
                 imageSearchModelsRaw = current.imageSearchModels.trim(),
-                extraParams = current.extraParams.trim(),
             )
             form.value = form.value.copy(providers = providers, status = "已保存")
         }
@@ -239,6 +210,27 @@ class SettingsViewModel(
         ): ViewModelProvider.Factory = viewModelFactory {
             initializer { SettingsViewModel(settingsRepository, chatApi) }
         }
+
+        /** 温度：空串合法（表示服务端默认）；角色编辑器与设置页共用同一条校验。 */
+        fun validateTemperature(text: String): String? =
+            text.trim().takeIf { it.isNotEmpty() }?.let {
+                val value = it.toDoubleOrNull()
+                when {
+                    value == null -> "请输入数字"
+                    value < 0.0 || value > 2.0 -> "取值范围 0 ~ 2"
+                    else -> null
+                }
+            }
+
+        /** 回复长度上限：空串合法（表示服务端默认）；角色编辑器与设置页共用同一条校验。 */
+        fun validateMaxTokens(text: String): String? =
+            text.trim().takeIf { it.isNotEmpty() }?.let {
+                when {
+                    it.toIntOrNull() == null -> "请输入整数"
+                    it.toInt() <= 0 -> "必须大于 0"
+                    else -> null
+                }
+            }
 
         /** 附加参数必须是 JSON 对象；空串合法（表示不附加）。 */
         fun derivedAnthropicBase(providerId: String, chatBaseUrl: String): String =

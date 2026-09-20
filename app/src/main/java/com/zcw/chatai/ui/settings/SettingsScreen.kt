@@ -43,15 +43,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.activity.compose.BackHandler
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.platform.LocalContext
 import com.zcw.chatai.ChatAiApp
 import com.zcw.chatai.data.prefs.ImageDetail
-import com.zcw.chatai.data.prefs.ReasoningEffort
 import com.zcw.chatai.data.prefs.ThemeMode
 import com.zcw.chatai.data.provider.ProviderCatalog
 import com.zcw.chatai.data.provider.ProviderEntry
 import com.zcw.chatai.ui.common.ModelAutocompleteField
+import com.zcw.chatai.ui.persona.PersonasScreen
 import com.zcw.chatai.ui.theme.ChatTheme
 
 @Composable
@@ -59,11 +60,22 @@ fun SettingsScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var showPersonas by remember { mutableStateOf(false) }
+    BackHandler(enabled = showPersonas) { showPersonas = false }
+    if (showPersonas) {
+        PersonasScreen(onBack = { showPersonas = false }, modifier = modifier)
+        return
+    }
     val app = LocalContext.current.applicationContext as ChatAiApp
     val viewModel: SettingsViewModel = viewModel(
         factory = SettingsViewModel.factory(app.settingsRepository, app.chatApi),
     )
     val state by viewModel.state.collectAsState()
+    // 角色名直接读 live 设置流：角色管理页绕过 viewModel 表单直接写库，
+    // 用快照的话返回后还显示旧名。
+    val liveSettings by app.settingsRepository.settings.collectAsState(initial = null)
+    val activePersonaName = liveSettings?.activePersona?.name?.takeIf { it.isNotBlank() }
+        ?: state.activePersonaName
     val colors = ChatTheme.colors
     val scheme = MaterialTheme.colorScheme
     var toolEndpointsExpanded by remember { mutableStateOf(false) }
@@ -242,41 +254,38 @@ fun SettingsScreen(
             )
             ImageSearchStatus(providers = state.providers)
 
+            SectionTitle("角色")
+            Text(
+                text = "当前默认：${activePersonaName.ifBlank { "未设置" }}（新会话记住上次在对话里切换的角色）",
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.onSurfaceVariant,
+            )
+            ActionPill(
+                label = "管理角色（新增 / 修改 / 删除）",
+                onClick = { showPersonas = true },
+            )
+            Text(
+                text = "每份角色自带系统提示词、温度、思考强度、长度上限与附加参数；" +
+                    "会话过程中在「模型与供应商」弹层里切换角色，只影响该会话今后的回答。",
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.onSurfaceVariant,
+            )
+
             SectionTitle("生成")
-            Field(
-                label = "系统提示词",
-                value = state.systemPrompt,
-                onValueChange = { value -> viewModel.update { it.copy(systemPrompt = value) } },
-                placeholder = "留空则不加 system 消息",
-                singleLine = false,
-            )
-            ChoiceRow(
-                label = "思考强度",
-                hint = "用标准 reasoning_effort 字段；“跟随服务端”不发送该参数",
-                options = ReasoningEffort.entries.map { it to it.label() },
-                selected = state.reasoningEffort,
-                onSelect = { value -> viewModel.update { it.copy(reasoningEffort = value) } },
-            )
-            Field(
-                label = "回复长度上限 (max_tokens)",
-                value = state.maxTokens,
-                onValueChange = { value -> viewModel.update { it.copy(maxTokens = value) } },
-                placeholder = "留空 = 服务端默认",
-                keyboardType = KeyboardType.Number,
-                error = state.maxTokensError,
-            )
-            Field(
-                label = "温度 (temperature)",
-                value = state.temperature,
-                onValueChange = { value -> viewModel.update { it.copy(temperature = value) } },
-                placeholder = "留空 = 服务端默认（思考模式下不生效）",
-                keyboardType = KeyboardType.Decimal,
-                error = state.temperatureError,
-            )
             SwitchRow(
                 label = "流式返回用量统计 (stream_options.include_usage)",
                 checked = state.includeUsage,
                 onCheckedChange = { value -> viewModel.update { it.copy(includeUsage = value) } },
+            )
+            SwitchRow(
+                label = "上下文末尾附带当前时间",
+                checked = state.includeEnvTime,
+                onCheckedChange = { value -> viewModel.update { it.copy(includeEnvTime = value) } },
+            )
+            Text(
+                text = "打开后，每次请求最后会带一条系统时间（年月日、星期、时分秒），方便模型判断时效；关闭则完全不发送。",
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.onSurfaceVariant,
             )
 
             SectionTitle("图片")
@@ -309,22 +318,6 @@ fun SettingsScreen(
                 options = ThemeMode.entries.map { it to it.label() },
                 selected = state.themeMode,
                 onSelect = viewModel::setThemeMode,
-            )
-
-            SectionTitle("高级")
-            Field(
-                label = "附加请求参数 (JSON)",
-                value = state.extraParams,
-                onValueChange = { value -> viewModel.update { it.copy(extraParams = value) } },
-                placeholder = "{\"top_k\": 20}",
-                singleLine = false,
-                error = state.extraParamsError,
-            )
-            Text(
-                text = "这段 JSON 的顶层键会合并进请求体，用来适配各家的长尾参数；" +
-                    "model / messages / stream 三个键受保护，不会被覆盖。",
-                style = MaterialTheme.typography.bodySmall,
-                color = scheme.onSurfaceVariant,
             )
 
             state.error?.let { error ->
@@ -370,14 +363,6 @@ fun SettingsScreen(
             )
         }
     }
-}
-
-private fun ReasoningEffort.label(): String = when (this) {
-    ReasoningEffort.FOLLOW_DEFAULT -> "跟随服务端"
-    ReasoningEffort.OFF -> "关闭思考"
-    ReasoningEffort.LOW -> "低"
-    ReasoningEffort.HIGH -> "高"
-    ReasoningEffort.MAX -> "最高"
 }
 
 private fun ImageDetail.label(): String = when (this) {

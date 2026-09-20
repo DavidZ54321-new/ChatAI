@@ -38,4 +38,10 @@ data class ConversationEntity(
      */
     @ColumnInfo(name = "provider_id", defaultValue = "deepseek")
     val providerId: String = "",
+    /**
+     * 绑定的角色 id（`PersonaConfigCodec` 表的 key）；空串 = 跟随当前激活角色
+     * （与 provider_id 同语义，见 `MIGRATION_5_6`）。
+     */
+    @ColumnInfo(name = "persona_id", defaultValue = "")
+    val personaId: String = "",
 )
