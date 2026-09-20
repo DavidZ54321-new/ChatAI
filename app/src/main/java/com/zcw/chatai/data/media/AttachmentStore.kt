@@ -4,10 +4,15 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.util.Log
+import com.zcw.chatai.data.doc.DocumentException
+import com.zcw.chatai.data.doc.DocumentKind
+import com.zcw.chatai.data.doc.DocumentParser
 import com.zcw.chatai.data.model.Attachment
 import com.zcw.chatai.data.model.AttachmentKind
 import com.zcw.chatai.data.net.ChatRequestImage
 import com.zcw.chatai.data.net.ChatRequestVideo
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
@@ -130,6 +135,74 @@ class AttachmentStore(private val context: Context) {
         )
     }
 
+    /**
+     * 导入文档：原文件原样落盘 + 解析出的纯文本写 sidecar `.txt`。
+     * 出站时只发 sidecar 文本（见 [documentText]），原文件是真相源（重解析/未来预览用）。
+     */
+    suspend fun importDocument(
+        conversationId: String,
+        uri: Uri,
+        id: String = UUID.randomUUID().toString(),
+    ): Attachment = withContext(Dispatchers.IO) {
+        val displayName = queryDisplayName(uri)?.takeIf { it.isNotBlank() } ?: "未命名文档"
+        val resolverMime = runCatching { context.contentResolver.getType(uri) }.getOrNull()
+        val bytes = readCapped(uri, AttachmentLimits.MAX_DOC_BYTES)
+            ?: throw AttachmentException(
+                "文档超过 ${AttachmentLimits.MAX_DOC_BYTES / 1024 / 1024} MB 上限，请拆分或压缩后再发送",
+            )
+        if (bytes.isEmpty()) throw AttachmentException("文档是空文件")
+        val kind = try {
+            DocumentKind.detect(resolverMime, displayName, bytes)
+        } catch (t: DocumentException) {
+            Log.w(TAG, "不支持的文档类型：$displayName", t)
+            throw AttachmentException(t.message ?: "暂不支持这种文档格式", t)
+        }
+        val parsed = try {
+            DocumentParser.parse(bytes, kind, displayName)
+        } catch (t: DocumentException) {
+            Log.w(TAG, "文档解析失败：$displayName", t)
+            throw AttachmentException(t.message ?: "文档解析失败", t)
+        }
+        val relativePath = "$DIR/$conversationId/$id.${extensionFor(kind, displayName)}"
+        val target = File(context.filesDir, relativePath)
+        // sidecar 必须和原文件不同名：TEXT 文档原文件本身就是 .txt（同名会覆盖原文件）。
+        val sidecarRelative = "$DIR/$conversationId/$id.extracted.txt"
+        try {
+            target.parentFile?.mkdirs()
+            target.writeBytes(bytes)
+            File(context.filesDir, sidecarRelative).writeText(parsed.text, Charsets.UTF_8)
+        } catch (t: Throwable) {
+            target.delete()
+            File(context.filesDir, sidecarRelative).delete()
+            throw AttachmentException("文档保存失败，请重试", t)
+        }
+        Attachment(
+            id = id,
+            kind = AttachmentKind.DOCUMENT,
+            relativePath = relativePath,
+            mimeType = canonicalMime(kind, resolverMime),
+            width = 0,
+            height = 0,
+            sizeBytes = bytes.size.toLong(),
+            extractedPath = sidecarRelative,
+            extractedMeta = parsed.meta,
+            extractedChars = parsed.text.length.toLong(),
+            displayName = displayName,
+        )
+    }
+
+    /** 文档 sidecar 纯文本。调用方保证在 IO 线程上（组上下文时统一切过一次线程）。 */
+    fun documentText(attachment: Attachment): String? {
+        val relative = attachment.extractedPath ?: return null
+        val file = File(context.filesDir, relative)
+        if (!file.isFile) return null
+        return try {
+            file.readText(Charsets.UTF_8).takeIf { it.isNotEmpty() }
+        } catch (t: Exception) {
+            null
+        }
+    }
+
     private fun isMp4(uri: Uri): Boolean {
         val type = runCatching { context.contentResolver.getType(uri) }.getOrNull()
         if (type == MIME_MP4) return true
@@ -177,10 +250,66 @@ class AttachmentStore(private val context: Context) {
         return ChatRequestImage(dataUrl = ImageCodec.toDataUrl(mime, bytes), detail = detail)
     }
 
+    private fun queryDisplayName(uri: Uri): String? = runCatching {
+        context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            }
+    }.getOrNull()
+
+    /** 流式读 + 计数：超限返回 null（不落盘、不 whole 读），IO 异常直接抛可读错误。 */
+    private fun readCapped(uri: Uri, maxBytes: Long): ByteArray? {
+        try {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                val out = ByteArrayOutputStream()
+                val buffer = ByteArray(8192)
+                var total = 0L
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    if (read == 0) continue
+                    total += read
+                    if (total > maxBytes) return null
+                    out.write(buffer, 0, read)
+                }
+                return out.toByteArray()
+            }
+        } catch (t: Throwable) {
+            throw AttachmentException("无法读取这个文档（文件已损坏或权限不足）", t)
+        }
+        throw AttachmentException("无法读取这个文档（文件已损坏或权限不足）")
+    }
+
+    private fun extensionFor(kind: DocumentKind, displayName: String): String = when (kind) {
+        DocumentKind.PDF -> "pdf"
+        DocumentKind.DOCX -> "docx"
+        DocumentKind.XLSX -> "xlsx"
+        DocumentKind.PPTX -> "pptx"
+        DocumentKind.TEXT -> displayName.substringAfterLast('.', "txt").lowercase()
+            .takeIf { it in setOf("txt", "md", "markdown", "csv", "log", "json") } ?: "txt"
+    }
+
+    private fun canonicalMime(kind: DocumentKind, resolverMime: String?): String {
+        if (!resolverMime.isNullOrBlank()) return resolverMime
+        return when (kind) {
+            DocumentKind.PDF -> "application/pdf"
+            DocumentKind.DOCX ->
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            DocumentKind.XLSX ->
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            DocumentKind.PPTX ->
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            DocumentKind.TEXT -> "text/plain"
+        }
+    }
+
     fun delete(attachments: List<Attachment>) {
         attachments.forEach { attachment ->
             runCatching { fileOf(attachment).delete() }
             runCatching { thumbnailOf(attachment).delete() }
+            runCatching {
+                attachment.extractedPath?.let { File(context.filesDir, it).delete() }
+            }
         }
     }
 
@@ -216,5 +345,6 @@ class AttachmentStore(private val context: Context) {
     companion object {
         const val DIR = "attachments"
         const val MIME_MP4 = "video/mp4"
+        private const val TAG = "AttachmentStore"
     }
 }

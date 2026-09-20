@@ -1,6 +1,6 @@
 package com.zcw.chatai.data.model
 
-enum class AttachmentKind { IMAGE, VIDEO }
+enum class AttachmentKind { IMAGE, VIDEO, DOCUMENT }
 
 /**
  * 消息附件。二进制不入库，只把元数据以 JSON 存进 `messages.attachments`，
@@ -30,4 +30,12 @@ data class Attachment(
     val pendingKey: String? = null,
     /** 崩溃恢复日志：与 [pendingKey] 配套的上传凭证（JSON，300 秒有效）。 */
     val pendingPolicy: String? = null,
+    /** 文档解析出的纯文本 sidecar（相对 `filesDir` 的路径，仅 DOCUMENT 有）。 */
+    val extractedPath: String? = null,
+    /** sidecar 的规模标注（如 "共 8 页"；解析期写入，出站直接引用）。 */
+    val extractedMeta: String? = null,
+    /** sidecar 纯文本字符数（会话文档配额用；老数据为 0）。 */
+    val extractedChars: Long = 0,
+    /** 用户选择时的原始文件名（`【文档：xxx】` 标注与缩略图用；图片/视频为 null）。 */
+    val displayName: String? = null,
 )

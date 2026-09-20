@@ -24,6 +24,7 @@ import com.zcw.chatai.data.web.WebFetcher
 import com.zcw.chatai.data.web.WebSearchProvider
 import com.zcw.chatai.ui.chat.RemoteImages
 import com.zcw.chatai.util.MainThreadWatchdog
+import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -83,6 +84,11 @@ class ChatAiApp : Application() {
     override fun onCreate() {
         super.onCreate()
         RemoteImages.install(this)
+        // PdfBox-Android 的字体/AFM 资源走 APK assets，必须先给它 AssetManager，
+        // 否则 new PDFTextStripper() 直接炸（表现为解析失败，堆栈只剩类名）。
+        // 初始化失败必须留日志：之后每个 PDF 都会失败，静默吞掉就没法查了。
+        runCatching { PDFBoxResourceLoader.init(this) }
+            .onFailure { android.util.Log.w("ChatAiApp", "PDFBox 初始化失败，PDF 解析不可用", it) }
         registerComponentCallbacks(
             object : ComponentCallbacks2 {
                 override fun onTrimMemory(level: Int) {

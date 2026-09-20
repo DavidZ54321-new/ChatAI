@@ -78,6 +78,7 @@ fun ChatScreen(
     onOpenDrawer: () -> Unit,
     onAddImage: (Uri) -> Unit,
     onAddVideo: (Uri) -> Unit,
+    onAddDocument: (Uri) -> Unit,
     onRemoveAttachment: (String) -> Unit,
     onModelClick: () -> Unit,
     onToggleWebSearch: () -> Unit,
@@ -113,6 +114,10 @@ fun ChatScreen(
     val pickVideo = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia(),
     ) { uri -> uri?.let(onAddVideo) }
+
+    val pickDocument = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri -> uri?.let(onAddDocument) }
 
     val notifyPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -303,7 +308,7 @@ fun ChatScreen(
                     pending = state.pending,
                     onSend = { sendKeepingAlive() },
                     onStop = onStop,
-                    onAddImage = { attachOpen = true },
+                    onAttachClick = { attachOpen = true },
                     onRemoveAttachment = onRemoveAttachment,
                     onModelClick = onModelClick,
                     webSearchEnabled = state.webSearchEnabled,
@@ -395,6 +400,13 @@ fun ChatScreen(
                     },
                 )
             }
+            SheetAction(
+                label = "选择文档（PDF / Word / 表格 / 文本）",
+                onClick = {
+                    attachOpen = false
+                    pickDocument.launch(DOCUMENT_MIME_TYPES)
+                },
+            )
         }
     }
 
@@ -407,6 +419,18 @@ fun ChatScreen(
         }
     }
 }
+
+/** 文档选择器的 MIME 过滤（与 DocumentKind 首期范围对齐）。 */
+private val DOCUMENT_MIME_TYPES = arrayOf(
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "text/plain",
+    "text/markdown",
+    "text/csv",
+    "application/json",
+)
 
 private fun createCaptureUri(context: android.content.Context): Uri? = try {
     val dir = File(context.cacheDir, "captures").apply { mkdirs() }

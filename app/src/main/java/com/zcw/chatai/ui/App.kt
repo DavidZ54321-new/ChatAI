@@ -73,6 +73,7 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
                 onOpenDrawer = { scope.launch { drawerState.open() } },
                 onAddImage = viewModel::addAttachment,
                 onAddVideo = viewModel::addVideo,
+                onAddDocument = viewModel::addDocument,
                 onRemoveAttachment = viewModel::removeAttachment,
                 onModelClick = { showModelPicker = true },
                 onToggleWebSearch = viewModel::toggleWebSearch,

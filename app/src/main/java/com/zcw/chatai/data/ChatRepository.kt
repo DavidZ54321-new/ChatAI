@@ -402,10 +402,10 @@ class ChatRepository(
 
     /** 冷启动调用：删掉不再被任何消息引用、且超过 6 小时的孤儿文件。 */
     suspend fun sweepOrphanAttachments() {
-        val referenced = db.messageDao().getAllAttachmentJson()
+        val decoded = db.messageDao().getAllAttachmentJson()
             .flatMap { AttachmentCodec.decode(it) }
-            .map { it.relativePath }
-            .toSet()
+        val referenced = decoded.map { it.relativePath }.toSet() +
+            decoded.mapNotNull { it.extractedPath }.toSet()
         attachmentStore.sweepOrphans(referenced + referenced.map { ImageCodec.thumbRelativePath(it) })
     }
 
@@ -442,7 +442,13 @@ class ChatRepository(
             ),
         )
         if (conversation.messageCount == 0 && conversation.title == ConversationTitle.FALLBACK) {
-            val titleSource = text.ifBlank { "图片" }
+            val titleSource = text.ifBlank {
+                when {
+                    attachments.any { it.kind == AttachmentKind.DOCUMENT } -> "文档"
+                    attachments.any { it.kind == AttachmentKind.VIDEO } -> "视频"
+                    else -> "图片"
+                }
+            }
             db.conversationDao().rename(conversationId, ConversationTitle.fromFirstMessage(titleSource), timestamp)
         }
         refreshSummary(conversationId)
@@ -741,6 +747,7 @@ class ChatRepository(
                     attachmentStore.toRequestImage(attachment, config.imageDetail)
                 },
                 videoProvider = { attachment -> resolvedVideos[attachment.id] },
+                documentProvider = { attachment -> attachmentStore.documentText(attachment) },
             )
         }
         // 计时从这里开始（含首 token 延迟），和 UI 上「已深度思考」的口径一致。

@@ -9,6 +9,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -37,6 +38,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.zcw.chatai.R
 import com.zcw.chatai.ui.theme.ChatTheme
@@ -55,7 +57,7 @@ fun Composer(
     pending: List<PendingAttachment>,
     onSend: () -> Unit,
     onStop: () -> Unit,
-    onAddImage: () -> Unit,
+    onAttachClick: () -> Unit,
     onRemoveAttachment: (String) -> Unit,
     onModelClick: () -> Unit,
     webSearchEnabled: Boolean,
@@ -122,27 +124,32 @@ fun Composer(
                 }
             },
         )
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconBareButton(
-                painter = painterResource(R.drawable.ic_image),
-                contentDescription = "添加图片",
-                onClick = onAddImage,
-                iconSize = 22.dp,
-                tint = scheme.onSurfaceVariant,
-            )
-            WebSearchToggle(
-                enabled = webSearchEnabled,
-                available = webSearchAvailable,
-                onClick = onToggleWebSearch,
-            )
-            ModelChip(model = model, onClick = onModelClick)
-            Spacer(Modifier.weight(1f))
-            PrimaryActionButton(
-                isTurnActive = isTurnActive,
-                canSend = canSend,
-                onSend = onSend,
-                onStop = onStop,
-            )
+        // 按钮行：附件 → 模型 → 联网 → 弹簧 → 发送。模型 chip 宽度上限是行宽的 25%，
+        // 长模型名只省略号，不把发送键挤出去（BoxWithConstraints 读的是行可用宽）。
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            val chipMaxWidth = maxWidth * 0.25f
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconBareButton(
+                    painter = painterResource(R.drawable.ic_attach),
+                    contentDescription = "添加附件",
+                    onClick = onAttachClick,
+                    iconSize = 22.dp,
+                    tint = scheme.onSurfaceVariant,
+                )
+                ModelChip(model = model, onClick = onModelClick, maxWidth = chipMaxWidth)
+                WebSearchToggle(
+                    enabled = webSearchEnabled,
+                    available = webSearchAvailable,
+                    onClick = onToggleWebSearch,
+                )
+                Spacer(Modifier.weight(1f))
+                PrimaryActionButton(
+                    isTurnActive = isTurnActive,
+                    canSend = canSend,
+                    onSend = onSend,
+                    onStop = onStop,
+                )
+            }
         }
     }
 }
@@ -167,7 +174,7 @@ private fun WebSearchToggle(enabled: Boolean, available: Boolean, onClick: () ->
 }
 
 @Composable
-private fun ModelChip(model: String, onClick: () -> Unit) {
+private fun ModelChip(model: String, onClick: () -> Unit, maxWidth: Dp) {
     val colors = ChatTheme.colors
     Box(
         modifier = Modifier
@@ -182,7 +189,7 @@ private fun ModelChip(model: String, onClick: () -> Unit) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.widthIn(max = 170.dp),
+            modifier = Modifier.widthIn(max = maxWidth),
         )
     }
 }

@@ -54,8 +54,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
+import com.zcw.chatai.data.doc.DocumentLabel
 import com.zcw.chatai.data.media.ImageCodec
 import com.zcw.chatai.data.media.VideoMetadata
+import com.zcw.chatai.data.model.AttachmentKind
 import com.zcw.chatai.ui.theme.ChatTheme
 import java.io.File
 import kotlin.math.roundToInt
@@ -122,11 +124,13 @@ fun AttachmentThumbnail(
     modifier: Modifier = Modifier,
     isVideo: Boolean = false,
     durationMs: Long? = null,
+    /** 文档类型戳（如 PDF）：非空时不解位图，中央显示大写字母（尺寸/圆角与图片一致）。 */
+    label: String? = null,
 ) {
     val colors = ChatTheme.colors
     // 按实际显示尺寸解码：82dp 的缩略图没必要解 400px 的位图（多图时差别很明显）。
     val maxEdge = with(LocalDensity.current) { (size.value * density).roundToInt() }.coerceAtLeast(96)
-    val bitmap = rememberBitmap(path, maxEdge = maxEdge)
+    val bitmap = rememberBitmap(if (label == null) path else null, maxEdge = maxEdge)
     Box(
         modifier = modifier
             .size(size)
@@ -135,6 +139,14 @@ fun AttachmentThumbnail(
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
+        if (label != null) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            return@Box
+        }
         val image = bitmap
         if (image != null) {
             Image(
@@ -208,9 +220,11 @@ fun MessageImageRow(
             AttachmentThumbnail(
                 path = image.thumbnailPath,
                 size = side,
-                onClick = { onOpen(image) },
+                // 文档不可点（尚无预览器）：点透会导致空白预览弹层。
+                onClick = { if (image.label == null) onOpen(image) },
                 isVideo = image.isVideo,
                 durationMs = image.durationMs,
+                label = image.label,
             )
         }
     }
@@ -442,8 +456,11 @@ fun PendingAttachmentStrip(
                     path = item.thumbnailPath,
                     size = 64.dp,
                     onClick = {},
-                    isVideo = item.attachment.kind == com.zcw.chatai.data.model.AttachmentKind.VIDEO,
+                    isVideo = item.attachment.kind == AttachmentKind.VIDEO,
                     durationMs = item.attachment.durationMs,
+                    label = item.attachment
+                        .takeIf { it.kind == AttachmentKind.DOCUMENT }
+                        ?.let { DocumentLabel.of(it.mimeType, it.displayName ?: it.relativePath) },
                 )
                 Box(
                     modifier = Modifier

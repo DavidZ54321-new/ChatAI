@@ -14,6 +14,8 @@ data class MessageImage(
     val height: Int,
     val isVideo: Boolean = false,
     val durationMs: Long? = null,
+    /** 文档类型戳（如 PDF）：非空时缩略图显示字母且不可点。 */
+    val label: String? = null,
 )
 
 /** 待发送附件（已落私有目录，发送成功前可撤回并删文件）。 */

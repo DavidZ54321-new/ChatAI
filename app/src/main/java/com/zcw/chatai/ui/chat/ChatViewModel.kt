@@ -9,6 +9,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.zcw.chatai.data.ChatRepository
 import com.zcw.chatai.data.SendResult
 import com.zcw.chatai.data.StreamingMessage
+import com.zcw.chatai.data.doc.DocumentLabel
 import com.zcw.chatai.data.media.AttachmentLimits
 import com.zcw.chatai.data.media.AttachmentStore
 import com.zcw.chatai.data.model.Attachment
@@ -183,6 +184,28 @@ class ChatViewModel(
                     )
                 }
                 .onFailure { t -> notice.value = t.message ?: "图片处理失败" }
+        }
+    }
+
+    /** 导入文档：原文件落盘 + 解析文本写 sidecar；失败原因直接展示（解析器 message 已面向用户）。 */
+    fun addDocument(uri: Uri) {
+        viewModelScope.launch {
+            val docCount = pending.value.count { it.attachment.kind == AttachmentKind.DOCUMENT }
+            if (docCount >= AttachmentLimits.MAX_DOCUMENTS) {
+                notice.value = "最多只能发送 ${AttachmentLimits.MAX_DOCUMENTS} 个文档"
+                return@launch
+            }
+            val id = ensureConversation()
+            runCatching { attachmentStore.importDocument(id, uri) }
+                .onSuccess { attachment ->
+                    pending.value = pending.value + PendingAttachment(
+                        id = attachment.id,
+                        // 文档没有位图缩略图：传空路径，缩略图组件显示类型戳（见前端）。
+                        thumbnailPath = "",
+                        attachment = attachment,
+                    )
+                }
+                .onFailure { t -> notice.value = t.message ?: "文档处理失败" }
         }
     }
 
@@ -466,6 +489,9 @@ class ChatViewModel(
                 height = attachment.height,
                 isVideo = attachment.kind == AttachmentKind.VIDEO,
                 durationMs = attachment.durationMs,
+                label = attachment.takeIf { it.kind == AttachmentKind.DOCUMENT }?.let {
+                    DocumentLabel.of(it.mimeType, it.displayName ?: it.relativePath)
+                },
             )
         },
         toolResult = toolResult,

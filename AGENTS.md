@@ -363,6 +363,24 @@ python -c "import sqlite3;print([r for r in sqlite3.connect('q.db').execute('PRA
 
 顺带：pwsh 里比较**中文字符串字面量**会被控制台编码吃掉（永远 `False`），要验内容就落到文件再读。
 
+## 文档解析（`data/doc`，2026-09 实测血泪）
+
+- **不要 Apache POI**：xmlbeans 走 JAXP 拿 SAX 解析器，而真机（至少三星 S25 / Android 16）
+  无视系统属性与 `META-INF/services`、永远返回自带 Expat；xmlbeans 硬要
+  `declaration-handler`，Expat 不支持 → docx/xlsx/pptx 在真机上**全部**解析失败
+  （JVM 单测用 JDK 自带 Xerces，全过，纯属假象）。教训：凡是走 JAXP/ServiceLoader
+  找实现的库，真机行为都不可信，必须真机实测。
+- 现在的组合：PDF 用 `PdfBox-Android`（`ChatAiApp.onCreate` 里必须先
+  `PDFBoxResourceLoader.init`，否则 stripper 炸且堆栈只剩类名；它跑不了纯 JVM 单测，
+  别写）；OOXML 用**手写 zip + kxml2**（直接 `new KXmlParser()`，不走任何查找，
+  JVM/真机一致）。zip 只认中央目录；WPS/365 的 STORED + data descriptor 条目
+  （psmdcp）要先清洗（`OoxmlZip`，JDK ZipInputStream 拒读这种条目）。
+- **门内有多少发多少**：解析/组装不截断（只有 5000 行/50 表/2 万共享字符串的内存安全网）；
+  单次发送的附件文字超 10 万字符直接拒（`AttachmentLimits.validate`，
+  字数来自 `Attachment.extractedChars`，导入时落库）；历史文档每轮全文重发
+  （`ContextBuilder` 对文档无视保留轮次，只有 sidecar 丢失才 `［文档不可用］）。
+- 调试：解析失败堆栈只打 logcat（`AttachmentStore` TAG），界面只给人话。
+
 ## Tracked-file trap
 
 `.kotlin/` matches no `.gitignore` entry, so `git add .` will commit JetBrains

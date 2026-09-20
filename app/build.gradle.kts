@@ -19,6 +19,9 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // PdfBox-Android 的方法数超过 64K 上限；minSdk 29 原生支持 multidex，只需开开关。
+        multiDexEnabled = true
     }
 
     buildTypes {
@@ -57,6 +60,9 @@ dependencies {
     implementation(libs.androidx.room.ktx)
     implementation(libs.androidx.room.runtime)
     implementation(libs.jsoup)
+    // 文档解析：PDF 走 PdfBox-Android；Office OOXML 走手写 XmlPullParser（kxml2），见上。
+    implementation(libs.kxml2)
+    implementation(libs.pdfbox.android)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.markdown.renderer)

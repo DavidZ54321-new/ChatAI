@@ -25,6 +25,7 @@ object ContextBuilder {
     const val VIDEO_OMITTED = "［视频已省略］"
     const val IMAGE_MISSING = "［图片不可用］"
     const val VIDEO_MISSING = "［视频不可用］"
+    const val DOCUMENT_MISSING = "［文档不可用］"
 
     /** 工具返回空文本时的占位：保留该行以应答对应的 assistant tool_calls。 */
     const val TOOL_EMPTY = "[工具无返回内容]"
@@ -49,6 +50,7 @@ object ContextBuilder {
         imageTurns: Int,
         imageProvider: (Attachment) -> ChatRequestImage?,
         videoProvider: (Attachment) -> ChatRequestVideo? = { null },
+        documentProvider: (Attachment) -> String? = { null },
     ): List<ChatRequestMessage> {
         val usable = usableHistory(history)
 
@@ -75,11 +77,11 @@ object ContextBuilder {
                 Role.TOOL -> Unit
 
                 Role.ASSISTANT -> {
-                    wire += toWire(message, keepAttachments, labels, imageProvider, videoProvider)
+                    wire += toWire(message, keepAttachments, labels, imageProvider, videoProvider, documentProvider)
                     for (call in message.toolCalls) {
                         val answer = answers[call.id]?.removeFirstOrNull()
                         wire += if (answer != null) {
-                            toWire(answer, keepAttachments, labels, imageProvider, videoProvider)
+                            toWire(answer, keepAttachments, labels, imageProvider, videoProvider, documentProvider)
                         } else {
                             // assistant 已落 tool_calls 但应答行缺失（崩溃窗口）：
                             // 合成占位应答，绝不让请求非法。
@@ -92,7 +94,7 @@ object ContextBuilder {
                     }
                 }
 
-                else -> wire += toWire(message, keepAttachments, labels, imageProvider, videoProvider)
+                else -> wire += toWire(message, keepAttachments, labels, imageProvider, videoProvider, documentProvider)
             }
         }
         return wire
@@ -104,6 +106,7 @@ object ContextBuilder {
         labels: Map<String, String>,
         imageProvider: (Attachment) -> ChatRequestImage?,
         videoProvider: (Attachment) -> ChatRequestVideo?,
+        documentProvider: (Attachment) -> String?,
     ): ChatRequestMessage {
         if (message.role == Role.TOOL) {
             // 空白工具结果也必须保留：它对应的 assistant tool_calls 需要被应答，
@@ -143,15 +146,27 @@ object ContextBuilder {
         } else {
             emptyList()
         }
+        // 文档以纯文本出站：有多少发多少，不截断、不看保留轮次（配额在发送前拦）。
+        // 图片/视频仍按保留规则走。
+        val documents = message.attachments.filter { it.kind == AttachmentKind.DOCUMENT }
+        val docText = documentBlocks(documents, documentProvider)
         val hasVideo = message.attachments.any { it.kind == AttachmentKind.VIDEO }
+        val hasImage = message.attachments.any { it.kind == AttachmentKind.IMAGE }
+        val hasDocument = documents.isNotEmpty()
+        // 纯文档消息不受保留影响；图文混排沿用旧规则（已有单测锁定）。
+        // sidecar 丢失的文档必须亮牌：不能因为同条消息里有图就静默吞掉。
         val note = when {
-            !keep -> if (hasVideo) VIDEO_OMITTED else IMAGE_OMITTED
-            images.isEmpty() && videos.isEmpty() -> if (hasVideo) VIDEO_MISSING else IMAGE_MISSING
+            !keep && (hasVideo || hasImage) -> if (hasVideo) VIDEO_OMITTED else IMAGE_OMITTED
+            hasDocument && docText.isBlank() -> DOCUMENT_MISSING
+            images.isEmpty() && videos.isEmpty() && docText.isBlank() -> when {
+                hasVideo -> VIDEO_MISSING
+                else -> IMAGE_MISSING
+            }
             else -> null
         }
         return ChatRequestMessage(
             role = message.role.wire,
-            content = withNote(message.content, note),
+            content = withNote(withNote(message.content, docText.ifBlank { null }), note),
             images = images,
             videos = videos,
         )
@@ -161,5 +176,28 @@ object ContextBuilder {
         note == null -> content
         content.isBlank() -> note
         else -> "$content\n\n$note"
+    }
+
+    /**
+     * 文档块（纯函数，JVM 单测覆盖）：`【文档：report.pdf，共 8 页】<正文>`，
+     * 多文档用空行分隔；有多少拼多少，不截断（配额在发送前按会话拦）。
+     */
+    internal fun documentBlocks(
+        documents: List<Attachment>,
+        documentProvider: (Attachment) -> String?,
+    ): String {
+        val blocks = documents.mapNotNull { attachment ->
+            val text = documentProvider(attachment)?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val name = attachment.displayName?.takeIf { it.isNotBlank() }
+                ?: attachment.relativePath.substringAfterLast('/')
+            val meta = attachment.extractedMeta
+            buildString {
+                append("【文档：").append(name)
+                if (!meta.isNullOrBlank()) append("，").append(meta)
+                append("】\n").append(text)
+            }
+        }
+        if (blocks.isEmpty()) return ""
+        return blocks.joinToString("\n\n")
     }
 }

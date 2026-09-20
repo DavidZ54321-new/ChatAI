@@ -17,7 +17,9 @@ kotlinxSerialization = "1.11.0"
 kotlinxCoroutines = "1.11.0"
 markdownRenderer = "0.45.0"
 materialIconsCore = "1.7.8"
-jsoup = "1.18.3"
+ jsoup = "1.18.3"
+ pdfboxAndroid = "2.0.27.0"
+ kxml = "2.3.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -47,7 +49,13 @@ kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
 okhttp-sse = { group = "com.squareup.okhttp3", name = "okhttp-sse", version.ref = "okhttp" }
 okhttp-mockwebserver = { group = "com.squareup.okhttp3", name = "mockwebserver", version.ref = "okhttp" }
-jsoup = { group = "org.jsoup", name = "jsoup", version.ref = "jsoup" }
+ jsoup = { group = "org.jsoup", name = "jsoup", version.ref = "jsoup" }
+ # Office 解析只用 PdfBox（PDF）+ kxml2（OOXML，手写 XmlPullParser）：
+ # Apache POI 在真机上无解——xmlbeans 走 JAXP 拿 SAX 解析器，而该设备无视
+ # 系统属性与 service 文件、永远返回自带 Expat（不支持 declaration-handler）。
+ # kxml2 直接实例化实现类，不走任何 JAXP 查找，JVM 与真机行为一致。
+ kxml2 = { group = "net.sf.kxml", name = "kxml2", version.ref = "kxml" }
+ pdfbox-android = { group = "com.tom-roush", name = "pdfbox-android", version.ref = "pdfboxAndroid" }
 markdown-renderer = { group = "com.mikepenz", name = "multiplatform-markdown-renderer", version.ref = "markdownRenderer" }
 markdown-renderer-m3 = { group = "com.mikepenz", name = "multiplatform-markdown-renderer-m3", version.ref = "markdownRenderer" }
 markdown-renderer-code = { group = "com.mikepenz", name = "multiplatform-markdown-renderer-code", version.ref = "markdownRenderer" }

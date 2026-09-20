@@ -48,6 +48,10 @@ object AttachmentCodec {
         remoteExpiresAt = remoteExpiresAt,
         pendingKey = pendingKey,
         pendingPolicy = pendingPolicy,
+        extractedPath = extractedPath,
+        extractedMeta = extractedMeta,
+        extractedChars = extractedChars,
+        displayName = displayName,
     )
 
     private fun AttachmentDto.toModel(): Attachment? {
@@ -67,6 +71,10 @@ object AttachmentCodec {
             remoteExpiresAt = remoteExpiresAt,
             pendingKey = pendingKey,
             pendingPolicy = pendingPolicy,
+            extractedPath = extractedPath,
+            extractedMeta = extractedMeta,
+            extractedChars = extractedChars,
+            displayName = displayName,
         )
     }
 
@@ -88,4 +96,8 @@ private data class AttachmentDto(
     val remoteExpiresAt: Long? = null,
     val pendingKey: String? = null,
     val pendingPolicy: String? = null,
+    val extractedPath: String? = null,
+    val extractedMeta: String? = null,
+    val extractedChars: Long = 0,
+    val displayName: String? = null,
 )
