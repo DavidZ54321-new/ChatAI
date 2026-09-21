@@ -27,3 +27,29 @@ https://www.apache.org/licenses/LICENSE-2.0
 
 The upstream license text is published at
 https://github.com/SimonSchubert/Kai/blob/main/LICENSE.txt
+
+## PlantUML TeaVM engine — `@plantuml/core` (bundled)
+
+- **Files:** `app/src/main/assets/plantuml/plantuml.js`,
+  `app/src/main/assets/plantuml/viz-global.js`,
+  `app/src/main/assets/plantuml/LICENSE-plantuml-core.txt`
+- **Source:** https://github.com/plantuml/plantuml (published on npm as
+  [`@plantuml/core`](https://www.npmjs.com/package/@plantuml/core))
+- **Version / tarball:** `@plantuml/core@1.2026.6`
+  (`https://registry.npmjs.org/@plantuml/core/-/core-1.2026.6.tgz`,
+  integrity `sha512-e+s8jtAKT6kb7yvOCXv0exXOp7FvyKYDcpv+aQrThwXUQgdTGP+fb9hPZQr7jbeEMuUHbxjH1HYLwNZZxw3hJg==`)
+- **Retrieved:** 2026-09-21
+- **License:** MIT
+- **Copyright:** (C) 2009-2024, Arnaud Roques (PlantUML)
+- **Bundled:** `plantuml.js` (PlantUML TeaVM-compiled engine, ES module),
+  `viz-global.js` (Viz.js 3.24.0 — Graphviz layout engine, classic script).
+  `emoji.js` / `openiconic.js` are **not** bundled (only needed for sprite syntax).
+
+**Pin ≥ `1.2026.6`.** PlantUML itself is GPL-3.0, but the npm package is
+assembled from the separate **MIT license flavor** (`plantuml-mit` subproject) —
+only since `1.2026.6`. Earlier versions of `@plantuml/core` were
+GPL-3.0-or-later and **must not** be bundled into this app. Do not downgrade.
+
+The bundled `LICENSE-plantuml-core.txt` is the upstream MIT license text shipped
+inside the npm package. Full text: https://opensource.org/licenses/MIT
+

@@ -8,6 +8,7 @@ import android.webkit.JavascriptInterface
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.background
@@ -36,8 +37,10 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
+import androidx.webkit.WebViewAssetLoader
 import com.zcw.chatai.ui.md.PreviewLanguage
 import com.zcw.chatai.ui.md.PreviewTarget
+import java.io.ByteArrayInputStream
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -48,9 +51,12 @@ import org.json.JSONObject
  * 预览全屏 viewer（独立 Dialog，随开随建、退出即销毁，列表里永远没有 WebView）。
  *
  * - mermaid：asset 壳离线渲染，页内渐进显示（大图转多久都不超时，用户随时可关），支持缩放；
+ * - PlantUML：同一套 asset 壳离线渲染（@plantuml/core 的 TeaVM 引擎），同样支持缩放与深色；
  * - 动效 SVG：在这里播（SMIL/CSS/JS 通吃），支持缩放；
  * - HTML：在这里跑，站外跳转转外部浏览器；
- * - WebView 锁定：JS 开，只有 mermaid 壳页挂了收完成信号的 bridge，`file://` 不给外人用。
+ * - WebView 锁定：JS 开，只有 mermaid / PlantUML 壳页挂了收完成信号的 bridge。
+ *   mermaid 走 `file://` asset，PlantUML 因 ES module 同源要求改走 WebViewAssetLoader；
+ *   两者都不给外人用 `file://`（PlantUML 侧更是显式拒绝一切站外子资源）。
  *
  * 导出（PNG/GIF）暂不提供：本机整图截取在真机上不可靠，先封存，等有稳定方案再加。
  */
@@ -63,15 +69,19 @@ fun PreviewViewerDialog(
     val scope = rememberCoroutineScope()
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val isMermaid = target.language == PreviewLanguage.MERMAID
+    val isPlantUml = target.language == PreviewLanguage.PLANTUML
     var pageReady by remember { mutableStateOf(false) }
     var renderRequested by remember { mutableStateOf(false) }
     // 渲染有结果了（成功/失败/进程被杀）：轮询据此收手，别再盖写成人话之外的结论。
     var renderSettled by remember { mutableStateOf(false) }
-    var notice by remember(target) { mutableStateOf(if (isMermaid) "渲染中…" else null) }
+    var notice by remember(target) {
+        mutableStateOf(if (isMermaid || isPlantUml) "渲染中…" else null)
+    }
     val title = when (target.language) {
         PreviewLanguage.MERMAID -> "mermaid 预览"
         PreviewLanguage.SVG -> "SVG 预览"
         PreviewLanguage.HTML -> "HTML 预览"
+        PreviewLanguage.PLANTUML -> "PlantUML 预览"
     }
 
     Dialog(
@@ -115,86 +125,140 @@ fun PreviewViewerDialog(
                 modifier = Modifier.fillMaxSize(),
                 factory = { ctx ->
                     WebView(ctx).apply {
-                        if (isMermaid) {
-                            configureAssetLocked()
-                            addJavascriptInterface(
-                                ViewerBridge(
-                                    onDone = { ok, msg ->
-                                        // 错误快路；成功以轮询为准（bridge 成功回执在真机上丢过）。
-                                        if (!ok) {
-                                            Log.d(TAG, "viewer onDone ok=false msg=${msg.take(120)}")
-                                            pageReady = false
-                                            renderSettled = true
-                                            notice = "渲染失败：$msg"
-                                        }
-                                    },
-                                ),
-                                "MermaidViewer",
-                            )
-                            webViewClient = viewerClient(
-                                onPageFinished = {
-                                    if (!renderRequested) {
-                                        renderRequested = true
-                                        evaluateJavascript(
-                                            "window.renderIntoPage(" +
-                                                JSONObject.quote(target.code) + "," +
-                                                (if (dark) "true" else "false") + ")",
-                                            null,
-                                        )
-                                        // 成功判定不依赖 bridge：轮询 SVG 是否落页，
-                                        // 60s 不出图才报超时（大图只管等）。
-                                        scope.launch {
-                                            val deadline =
-                                                android.os.SystemClock.uptimeMillis() + 60_000
-                                            while (
-                                                !renderSettled &&
-                                                android.os.SystemClock.uptimeMillis() < deadline
-                                            ) {
-                                                kotlinx.coroutines.delay(500)
-                                                if (renderSettled) return@launch
-                                                if (this@apply.hasSvg()) {
-                                                    pageReady = true
+                        when {
+                            isMermaid -> {
+                                configureAssetLocked()
+                                addJavascriptInterface(
+                                    ViewerBridge(
+                                        onDone = { ok, msg ->
+                                            // 错误快路；成功以轮询为准（bridge 成功回执在真机上丢过）。
+                                            if (!ok) {
+                                                Log.d(TAG, "viewer onDone ok=false msg=${msg.take(120)}")
+                                                pageReady = false
+                                                renderSettled = true
+                                                notice = "渲染失败：$msg"
+                                            }
+                                        },
+                                    ),
+                                    "MermaidViewer",
+                                )
+                                webViewClient = viewerClient(
+                                    onPageFinished = {
+                                        if (!renderRequested) {
+                                            renderRequested = true
+                                            evaluateJavascript(
+                                                "window.renderIntoPage(" +
+                                                    JSONObject.quote(target.code) + "," +
+                                                    (if (dark) "true" else "false") + ")",
+                                                null,
+                                            )
+                                            // 成功判定不依赖 bridge：轮询 SVG 是否落页，
+                                            // 60s 不出图才报超时（大图只管等）。
+                                            scope.launch {
+                                                val deadline =
+                                                    android.os.SystemClock.uptimeMillis() + 60_000
+                                                while (
+                                                    !renderSettled &&
+                                                    android.os.SystemClock.uptimeMillis() < deadline
+                                                ) {
+                                                    kotlinx.coroutines.delay(500)
+                                                    if (renderSettled) return@launch
+                                                    if (this@apply.hasSvg()) {
+                                                        pageReady = true
+                                                        renderSettled = true
+                                                        notice = null
+                                                        return@launch
+                                                    }
+                                                }
+                                                // 只有真的没人给过结论才算超时（别把失败改写成超时）。
+                                                if (!renderSettled) {
                                                     renderSettled = true
-                                                    notice = null
-                                                    return@launch
+                                                    notice = "渲染超时，可关闭重试"
                                                 }
                                             }
-                                            // 只有真的没人给过结论才算超时（别把失败改写成超时）。
-                                            if (!renderSettled) {
+                                        }
+                                    },
+                                    // 渲染进程被杀（低内存 + 3.5MB JS 是高危组合）就是白屏：
+                                    // 吃掉崩溃、打日志、给人话提示。
+                                    onRenderGone = {
+                                        Log.e(TAG, "webview render process gone")
+                                        pageReady = false
+                                        renderSettled = true
+                                        notice = "渲染进程被系统回收，请关闭重试"
+                                    },
+                                )
+                                webChromeClient = viewerChromeClient()
+                                loadUrl("file:///android_asset/mermaid/render.html")
+                            }
+
+                            isPlantUml -> {
+                                configurePlantUmlLocked()
+                                val assetLoader = WebViewAssetLoader.Builder()
+                                    .addPathHandler(
+                                        "/assets/",
+                                        WebViewAssetLoader.AssetsPathHandler(ctx),
+                                    )
+                                    .build()
+                                addJavascriptInterface(
+                                    ViewerBridge(
+                                        onDone = { ok, msg ->
+                                            if (!ok) {
+                                                Log.d(TAG, "plantuml onDone ok=false msg=${msg.take(120)}")
                                                 renderSettled = true
-                                                notice = "渲染超时，可关闭重试"
+                                                notice = "渲染失败：$msg"
+                                            }
+                                        },
+                                    ),
+                                    "PlantUmlViewer",
+                                )
+                                webViewClient = assetLockedClient(
+                                    assetLoader = assetLoader,
+                                    onPageFinished = {
+                                        if (!renderRequested) {
+                                            renderRequested = true
+                                            renderIntoPage(target.code, dark)
+                                            // 引擎异步写 SVG：轮询落页。首次要 boot 6.8MB 引擎
+                                            // （可能还有内部 worker），超时给得比 mermaid 宽。
+                                            scope.launch {
+                                                val ok = awaitSvgOrSettle(90_000) { renderSettled }
+                                                if (ok) {
+                                                    renderSettled = true
+                                                    notice = null
+                                                } else if (!renderSettled) {
+                                                    renderSettled = true
+                                                    notice = "渲染超时，可关闭重试"
+                                                }
                                             }
                                         }
-                                    }
-                                },
-                                // 渲染进程被杀（低内存 + 3.5MB JS 是高危组合）就是白屏：
-                                // 吃掉崩溃、打日志、给人话提示。
-                                onRenderGone = {
-                                    Log.e(TAG, "webview render process gone")
-                                    pageReady = false
-                                    renderSettled = true
-                                    notice = "渲染进程被系统回收，请关闭重试"
-                                },
-                            )
-                            webChromeClient = viewerChromeClient()
-                            loadUrl("file:///android_asset/mermaid/render.html")
-                        } else {
-                            configureLocked()
-                            webViewClient = viewerClient(
-                                onPageFinished = { pageReady = true },
-                                // SVG/HTML 页没有 mermaid 那套渲染进程可等，直接算"有结果"。
-                                onRenderGone = {
-                                    renderSettled = true
-                                    notice = "渲染进程被系统回收，请关闭重试"
-                                },
-                            )
-                            loadDataWithBaseURL(
-                                "https://localhost/",
-                                wrapHtml(target),
-                                "text/html",
-                                "UTF-8",
-                                null,
-                            )
+                                    },
+                                    onRenderGone = {
+                                        Log.e(TAG, "plantuml render process gone")
+                                        renderSettled = true
+                                        notice = "渲染进程被系统回收，请关闭重试"
+                                    },
+                                )
+                                webChromeClient = viewerChromeClient()
+                                loadUrl(PLANTUML_PAGE_URL)
+                            }
+
+                            else -> {
+                                configureLocked()
+                                webViewClient = viewerClient(
+                                    onPageFinished = { pageReady = true },
+                                    // SVG/HTML 页没有 mermaid 那套渲染进程可等，直接算"有结果"。
+                                    onRenderGone = {
+                                        renderSettled = true
+                                        notice = "渲染进程被系统回收，请关闭重试"
+                                    },
+                                )
+                                loadDataWithBaseURL(
+                                    "https://localhost/",
+                                    wrapHtml(target),
+                                    "text/html",
+                                    "UTF-8",
+                                    null,
+                                )
+                            }
                         }
                     }
                 },
@@ -202,6 +266,7 @@ fun PreviewViewerDialog(
                     runCatching {
                         view.stopLoading()
                         view.removeJavascriptInterface("MermaidViewer")
+                        view.removeJavascriptInterface("PlantUmlViewer")
                         view.destroy()
                     }
                 },
@@ -255,7 +320,28 @@ private fun WebView.configureAssetLocked() {
     settings.displayZoomControls = false
 }
 
+/** PlantUML asset 壳专用：内容全部来自 WebViewAssetLoader（appassets 域，https 同源，
+ *  ES module 才被允许加载）；file://、content:// 一律关掉。 */
+@SuppressLint("SetJavaScriptEnabled")
+private fun WebView.configurePlantUmlLocked() {
+    settings.javaScriptEnabled = true
+    setInitialScale(100)
+    // minSdk 29：allowFileAccessFromFileURLs / allowUniversalAccessFromFileURLs 默认即 false，
+    // 且在 allowFileAccess=false 下无意义，不再显式设置（它们是 deprecated 字段）。
+    settings.allowFileAccess = false
+    settings.allowContentAccess = false
+    settings.domStorageEnabled = true
+    settings.setSupportMultipleWindows(false)
+    settings.setSupportZoom(true)
+    settings.builtInZoomControls = true
+    settings.displayZoomControls = false
+}
+
 private const val TAG = "PreviewViewer"
+
+/** PlantUML 壳页地址：WebViewAssetLoader 把 assets/plantuml/ 映射到这个 https 同源地址。 */
+private const val PLANTUML_PAGE_URL =
+    "https://appassets.androidplatform.net/assets/plantuml/render.html"
 
 private fun viewerClient(
     onPageFinished: () -> Unit,
@@ -283,6 +369,52 @@ private fun viewerClient(
         }
     }
 
+/**
+ * WebViewAssetLoader 版 client：只服务 appassets 域里的本地 asset（PlantUML 壳页及其
+ * plantuml.js / viz-global.js），其余子资源一律空响应——预览页离线，不给网络任何口子。
+ */
+private fun assetLockedClient(
+    assetLoader: WebViewAssetLoader,
+    onPageFinished: () -> Unit,
+    onRenderGone: () -> Unit,
+): WebViewClient =
+    object : WebViewClient() {
+        override fun shouldInterceptRequest(
+            view: WebView,
+            request: WebResourceRequest,
+        ): WebResourceResponse? {
+            val url = request.url
+            if (url.host == WebViewAssetLoader.DEFAULT_DOMAIN) {
+                // 本地 asset 命中即返回；未命中也不回落到网络。
+                return assetLoader.shouldInterceptRequest(url) ?: emptyResponse()
+            }
+            return emptyResponse()
+        }
+
+        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+            val url = request.url
+            if (url.host == WebViewAssetLoader.DEFAULT_DOMAIN) return false
+            // 站外跳转一律转外部浏览器，预览页本身不导航。
+            runCatching {
+                val intent = Intent(Intent.ACTION_VIEW, url)
+                view.context.startActivity(intent)
+            }
+            return true
+        }
+
+        override fun onPageFinished(view: WebView, url: String) {
+            onPageFinished()
+        }
+
+        override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+            onRenderGone()
+            return true
+        }
+    }
+
+private fun emptyResponse(): WebResourceResponse =
+    WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
+
 /** JS console 直通 logcat：白屏时先看这里。 */
 private fun viewerChromeClient(): WebChromeClient =
     object : WebChromeClient() {
@@ -299,6 +431,26 @@ private suspend fun WebView.hasSvg(): Boolean = withContext(Dispatchers.Main) {
         done.complete(value == "\"true\"" || value == "true")
     }
     done.await()
+}
+
+/** 调壳页的 window.renderIntoPage(code, dark) 起渲染（引擎异步写 SVG，随后轮询）。 */
+private fun WebView.renderIntoPage(code: String, dark: Boolean) {
+    evaluateJavascript(
+        "window.renderIntoPage(" + JSONObject.quote(code) + "," +
+            (if (dark) "true" else "false") + ")",
+        null,
+    )
+}
+
+/** 轮询 SVG 是否落页；[isSettled] 为 true（失败/进程被杀）时立即收手。返回 SVG 是否出现。 */
+private suspend fun WebView.awaitSvgOrSettle(timeoutMs: Long, isSettled: () -> Boolean): Boolean {
+    val deadline = android.os.SystemClock.uptimeMillis() + timeoutMs
+    while (!isSettled() && android.os.SystemClock.uptimeMillis() < deadline) {
+        kotlinx.coroutines.delay(500)
+        if (isSettled()) return false
+        if (hasSvg()) return true
+    }
+    return false
 }
 
 /** viewer 装载模板：SVG 居中白底（动效原样播放），HTML 原样装载。 */

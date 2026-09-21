@@ -59,6 +59,9 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.room.ktx)
     implementation(libs.androidx.room.runtime)
+    // PlantUML 预览：plantuml.js 是 ES module，必须经 WebViewAssetLoader 以 https 同源供给
+    // （file:// 下外部 module 会被 CORS 拒绝）。
+    implementation(libs.androidx.webkit)
     implementation(libs.jsoup)
     // 文档解析：PDF 走 PdfBox-Android；Office OOXML 走手写 XmlPullParser（kxml2），见上。
     implementation(libs.kxml2)

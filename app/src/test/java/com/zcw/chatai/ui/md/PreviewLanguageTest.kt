@@ -7,16 +7,25 @@ import org.junit.Test
 class PreviewLanguageTest {
 
     @Test
-    fun detectsAllThreePreviewLanguages() {
+    fun detectsAllPreviewLanguages() {
         assertEquals(PreviewLanguage.MERMAID, previewLanguageOf("mermaid"))
         assertEquals(PreviewLanguage.SVG, previewLanguageOf("svg"))
         assertEquals(PreviewLanguage.HTML, previewLanguageOf("html"))
     }
 
     @Test
+    fun plantUmlAliasesMapToPlantUml() {
+        assertEquals(PreviewLanguage.PLANTUML, previewLanguageOf("plantuml"))
+        assertEquals(PreviewLanguage.PLANTUML, previewLanguageOf("puml"))
+        assertEquals(PreviewLanguage.PLANTUML, previewLanguageOf("uml"))
+    }
+
+    @Test
     fun languageMatchingIsCaseInsensitive() {
         assertEquals(PreviewLanguage.MERMAID, previewLanguageOf("Mermaid"))
         assertEquals(PreviewLanguage.SVG, previewLanguageOf("SVG"))
+        assertEquals(PreviewLanguage.PLANTUML, previewLanguageOf("PlantUML"))
+        assertEquals(PreviewLanguage.PLANTUML, previewLanguageOf("PUML"))
     }
 
     @Test

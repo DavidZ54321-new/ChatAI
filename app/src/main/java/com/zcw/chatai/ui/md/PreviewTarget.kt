@@ -3,7 +3,7 @@ package com.zcw.chatai.ui.md
 import androidx.compose.runtime.compositionLocalOf
 
 /** 可预览的围栏语言；其余语言按普通代码块渲染，没有预览入口。 */
-enum class PreviewLanguage { MERMAID, SVG, HTML }
+enum class PreviewLanguage { MERMAID, SVG, HTML, PLANTUML }
 
 /** 全屏 viewer 的目标：围栏语言 + 去掉围栏行后的源码。 */
 data class PreviewTarget(val language: PreviewLanguage, val code: String)
@@ -25,6 +25,8 @@ fun previewLanguageOf(infoString: String?): PreviewLanguage? {
         "mermaid" -> PreviewLanguage.MERMAID
         "svg" -> PreviewLanguage.SVG
         "html" -> PreviewLanguage.HTML
+        // PlantUML 的围栏语言常见三种写法：plantuml / puml / uml。
+        "plantuml", "puml", "uml" -> PreviewLanguage.PLANTUML
         else -> null
     }
 }

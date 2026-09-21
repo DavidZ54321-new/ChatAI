@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<!--
+  PlantUML 一次性渲染壳（@plantuml/core 1.2026.6，MIT，见 assets/plantuml/LICENSE-plantuml-core.txt）。
+  只加载本目录的本地 JS（plantuml.js + viz-global.js），不访问网络；渲染出的 SVG 直接落页，
+  viewer 关闭即销毁。Kotlin 侧轮询 document.querySelector('svg') 判定成功，bridge 只做错误快路。
+
+  plantuml.js 是 ES module（export { render, renderToString }），viz-global.js 是 classic 脚本
+  （Viz.js/Graphviz 布局引擎，必须先于渲染加载）。因此本页经 WebViewAssetLoader 以 https 同源
+  地址提供，而不是 file://——file:// 下外部 ES module 会被 CORS 拒绝。
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { padding: 16px; box-sizing: border-box; }
+  /* PlantUML SVG 自带 width/height 属性（自然像素）：按视窗宽铺开，默认可读；
+     放大细节仍走 viewer 的双指缩放。 */
+  svg { width: 100% !important; height: auto !important; max-width: none !important; display: block; }
+</style>
+<script src="./viz-global.js"></script>
+<script>
+  function pumlEscape(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  // 渲染失败（含 module 装载失败）：页面上给人话，并给 viewer 一个错误回执。
+  window.pumlFail = function (msg) {
+    var text = (msg && (msg.message || msg.str)) || String(msg);
+    document.body.style.margin = '0';
+    document.body.innerHTML =
+      '<div style="padding:32px;font-family:sans-serif;color:#888;">渲染失败：' +
+      pumlEscape(text) + '</div>';
+    try {
+      if (typeof PlantUmlViewer !== 'undefined') PlantUmlViewer.onDone(false, String(text));
+    } catch (e) { /* 兜底里不再抛 */ }
+  };
+  // PlantUmlViewer 只存在于 viewer 的 WebView，导出用 WebView 没有它，先判 typeof。
+  window.onerror = function (msg) { window.pumlFail(msg); };
+</script>
+</head>
+<body>
+<script type="module">
+  import { render } from './plantuml.js';
+
+  // 引擎异步写 SVG：先建空容器，render() 返回后由 engine 填充（不能随后覆写 body）。
+  window.renderIntoPage = function (code, dark) {
+    document.body.style.margin = '0';
+    document.body.style.background = dark ? '#212121' : '#ffffff';
+    document.body.innerHTML = '<div id="plantuml-out"></div>';
+    try {
+      render(String(code).split(/\r\n|\r|\n/), 'plantuml-out', { dark: !!dark });
+    } catch (e) {
+      window.pumlFail(e);
+    }
+  };
+</script>
+</body>
+</html>
