@@ -37,7 +37,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
 import com.zcw.chatai.ui.md.PreviewLanguage
-import com.zcw.chatai.ui.md.PreviewSegment
+import com.zcw.chatai.ui.md.PreviewTarget
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -56,19 +56,19 @@ import org.json.JSONObject
  */
 @Composable
 fun PreviewViewerDialog(
-    segment: PreviewSegment.Preview,
+    target: PreviewTarget,
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    val isMermaid = segment.language == PreviewLanguage.MERMAID
+    val isMermaid = target.language == PreviewLanguage.MERMAID
     var pageReady by remember { mutableStateOf(false) }
     var renderRequested by remember { mutableStateOf(false) }
     // 渲染有结果了（成功/失败/进程被杀）：轮询据此收手，别再盖写成人话之外的结论。
     var renderSettled by remember { mutableStateOf(false) }
-    var notice by remember(segment) { mutableStateOf(if (isMermaid) "渲染中…" else null) }
-    val title = when (segment.language) {
+    var notice by remember(target) { mutableStateOf(if (isMermaid) "渲染中…" else null) }
+    val title = when (target.language) {
         PreviewLanguage.MERMAID -> "mermaid 预览"
         PreviewLanguage.SVG -> "SVG 预览"
         PreviewLanguage.HTML -> "HTML 预览"
@@ -96,9 +96,9 @@ fun PreviewViewerDialog(
                 )
                 Spacer(Modifier.weight(1f))
                 // HTML 的「外部打开」是交给浏览器，不是本机转换，保留。
-                if (segment.language == PreviewLanguage.HTML) {
+                if (target.language == PreviewLanguage.HTML) {
                     TextButton(
-                        onClick = { notice = openExternally(context, segment.code) },
+                        onClick = { notice = openExternally(context, target.code) },
                     ) { Text("外部打开") }
                 }
                 TextButton(onClick = onDismiss) { Text("关闭") }
@@ -137,7 +137,7 @@ fun PreviewViewerDialog(
                                         renderRequested = true
                                         evaluateJavascript(
                                             "window.renderIntoPage(" +
-                                                JSONObject.quote(segment.code) + "," +
+                                                JSONObject.quote(target.code) + "," +
                                                 (if (dark) "true" else "false") + ")",
                                             null,
                                         )
@@ -190,7 +190,7 @@ fun PreviewViewerDialog(
                             )
                             loadDataWithBaseURL(
                                 "https://localhost/",
-                                wrapHtml(segment),
+                                wrapHtml(target),
                                 "text/html",
                                 "UTF-8",
                                 null,
@@ -302,16 +302,16 @@ private suspend fun WebView.hasSvg(): Boolean = withContext(Dispatchers.Main) {
 }
 
 /** viewer 装载模板：SVG 居中白底（动效原样播放），HTML 原样装载。 */
-private fun wrapHtml(segment: PreviewSegment.Preview): String =
-    if (segment.language == PreviewLanguage.SVG) {
+private fun wrapHtml(target: PreviewTarget): String =
+    if (target.language == PreviewLanguage.SVG) {
         "<!DOCTYPE html><html><head><meta charset=\"utf-8\">" +
             "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">" +
             "<style>html,body{margin:0;padding:0;background:#fff;}" +
             "body{display:flex;align-items:center;justify-content:center;min-height:100vh;}" +
             "svg{max-width:100%;height:auto;}</style></head><body>" +
-            segment.code + "</body></html>"
+            target.code + "</body></html>"
     } else {
-        segment.code
+        target.code
     }
 
 /** HTML 外部打开：落 cache + FileProvider 分享出去；返回提示文案。 */

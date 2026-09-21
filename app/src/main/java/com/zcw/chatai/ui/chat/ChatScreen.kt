@@ -61,7 +61,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import com.zcw.chatai.data.model.Role
 import com.zcw.chatai.ui.md.LocalPreviewOpener
-import com.zcw.chatai.ui.md.PreviewSegment
+import com.zcw.chatai.ui.md.PreviewTarget
 import com.zcw.chatai.ui.theme.ChatTheme
 import java.io.File
 
@@ -97,7 +97,7 @@ fun ChatScreen(
     var actionTarget by remember { mutableStateOf<ChatMessageItem?>(null) }
     var previewTarget by remember { mutableStateOf<MessageImage?>(null) }
     // SVG/HTML 全屏 viewer 目标：Dialog 随开随建、退出即销毁，列表里不驻留 WebView。
-    var previewPage by remember { mutableStateOf<PreviewSegment.Preview?>(null) }
+    var previewPage by remember { mutableStateOf<PreviewTarget?>(null) }
     var overflowOpen by remember { mutableStateOf(false) }
     var attachOpen by remember { mutableStateOf(false) }
 
@@ -185,7 +185,7 @@ fun ChatScreen(
     ) {
         // 用 remember 固定这个 lambda 的身份：每次重组新建的话，所有读该 local 的
         // 卡片（预览卡）都会跟着流式增量一起重组。
-        val previewOpener = remember { { target: PreviewSegment.Preview -> previewPage = target } }
+        val previewOpener = remember { { target: PreviewTarget -> previewPage = target } }
         CompositionLocalProvider(LocalPreviewOpener provides previewOpener) {
             if (messages.isEmpty()) {
                 EmptyChatState(
@@ -431,7 +431,7 @@ fun ChatScreen(
 
     val page = previewPage
     if (page != null) {
-        PreviewViewerDialog(segment = page, onDismiss = { previewPage = null })
+        PreviewViewerDialog(target = page, onDismiss = { previewPage = null })
     }
 }
 

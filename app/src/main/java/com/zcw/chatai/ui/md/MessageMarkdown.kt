@@ -45,7 +45,6 @@ import com.mikepenz.markdown.compose.LocalReferenceLinkHandler
 import com.mikepenz.markdown.compose.components.MarkdownComponentModel
 import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.compose.elements.MarkdownHighlightedCodeBlock
-import com.mikepenz.markdown.compose.elements.MarkdownHighlightedCodeFence
 import com.mikepenz.markdown.compose.elements.MarkdownTable
 import com.mikepenz.markdown.compose.elements.MarkdownTableHeader
 import com.mikepenz.markdown.compose.elements.MarkdownTableRow
@@ -88,24 +87,11 @@ fun MessageMarkdown(
     modifier: Modifier = Modifier,
     cacheable: Boolean = true,
 ) {
-    val segments = remember(content) { PreviewBlockSplitter.split(content) }
+    // 管线：图行 → LaTeX → markdown。svg/mermaid/html 围栏**不再**从正文里抽出来换卡片，
+    // 而是由 MarkdownBlock 的 codeFence 槽统一渲染：外观与普通代码块一致，围栏闭合后
+    // 语言头右侧多一个「预览」入口（点进全屏 viewer）。
+    val segments = remember(content) { ImageRowSplitter.split(content) }
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        for (segment in segments) {
-            when (segment) {
-                is PreviewSegment.Markdown -> PreviewMarkdownContent(segment.text, cacheable)
-                // 三种语言统一走卡片 + 全屏 viewer：mermaid 大图在列表内嵌里会超时，
-                // 且位图有高度截断，进 viewer 渐进渲染 + 缩放才是对的。
-                is PreviewSegment.Preview -> PreviewCard(segment)
-            }
-        }
-    }
-}
-
-/** 原有管线（图行 → LaTeX → markdown），预览段拆出来之后走这里。 */
-@Composable
-private fun PreviewMarkdownContent(text: String, cacheable: Boolean) {
-    val segments = remember(text) { ImageRowSplitter.split(text) }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         for (segment in segments) {
             when (segment) {
                 is ContentSegment.Markdown -> LatexContent(segment.text, cacheable)
@@ -229,6 +215,7 @@ private fun MarkdownBlock(text: String, cacheable: Boolean) {
     val highlightsBuilder = remember {
         Highlights.Builder().theme(SyntaxThemes.atom(darkMode = true))
     }
+    val previewOpener = LocalPreviewOpener.current
     val markdownColors = markdownColor(
         text = scheme.onSurface,
         codeBackground = colors.codeBackground,
@@ -300,12 +287,14 @@ private fun MarkdownBlock(text: String, cacheable: Boolean) {
                     showHeader = true,
                 )
             },
-            codeFence = {
-                MarkdownHighlightedCodeFence(
-                    content = it.content,
-                    node = it.node,
+            codeFence = { model ->
+                // 围栏（``` / ~~~）统一走这里：默认代码块外观；svg/mermaid/html 且已闭合时
+                // 多一个「预览」入口，不做任何换壳。
+                PreviewableCodeFence(
+                    content = model.content,
+                    node = model.node,
                     highlightsBuilder = highlightsBuilder,
-                    showHeader = true,
+                    onPreview = previewOpener,
                 )
             },
             // 正文里的网图（如文搜图返回的 markdown 图片）走统一的远程加载器。
