@@ -53,6 +53,8 @@
 
   // viewer 用：把渲染结果直接写进页面（fire-and-forget，结果经 MermaidViewer 回传）。
   window.renderIntoPage = function (code, dark) {
+    window.__chataiSource = code;
+    window.__chataiDark = !!dark;
     document.body.style.margin = '0';
     document.body.style.background = dark ? '#212121' : '#ffffff';
     document.body.innerHTML =
@@ -69,6 +71,44 @@
       MermaidViewer.onDone(false, msg);
     });
   };
+
+  // 导出 PNG（viewer 顶栏「保存 PNG」）：**重新渲染一次**再栅格化。
+  // mermaid 11 默认 htmlLabels → 标签是 <foreignObject>，经 Image/canvas 转换会整片空白；
+  // 关掉 htmlLabels 得到原生 <text>，才能画出文字。预览观感不变，只影响导出这一张。
+  window.exportPng = function (maxEdge) {
+    if (!window.__chataiSource) { ExportSink.finish(false, '还没有可导出的内容'); return; }
+    var bg = window.__chataiDark ? '#212121' : '#ffffff';
+    // mermaid.render 可能在 body 留下以 id 命名的容器；导出不该改动预览页，前后都清掉。
+    function dropStale() {
+      var stale = document.getElementById('chatai-export');
+      if (stale && stale.parentNode) stale.parentNode.removeChild(stale);
+    }
+    try {
+      dropStale();
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: 'strict',
+        theme: window.__chataiDark ? 'dark' : 'default',
+        flowchart: { htmlLabels: false },
+        class: { htmlLabels: false },
+        state: { htmlLabels: false }
+      });
+      mermaid.render('chatai-export', window.__chataiSource).then(function (result) {
+        dropStale();
+        var doc = new DOMParser().parseFromString(result.svg, 'image/svg+xml');
+        var svg = doc.documentElement;
+        if (!svg || svg.nodeName.toLowerCase() !== 'svg') throw new Error('导出渲染失败');
+        return window.__chataiSvgToPng(svg, maxEdge, bg);
+      }).then(function (url) {
+        window.__chataiEmitPng(url);
+      }).catch(function (e) {
+        ExportSink.finish(false, (e && (e.message || e.str)) || String(e));
+      });
+    } catch (e) {
+      ExportSink.finish(false, (e && (e.message || e.str)) || String(e));
+    }
+  };
+
 </script>
 </body>
 </html>

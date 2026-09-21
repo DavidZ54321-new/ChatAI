@@ -46,6 +46,7 @@
 
   // 引擎异步写 SVG：先建空容器，render() 返回后由 engine 填充（不能随后覆写 body）。
   window.renderIntoPage = function (code, dark) {
+    window.__chataiDark = !!dark;
     document.body.style.margin = '0';
     document.body.style.background = dark ? '#212121' : '#ffffff';
     document.body.innerHTML = '<div id="plantuml-out"></div>';
@@ -55,6 +56,19 @@
       window.pumlFail(e);
     }
   };
+
+  // 导出 PNG（viewer 顶栏「保存 PNG」）：Graphviz SVG 无 foreignObject，直接栅格化。
+  window.exportPng = function (maxEdge) {
+    var svg = document.querySelector('#plantuml-out svg') || document.querySelector('svg');
+    if (!svg) { ExportSink.finish(false, '还没有可导出的内容'); return; }
+    var bg = window.__chataiDark ? '#212121' : '#ffffff';
+    window.__chataiSvgToPng(svg, maxEdge, bg).then(function (url) {
+      window.__chataiEmitPng(url);
+    }).catch(function (e) {
+      ExportSink.finish(false, (e && (e.message || e.str)) || String(e));
+    });
+  };
+
 </script>
 </body>
 </html>

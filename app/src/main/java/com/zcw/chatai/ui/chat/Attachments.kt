@@ -1,13 +1,9 @@
 package com.zcw.chatai.ui.chat
 
-import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.os.Build
-import android.os.Environment
-import android.provider.MediaStore
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -55,6 +51,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
 import com.zcw.chatai.data.doc.DocumentLabel
+import com.zcw.chatai.data.media.GalleryStore
 import com.zcw.chatai.data.media.ImageCodec
 import com.zcw.chatai.data.media.VideoMetadata
 import com.zcw.chatai.data.model.AttachmentKind
@@ -410,34 +407,8 @@ private fun openWithSystemPlayer(context: Context, path: String): Boolean = try 
     false
 }
 
-private fun saveToGallery(context: Context, path: String): Boolean = try {
-    val source = File(path)
-    if (!source.isFile) {
-        false
-    } else {
-        val values = ContentValues().apply {
-            put(MediaStore.Images.Media.DISPLAY_NAME, source.name)
-            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/ChatAI")
-                put(MediaStore.Images.Media.IS_PENDING, 1)
-            }
-        }
-        val resolver = context.contentResolver
-        val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-        if (uri == null) {
-            false
-        } else {
-            resolver.openOutputStream(uri)?.use { output -> source.inputStream().use { it.copyTo(output) } }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                resolver.update(uri, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null)
-            }
-            true
-        }
-    }
-} catch (t: Throwable) {
-    false
-}
+private fun saveToGallery(context: Context, path: String): Boolean =
+    GalleryStore.saveFile(context, File(path))
 
 /** Composer 里的待发送缩略图，右上角可删除。8 张也不能把输入框撑破，所以同样横向懒加载。 */
 @Composable

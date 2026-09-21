@@ -27,6 +27,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,8 +39,14 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
 import androidx.webkit.WebViewAssetLoader
+import com.zcw.chatai.data.media.ExportChunkAssembler
+import com.zcw.chatai.data.media.GalleryStore
+import com.zcw.chatai.data.media.GifAssembler
+import com.zcw.chatai.data.media.GifResult
+import com.zcw.chatai.data.media.SvgAnimation
 import com.zcw.chatai.ui.md.PreviewLanguage
 import com.zcw.chatai.ui.md.PreviewTarget
+import com.zcw.chatai.ui.md.supportsPngExport
 import java.io.ByteArrayInputStream
 import java.io.File
 import kotlinx.coroutines.Dispatchers
@@ -58,7 +65,8 @@ import org.json.JSONObject
  *   mermaid 走 `file://` asset，PlantUML 因 ES module 同源要求改走 WebViewAssetLoader；
  *   两者都不给外人用 `file://`（PlantUML 侧更是显式拒绝一切站外子资源）。
  *
- * 导出（PNG/GIF）暂不提供：本机整图截取在真机上不可靠，先封存，等有稳定方案再加。
+ * 导出 PNG：在页内把渲染出的 SVG 栅格化（不截 WebView、不截视窗），base64 分片回传后存相册。
+ * GIF（动效 SVG）后续再接。
  */
 @Composable
 fun PreviewViewerDialog(
@@ -83,6 +91,87 @@ fun PreviewViewerDialog(
         PreviewLanguage.HTML -> "HTML 预览"
         PreviewLanguage.PLANTUML -> "PlantUML 预览"
     }
+    var exporting by remember(target) { mutableStateOf(false) }
+    // 顶栏按钮要直接触发页内导出，所以留一个 WebView 引用（factory 里赋值）。
+    val webViewRef = remember { mutableStateOf<WebView?>(null) }
+    // 只有 SMIL/CSS 动效的 SVG 才给「保存 GIF」（脚本动效在 <img> 里不播，做不出来）。
+    val isAnimatedSvg = target.language == PreviewLanguage.SVG &&
+        SvgAnimation.kind(target.code) == SvgAnimation.Kind.SMIL_OR_CSS
+
+    // bridge 只建一次；用 rememberUpdatedState 读「当前」的状态与 scope，避免捕获旧的 setter。
+    val onExportPng = rememberUpdatedState<(ByteArray?, String) -> Unit>(
+        { bytes, error ->
+            if (bytes == null) {
+                exporting = false
+                notice = "保存失败：$error"
+            } else {
+                scope.launch {
+                    val name = GalleryStore.exportFileName(System.currentTimeMillis(), "png")
+                    val saved = withContext(Dispatchers.IO) {
+                        GalleryStore.saveBytes(context, bytes, "image/png", name)
+                    }
+                    exporting = false
+                    notice = if (saved) "已保存到相册" else "保存失败"
+                }
+            }
+        },
+    )
+    val onExportGif = rememberUpdatedState<(List<String>, String) -> Unit>(
+        { frames, error ->
+            when {
+                error.isNotEmpty() -> {
+                    exporting = false
+                    notice = "保存失败：$error"
+                }
+
+                frames.isEmpty() -> {
+                    exporting = false
+                    notice = "保存失败：没有可用帧"
+                }
+
+                else -> scope.launch {
+                    notice = "正在编码 GIF…"
+                    // 编码是 CPU（逐帧 NeuQuant 量化），落盘是阻塞 IO：分开调度。
+                    val result = withContext(Dispatchers.Default) {
+                        GifAssembler.assemble(frames, 1000 / ExportJs.GIF_FPS)
+                    }
+                    val (saved, message) = withContext(Dispatchers.IO) {
+                        val now = System.currentTimeMillis()
+                        when (result) {
+                            is GifResult.Animated -> GalleryStore.saveBytes(
+                                context,
+                                result.bytes,
+                                "image/gif",
+                                GalleryStore.exportFileName(now, "gif"),
+                            ) to "已保存动图到相册"
+
+                            is GifResult.Static -> GalleryStore.saveBytes(
+                                context,
+                                result.pngBytes,
+                                "image/png",
+                                GalleryStore.exportFileName(now, "png"),
+                            ) to "该动效无法导出 GIF，已保存首帧 PNG"
+
+                            GifResult.Failed -> false to "保存失败"
+                        }
+                    }
+                    exporting = false
+                    notice = if (saved) message else "保存失败"
+                }
+            }
+        },
+    )
+    val onExportProgress = rememberUpdatedState<(Int, Int) -> Unit> { index, total ->
+        notice = "正在导出 GIF… $index/$total"
+    }
+    val exportSink = remember {
+        ExportBridge(
+            onPng = { bytes, error -> onExportPng.value(bytes, error) },
+            onGif = { frames, error -> onExportGif.value(frames, error) },
+            onProgress = { index, total -> onExportProgress.value(index, total) },
+        )
+    }
+    val canExport = target.language.supportsPngExport && pageReady && !exporting
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -105,6 +194,37 @@ fun PreviewViewerDialog(
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Spacer(Modifier.weight(1f))
+                // 保存 PNG：页内栅格化（mermaid / plantuml / 静态 SVG）。HTML 是任意网页，不导出。
+                if (target.language.supportsPngExport) {
+                    TextButton(
+                        enabled = canExport,
+                        onClick = {
+                            exporting = true
+                            notice = "正在导出…"
+                            // 先武装桥：只有用户发起的这次导出会被接受。
+                            exportSink.arm()
+                            webViewRef.value?.evaluateJavascript(
+                                "window.exportPng(${ExportJs.MAX_EDGE})",
+                                null,
+                            )
+                        },
+                    ) { Text("保存 PNG") }
+                }
+                // 动效 SVG：逐帧烘焙后编成 GIF（CSS 动效烘焙不出差异时会降级存首帧 PNG）。
+                if (isAnimatedSvg) {
+                    TextButton(
+                        enabled = canExport,
+                        onClick = {
+                            exporting = true
+                            notice = "正在导出 GIF…"
+                            exportSink.arm()
+                            webViewRef.value?.evaluateJavascript(
+                                "window.exportGif(${ExportJs.gifArgs()})",
+                                null,
+                            )
+                        },
+                    ) { Text("保存 GIF") }
+                }
                 // HTML 的「外部打开」是交给浏览器，不是本机转换，保留。
                 if (target.language == PreviewLanguage.HTML) {
                     TextButton(
@@ -125,6 +245,9 @@ fun PreviewViewerDialog(
                 modifier = Modifier.fillMaxSize(),
                 factory = { ctx ->
                     WebView(ctx).apply {
+                        webViewRef.value = this
+                        // 导出回调桥：所有可导出页面共用（HTML 不触发导出，挂着也无害）。
+                        addJavascriptInterface(exportSink, "ExportSink")
                         when {
                             isMermaid -> {
                                 configureAssetLocked()
@@ -146,6 +269,8 @@ fun PreviewViewerDialog(
                                     onPageFinished = {
                                         if (!renderRequested) {
                                             renderRequested = true
+                                            // 先注入导出工具（__chataiSvgToPng / __chataiEmitPng）。
+                                            evaluateJavascript(ExportJs.HELPERS, null)
                                             evaluateJavascript(
                                                 "window.renderIntoPage(" +
                                                     JSONObject.quote(target.code) + "," +
@@ -216,12 +341,14 @@ fun PreviewViewerDialog(
                                     onPageFinished = {
                                         if (!renderRequested) {
                                             renderRequested = true
+                                            evaluateJavascript(ExportJs.HELPERS, null)
                                             renderIntoPage(target.code, dark)
                                             // 引擎异步写 SVG：轮询落页。首次要 boot 6.8MB 引擎
                                             // （可能还有内部 worker），超时给得比 mermaid 宽。
                                             scope.launch {
                                                 val ok = awaitSvgOrSettle(90_000) { renderSettled }
                                                 if (ok) {
+                                                    pageReady = true
                                                     renderSettled = true
                                                     notice = null
                                                 } else if (!renderSettled) {
@@ -244,7 +371,13 @@ fun PreviewViewerDialog(
                             else -> {
                                 configureLocked()
                                 webViewClient = viewerClient(
-                                    onPageFinished = { pageReady = true },
+                                    onPageFinished = {
+                                        evaluateJavascript(ExportJs.HELPERS, null)
+                                        if (target.language == PreviewLanguage.SVG) {
+                                            evaluateJavascript(ExportJs.SVG_PAGE_EXPORT, null)
+                                        }
+                                        pageReady = true
+                                    },
                                     // SVG/HTML 页没有 mermaid 那套渲染进程可等，直接算"有结果"。
                                     onRenderGone = {
                                         renderSettled = true
@@ -267,8 +400,10 @@ fun PreviewViewerDialog(
                         view.stopLoading()
                         view.removeJavascriptInterface("MermaidViewer")
                         view.removeJavascriptInterface("PlantUmlViewer")
+                        view.removeJavascriptInterface("ExportSink")
                         view.destroy()
                     }
+                    webViewRef.value = null
                 },
             )
         }
@@ -286,6 +421,88 @@ private class ViewerBridge(private val onDone: (Boolean, String) -> Unit) {
         main.post { onDone(ok, message) }
     }
 }
+
+/**
+ * 导出桥：页内把结果回传（bridge 单次传输有上限，PNG 必须分片）。
+ *
+ * - PNG 模式：`append` 累积分片，`finish` 解码成字节；
+ * - GIF 模式：JS 先 `beginGif`，再 `frame` 逐帧回传整帧 PNG base64，`finish` 交出帧列表。
+ *
+ * 所有回调都抛回主线程：顺序由主线程队列保证，也与 state 写入同线程。
+ */
+private class ExportBridge(
+    private val onPng: (ByteArray?, String) -> Unit,
+    private val onGif: (List<String>, String) -> Unit,
+    private val onProgress: (Int, Int) -> Unit,
+) {
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+    private val chunks = ExportChunkAssembler()
+    private val frames = ArrayList<String>()
+    private var gifMode = false
+    private var armed = false
+
+    /**
+     * 由 Kotlin 在用户点按钮时调用（**不是** `@JavascriptInterface`，页面脚本够不着）：
+     * 只有「已武装」的导出才会落盘。否则预览页里的任意脚本都能自己往相册写。
+     */
+    fun arm() {
+        main.post {
+            armed = true
+            gifMode = false
+            frames.clear()
+            chunks.reset()
+        }
+    }
+
+    @JavascriptInterface
+    fun beginGif() {
+        main.post { if (armed) gifMode = true }
+    }
+
+    @JavascriptInterface
+    fun append(chunk: String) {
+        main.post { if (armed) chunks.append(chunk) }
+    }
+
+    @JavascriptInterface
+    fun frame(base64: String) {
+        main.post { if (armed) frames.add(base64) }
+    }
+
+    @JavascriptInterface
+    fun progress(index: Int, total: Int) {
+        main.post { if (armed) onProgress(index, total) }
+    }
+
+    @JavascriptInterface
+    fun finish(ok: Boolean, message: String) {
+        main.post {
+            // 未武装 = 不是用户发起的导出（或重复的 finish）：忽略。
+            if (!armed) return@post
+            armed = false
+            if (gifMode) {
+                val collected = ArrayList(frames)
+                frames.clear()
+                gifMode = false
+                onGif(
+                    if (ok) collected else emptyList(),
+                    if (ok) "" else message.ifBlank { "导出失败" },
+                )
+                return@post
+            }
+            val bytes = if (ok) chunks.decode() else null
+            val error = when {
+                !ok -> message.ifBlank { "导出失败" }
+                chunks.overflowed -> "导出数据过大"
+                bytes == null || bytes.isEmpty() -> "导出数据无效"
+                else -> null
+            }
+            chunks.reset()
+            if (error == null) onPng(bytes, "") else onPng(null, error)
+        }
+    }
+}
+
 
 @SuppressLint("SetJavaScriptEnabled")
 private fun WebView.configureLocked() {

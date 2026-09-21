@@ -5,6 +5,10 @@ import androidx.compose.runtime.compositionLocalOf
 /** 可预览的围栏语言；其余语言按普通代码块渲染，没有预览入口。 */
 enum class PreviewLanguage { MERMAID, SVG, HTML, PLANTUML }
 
+/** 能否把渲染结果导出成位图存相册。HTML 是任意网页，栅格化无意义，不提供。 */
+val PreviewLanguage.supportsPngExport: Boolean
+    get() = this != PreviewLanguage.HTML
+
 /** 全屏 viewer 的目标：围栏语言 + 去掉围栏行后的源码。 */
 data class PreviewTarget(val language: PreviewLanguage, val code: String)
 

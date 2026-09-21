@@ -1,7 +1,9 @@
 package com.zcw.chatai.ui.md
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PreviewLanguageTest {
@@ -40,5 +42,13 @@ class PreviewLanguageTest {
         assertNull(previewLanguageOf(null))
         assertNull(previewLanguageOf(""))
         assertNull(previewLanguageOf("   "))
+    }
+
+    @Test
+    fun htmlIsTheOnlyLanguageWithoutPngExport() {
+        assertTrue(PreviewLanguage.MERMAID.supportsPngExport)
+        assertTrue(PreviewLanguage.SVG.supportsPngExport)
+        assertTrue(PreviewLanguage.PLANTUML.supportsPngExport)
+        assertFalse(PreviewLanguage.HTML.supportsPngExport)
     }
 }
