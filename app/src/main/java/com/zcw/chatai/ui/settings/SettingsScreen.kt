@@ -54,6 +54,7 @@ import com.zcw.chatai.data.provider.ProviderEntry
 import com.zcw.chatai.ui.common.ModelAutocompleteField
 import com.zcw.chatai.ui.persona.PersonasScreen
 import com.zcw.chatai.ui.theme.ChatTheme
+import com.zcw.chatai.ui.theme.ThemeRegistry
 
 @Composable
 fun SettingsScreen(
@@ -313,11 +314,18 @@ fun SettingsScreen(
 
             SectionTitle("外观")
             ChoiceRow(
-                label = "主题",
+                label = "明暗",
                 hint = null,
                 options = ThemeMode.entries.map { it to it.label() },
                 selected = state.themeMode,
                 onSelect = viewModel::setThemeMode,
+            )
+            ChoiceRow(
+                label = "配色",
+                hint = null,
+                options = ThemeRegistry.options().map { (family, theme) -> family to theme.displayName },
+                selected = state.themeFamily,
+                onSelect = viewModel::setThemeFamily,
             )
 
             state.error?.let { error ->

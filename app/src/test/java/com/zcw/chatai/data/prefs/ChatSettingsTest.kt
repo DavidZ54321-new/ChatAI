@@ -95,6 +95,12 @@ class ChatSettingsTest {
     }
 
     @Test
+    fun defaultThemeIsClaudeFollowSystem() {
+        assertEquals(ThemeMode.SYSTEM, ChatSettings.Default.themeMode)
+        assertEquals(ThemeFamily.CLAUDE, ChatSettings.Default.themeFamily)
+    }
+
+    @Test
     fun sessionHeaderFlagComesFromProviderPreset() {
         val go = ChatSettings.Default.copy(
             providers = mapOf(

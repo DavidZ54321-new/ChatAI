@@ -34,7 +34,7 @@ internal object TextDocumentParser {
 
     /** 纯函数：去 BOM + 换行归一（JVM 单测覆盖）。 */
     internal fun normalize(text: String): String {
-        val withoutBom = if (text.startsWith("﻿")) text.substring(1) else text
+        val withoutBom = if (text.startsWith("\uFEFF")) text.substring(1) else text
         val builder = StringBuilder(withoutBom.length)
         var index = 0
         while (index < withoutBom.length) {

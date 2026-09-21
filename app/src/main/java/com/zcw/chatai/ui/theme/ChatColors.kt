@@ -75,50 +75,29 @@ data class ChatTypography(
                 letterSpacing = 0.sp,
             ),
         )
+
+        /** OpenAI / ChatGPT：正文无衬线（沿用同一字号/行高比例）。 */
+        val ChatGpt = ChatTypography(
+            code = TextStyle(
+                fontFamily = MonoCode,
+                fontWeight = FontWeight.Normal,
+                fontSize = 13.sp,
+                lineHeight = 21.sp,
+                letterSpacing = 0.sp,
+            ),
+            messageBody = TextStyle(
+                fontFamily = SansUi,
+                fontWeight = FontWeight.Normal,
+                fontSize = 18.sp,
+                lineHeight = 29.sp,
+                letterSpacing = 0.sp,
+            ),
+        )
     }
 }
 
-val LightChatColors = ChatColors(
-    canvas = Canvas,
-    surfaceSoft = SurfaceSoft,
-    surfaceCard = SurfaceCard,
-    surfaceCreamStrong = SurfaceCreamStrong,
-    hairline = Hairline,
-    hairlineSoft = HairlineSoft,
-    codeBackground = SurfaceDark,
-    codeOnBackground = OnDark,
-    codeHeaderText = OnDarkSoft,
-    codeButtonBackground = SurfaceDarkElevated,
-    bubbleUser = SurfaceCard,
-    bubbleUserText = Ink,
-    chipBackground = SurfaceSoft,
-    accentTeal = AccentTeal,
-    accentAmber = AccentAmber,
-    success = Success,
-    warning = Warning,
-)
-
-val DarkChatColors = ChatColors(
-    canvas = DarkCanvas,
-    surfaceSoft = DarkSurface,
-    surfaceCard = DarkSurfaceElevated,
-    surfaceCreamStrong = DarkSurfaceHighest,
-    hairline = DarkHairline,
-    hairlineSoft = DarkHairlineSoft,
-    codeBackground = DarkSurfaceLowest,
-    codeOnBackground = OnDark,
-    codeHeaderText = OnDarkSoft,
-    codeButtonBackground = DarkSurfaceElevated,
-    bubbleUser = DarkSurfaceElevated,
-    bubbleUserText = OnDark,
-    chipBackground = DarkSurfaceHighest,
-    accentTeal = AccentTeal,
-    accentAmber = AccentAmber,
-    success = Success,
-    warning = Warning,
-)
-
-val LocalChatColors = staticCompositionLocalOf { LightChatColors }
+/** 回落到 Claude 浅色：`ChatAITheme` 总会提供真实的 [ThemePalette]，这里只是无 Provider 时的兜底。 */
+val LocalChatColors = staticCompositionLocalOf { ThemeRegistry.Default.light.chatColors }
 
 val LocalChatTypography = staticCompositionLocalOf { ChatTypography.Default }
 

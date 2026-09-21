@@ -39,7 +39,7 @@ class MainActivity : ComponentActivity() {
                     ) { darkTheme },
                 )
             }
-            ChatAITheme(darkTheme = darkTheme) {
+            ChatAITheme(themeFamily = settings.themeFamily, darkTheme = darkTheme) {
                 ChatAiRoot()
             }
         }

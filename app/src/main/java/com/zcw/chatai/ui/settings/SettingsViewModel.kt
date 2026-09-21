@@ -9,6 +9,7 @@ import com.zcw.chatai.data.net.ChatApi
 import com.zcw.chatai.data.prefs.ChatSettings
 import com.zcw.chatai.data.prefs.ImageDetail
 import com.zcw.chatai.data.prefs.SettingsRepository
+import com.zcw.chatai.data.prefs.ThemeFamily
 import com.zcw.chatai.data.prefs.ThemeMode
 import com.zcw.chatai.data.prefs.toChatConfig
 import com.zcw.chatai.data.net.EndpointUrl
@@ -49,6 +50,7 @@ class SettingsViewModel(
         /** 图搜模型链（逗号分隔的原始输入）；空 = 用内置默认。 */
         val imageSearchModels: String = "",
         val themeMode: ThemeMode = ThemeMode.SYSTEM,
+        val themeFamily: ThemeFamily = ThemeFamily.CLAUDE,
         val loaded: Boolean = false,
         val models: List<String> = emptyList(),
         val busy: Boolean = false,
@@ -104,6 +106,7 @@ class SettingsViewModel(
                 historyImageTurns = settings.historyImageTurns,
                 imageSearchModels = settings.imageSearchModelsRaw,
                 themeMode = settings.themeMode,
+                themeFamily = settings.themeFamily,
                 loaded = true,
             )
         }
@@ -146,6 +149,11 @@ class SettingsViewModel(
     fun setThemeMode(mode: ThemeMode) {
         form.value = form.value.copy(themeMode = mode)
         viewModelScope.launch { settingsRepository.updateThemeMode(mode) }
+    }
+
+    fun setThemeFamily(family: ThemeFamily) {
+        form.value = form.value.copy(themeFamily = family)
+        viewModelScope.launch { settingsRepository.updateThemeFamily(family) }
     }
 
     fun save() {

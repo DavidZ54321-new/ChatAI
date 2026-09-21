@@ -1,8 +1,8 @@
 # ChatAI
 
-单模块 Jetpack Compose + Material 3 的 AI 聊天应用，视觉落地仓库根目录的 `DESIGN.md`
+单模块 Jetpack Compose + Material 3 的 AI 聊天应用，视觉落地 `design/ClaudeDesign.md`
 （Anthropic/Claude 设计系统：暖奶油画布 + 珊瑚主色 + 衬线标题 + 深色产品面）。
-注意 `DESIGN.md` 是**营销页**文档，第 588 行明确 chat bubbles / message tools / file chips 等
+注意 `design/ClaudeDesign.md` 是**营销页**文档，第 588 行明确 chat bubbles / message tools / file chips 等
 「out of scope」——气泡、缩略图、思考行这类产品面以真实产品观感为准，别硬套营销页 token
 （尤其：coral 只给主 CTA 与整块 callout，**用户气泡用中性面色**）。
 
@@ -24,7 +24,7 @@ ui/chat                  →  ChatScreen / ChatViewModel / ChatUiState / Compose
 ui/drawer                →  ConversationDrawer
 ui/settings              →  SettingsScreen / SettingsViewModel（服务商切换/连接配置/生成参数）
 ui/md                    →  MessageMarkdown（mikepenz，image 组件走 RemoteImage）+ LatexSplitter + latex/（vendored Kai，Apache-2.0）
-ui/theme                 →  设计系统（Color / ChatColors / Type / Theme / SpikeMark）
+ui/theme                 →  设计系统（ThemeRegistry / ClaudeTheme / ChatGptTheme / ChatColors / Color / Type / Theme / SpikeMark）
 ```
 
 不该踩第二次的约定：
@@ -81,6 +81,15 @@ ui/theme                 →  设计系统（Color / ChatColors / Type / Theme /
   （`RemoteImages.install` 挂 cacheDir）、全局并发闸门 4；失败占位带刷新图标，**点一下重载**
   （三态 Loading/Loaded/Failed；重试必须先回 Loading——`produceState` 换 key 不重置 value，
   不复位就没有任何点击反馈）。`MarkdownParseCache` 是进程级解析 LRU，滚动回看不重复解析。
+- **主题是双轴注册表**：明暗（`ThemeMode`）与品牌配色（`ThemeFamily`）**正交**，设置页两行独立选
+  （明暗 / 配色）。一套主题 = `AppTheme`（明暗各一个 `ThemePalette` = `ChatColors` + Material3
+  `ColorScheme` **同源**，别只改一边；外加 `Typography` 与消息正文的 `ChatTypography`），在
+  `ui/theme/ThemeRegistry.kt` 注册；`ChatAITheme(themeFamily, darkTheme)` 按族取表供给 `LocalChatColors`
+  + `LocalChatTypography` + `MaterialTheme`。**加主题 = 加一个 preset + 注册一行**，不在 UI/请求层写
+  if-vendor；字体随主题变（Claude 衬线 / ChatGPT 无衬线），圆角与 `SpikeMark` 暂不随主题变。
+  设计口径与 App 槽位映射见 `design/ChatGPT.md`，`ThemeRegistryTest` 保证 `ThemeFamily.entries`
+  全覆盖，并钉住「ChatGPT 主色是中性黑白、画布纯白 `#ffffff` / 纯黑 `#000000`」防回归；
+  **Claude 的奶油画布 `#faf9f5` / 暖黑 `#181715` 原样保留，别跟着改**。
 
 
 ## Build & test
@@ -93,11 +102,12 @@ ui/theme                 →  设计系统（Color / ChatColors / Type / Theme /
 .\gradlew.bat lint                 # AGP default; no formatter or typecheck task is configured
 ```
 
-单测全是 JVM 测试（507 个）：网络层用 MockWebServer，其余是纯函数（错误映射、压缩尺寸、
-能力表、供应商目录/配置迁移/工具后端解析、工具模型优先级、工具回退链、LaTeX 分段、
-Markdown 行内公式、图行分段、思考摘要/耗时格式化、视觉度量、Room 映射往返、工具调用累加/编解码、
-Agent 决策、工具预算、DSML 清洗、可见图片清单（编号/轮次标注）、上下文组装/工具应答配对/
-附件保留/视频规划、回合分组、HTML→文本、搜索与 Responses 响应解析、上传凭证/multipart）。
+单测全是 JVM 测试（606 个）：网络层用 MockWebServer，其余是纯函数（错误映射、压缩尺寸、
+能力表、供应商目录/配置迁移/工具后端解析、工具模型优先级、工具回退链、主题注册表/默认主题、
+LaTeX 分段、Markdown 行内公式、图行分段、思考摘要/耗时格式化、视觉度量、Room 映射往返、
+工具调用累加/编解码、Agent 决策、工具预算、DSML 清洗、可见图片清单（编号/轮次标注）、
+上下文组装/工具应答配对/附件保留/视频规划、回合分组、HTML→文本、搜索与 Responses 响应解析、
+上传凭证/multipart）。
 
 ## AGP 9 DSL — differs from most examples you'll find
 

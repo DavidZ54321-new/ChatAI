@@ -43,7 +43,8 @@ val MonoCode = FontFamily(
 
 val SerifDisplay = FontFamily.Serif
 
-val Typography = Typography(
+/** Claude / Anthropic：衬线标题 + 无衬线正文。 */
+val SerifTypography = Typography(
     displayLarge = TextStyle(
         fontFamily = SerifDisplay,
         fontWeight = FontWeight.Normal,
@@ -82,6 +83,118 @@ val Typography = Typography(
     headlineSmall = TextStyle(
         fontFamily = SerifDisplay,
         fontWeight = FontWeight.Normal,
+        fontSize = 20.sp,
+        lineHeight = 26.sp,
+        letterSpacing = (-0.2).sp,
+    ),
+    titleLarge = TextStyle(
+        fontFamily = SansUi,
+        fontWeight = FontWeight.Medium,
+        fontSize = 22.sp,
+        lineHeight = 29.sp,
+        letterSpacing = 0.sp,
+    ),
+    titleMedium = TextStyle(
+        fontFamily = SansUi,
+        fontWeight = FontWeight.Medium,
+        fontSize = 18.sp,
+        lineHeight = 25.sp,
+        letterSpacing = 0.sp,
+    ),
+    titleSmall = TextStyle(
+        fontFamily = SansUi,
+        fontWeight = FontWeight.Medium,
+        fontSize = 16.sp,
+        lineHeight = 22.sp,
+        letterSpacing = 0.sp,
+    ),
+    bodyLarge = TextStyle(
+        fontFamily = SansUi,
+        fontWeight = FontWeight.Normal,
+        fontSize = 16.sp,
+        lineHeight = 25.sp,
+        letterSpacing = 0.sp,
+    ),
+    bodyMedium = TextStyle(
+        fontFamily = SansUi,
+        fontWeight = FontWeight.Normal,
+        fontSize = 14.sp,
+        lineHeight = 22.sp,
+        letterSpacing = 0.sp,
+    ),
+    bodySmall = TextStyle(
+        fontFamily = SansUi,
+        fontWeight = FontWeight.Normal,
+        fontSize = 13.sp,
+        lineHeight = 20.sp,
+        letterSpacing = 0.sp,
+    ),
+    labelLarge = TextStyle(
+        fontFamily = SansUi,
+        fontWeight = FontWeight.Medium,
+        fontSize = 14.sp,
+        lineHeight = 14.sp,
+        letterSpacing = 0.sp,
+    ),
+    labelMedium = TextStyle(
+        fontFamily = SansUi,
+        fontWeight = FontWeight.Medium,
+        fontSize = 13.sp,
+        lineHeight = 18.sp,
+        letterSpacing = 0.sp,
+    ),
+    labelSmall = TextStyle(
+        fontFamily = SansUi,
+        fontWeight = FontWeight.Medium,
+        fontSize = 12.sp,
+        lineHeight = 17.sp,
+        letterSpacing = 1.5.sp,
+    ),
+)
+
+/**
+ * OpenAI / ChatGPT：全无衬线；display/headline 用 weight 500（OpenAI 的 UI 上限是 600，从不用 700）。
+ * 字号/行高沿用同一套梯子，避免换主题时布局跳动。
+ */
+val SansTypography = Typography(
+    displayLarge = TextStyle(
+        fontFamily = SansUi,
+        fontWeight = FontWeight.Medium,
+        fontSize = 40.sp,
+        lineHeight = 43.sp,
+        letterSpacing = (-0.8).sp,
+    ),
+    displayMedium = TextStyle(
+        fontFamily = SansUi,
+        fontWeight = FontWeight.Medium,
+        fontSize = 32.sp,
+        lineHeight = 35.sp,
+        letterSpacing = (-0.6).sp,
+    ),
+    displaySmall = TextStyle(
+        fontFamily = SansUi,
+        fontWeight = FontWeight.Medium,
+        fontSize = 28.sp,
+        lineHeight = 32.sp,
+        letterSpacing = (-0.4).sp,
+    ),
+    headlineLarge = TextStyle(
+        fontFamily = SansUi,
+        fontWeight = FontWeight.Medium,
+        fontSize = 26.sp,
+        lineHeight = 31.sp,
+        letterSpacing = (-0.3).sp,
+    ),
+    headlineMedium = TextStyle(
+        fontFamily = SansUi,
+        fontWeight = FontWeight.Medium,
+        fontSize = 22.sp,
+        lineHeight = 28.sp,
+        letterSpacing = (-0.2).sp,
+    ),
+    headlineSmall = TextStyle(
+        fontFamily = SansUi,
+        fontWeight = FontWeight.Medium,
         fontSize = 20.sp,
         lineHeight = 26.sp,
         letterSpacing = (-0.2).sp,

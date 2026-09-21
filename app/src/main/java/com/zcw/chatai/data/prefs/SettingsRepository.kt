@@ -22,6 +22,9 @@ import kotlinx.coroutines.flow.map
 
 enum class ThemeMode { SYSTEM, LIGHT, DARK }
 
+/** 品牌配色族：与 [ThemeMode]（明暗）正交；实际配色表在 `ThemeRegistry`。 */
+enum class ThemeFamily { CLAUDE, CHATGPT }
+
 /** 思考强度：标准 `reasoning_effort` 字段；FOLLOW_DEFAULT 表示不发送该字段。 */
 enum class ReasoningEffort(val wire: String?) {
     FOLLOW_DEFAULT(null),
@@ -65,6 +68,8 @@ data class ChatSettings(
     /** 图搜模型链（原始输入，逗号分隔）；空 = 用 Qwen 预设的默认链。 */
     val imageSearchModelsRaw: String,
     val themeMode: ThemeMode,
+    /** 品牌配色族（与 [themeMode] 正交：Claude / ChatGPT …）。 */
+    val themeFamily: ThemeFamily,
 ) {
     /** 生效的图搜模型链：用户覆盖优先，空则用 Qwen 预设默认（27b → max）。 */
     val imageSearchModels: List<String>
@@ -117,6 +122,7 @@ data class ChatSettings(
             historyImageTurns = DEFAULT_HISTORY_IMAGE_TURNS,
             imageSearchModelsRaw = "",
             themeMode = ThemeMode.SYSTEM,
+            themeFamily = ThemeFamily.CLAUDE,
         )
     }
 }
@@ -228,6 +234,12 @@ class SettingsRepository(context: Context) {
         }
     }
 
+    suspend fun updateThemeFamily(family: ThemeFamily) {
+        store.edit { prefs ->
+            prefs[KEY_THEME_FAMILY] = family.name
+        }
+    }
+
     /**
      * 懒迁移（不主动回写）：
      * - `providers_json` 缺失/非法时，用旧平铺 key 合成一张初始表；
@@ -268,6 +280,7 @@ class SettingsRepository(context: Context) {
             historyImageTurns = this[KEY_HISTORY_IMAGE_TURNS] ?: ChatSettings.DEFAULT_HISTORY_IMAGE_TURNS,
             imageSearchModelsRaw = this[KEY_IMAGE_SEARCH_MODELS].orEmpty(),
             themeMode = this[KEY_THEME_MODE].toEnum(ThemeMode.SYSTEM),
+            themeFamily = this[KEY_THEME_FAMILY].toEnum(ThemeFamily.CLAUDE),
         )
     }
 
@@ -295,6 +308,7 @@ class SettingsRepository(context: Context) {
         val KEY_IMAGE_SEARCH_MODELS = stringPreferencesKey("image_search_models")
         val KEY_EXTRA_PARAMS = stringPreferencesKey("extra_params")
         val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
+        val KEY_THEME_FAMILY = stringPreferencesKey("theme_family")
 
         /** 旧版本单配置 key：只在懒迁移时读，不再写入。 */
         val KEY_BASE_URL = stringPreferencesKey("base_url")
