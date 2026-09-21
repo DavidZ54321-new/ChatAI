@@ -1,5 +1,6 @@
 package com.zcw.chatai.ui.settings
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -31,6 +32,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -72,6 +74,14 @@ fun SettingsScreen(
         factory = SettingsViewModel.factory(app.settingsRepository, app.chatApi),
     )
     val state by viewModel.state.collectAsState()
+    val context = LocalContext.current
+    // 一次性提示（「已保存」「连接成功…」）统一走系统 Toast：只弹一个气泡，
+    // 不再在页面里放绿色横幅（之前上下各渲染了一份，会看到两个「已保存」）。
+    LaunchedEffect(state.status) {
+        val message = state.status ?: return@LaunchedEffect
+        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        viewModel.dismissStatus()
+    }
     // 角色名直接读 live 设置流：角色管理页绕过 viewModel 表单直接写库，
     // 用快照的话返回后还显示旧名。
     val liveSettings by app.settingsRepository.settings.collectAsState(initial = null)
@@ -328,29 +338,14 @@ fun SettingsScreen(
                 onSelect = viewModel::setThemeFamily,
             )
 
-            state.error?.let { error ->
-                MessageBar(text = error, tone = MessageTone.ERROR, onClick = viewModel::dismissMessages)
-            }
-            state.status?.let { status ->
-                MessageBar(text = status, tone = MessageTone.SUCCESS, onClick = viewModel::dismissMessages)
-            }
-
             Spacer(Modifier.height(4.dp))
         }
 
-        // 状态条固定在保存按钮上方，滚动到哪儿都看得见
+        // 错误条只在保存按钮上方渲染一处，滚动到哪儿都看得见（放滚动区里会上下各一份）。
         state.error?.let { error ->
             MessageBar(
                 text = error,
                 tone = MessageTone.ERROR,
-                onClick = viewModel::dismissMessages,
-                modifier = Modifier.padding(horizontal = 18.dp, vertical = 4.dp),
-            )
-        }
-        state.status?.let { status ->
-            MessageBar(
-                text = status,
-                tone = MessageTone.SUCCESS,
                 onClick = viewModel::dismissMessages,
                 modifier = Modifier.padding(horizontal = 18.dp, vertical = 4.dp),
             )

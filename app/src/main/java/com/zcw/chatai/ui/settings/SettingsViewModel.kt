@@ -211,6 +211,11 @@ class SettingsViewModel(
         form.value = form.value.copy(status = null, error = null)
     }
 
+    /** 只清一次性提示（已被 UI 弹成 Toast）；不动错误条。 */
+    fun dismissStatus() {
+        form.value = form.value.copy(status = null)
+    }
+
     companion object {
         fun factory(
             settingsRepository: SettingsRepository,
