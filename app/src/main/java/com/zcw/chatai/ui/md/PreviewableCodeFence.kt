@@ -14,7 +14,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import com.mikepenz.markdown.compose.elements.MarkdownCodeFence
-import com.mikepenz.markdown.compose.elements.MarkdownHighlightedCode
 import com.zcw.chatai.ui.theme.ChatTheme
 import dev.snipme.highlights.Highlights
 import org.intellij.markdown.MarkdownTokenTypes
@@ -22,7 +21,7 @@ import org.intellij.markdown.ast.ASTNode
 
 /**
  * 围栏代码块：**外观与库默认的 `MarkdownHighlightedCodeFence` 完全一致**（同一个
- * [MarkdownHighlightedCode]，语言头也由它自己画），只是当 info string 是可预览语言
+ * [SafeMarkdownHighlightedCode]，语言头也由它自己画），只是当 info string 是可预览语言
  * （mermaid / svg / html）且围栏**已闭合**时，在语言头右侧多叠一个「预览」按钮。
  *
  * 以前这份内容在围栏闭合后被 `PreviewBlockSplitter` 抽走、换成另一套卡片，
@@ -45,7 +44,7 @@ fun PreviewableCodeFence(
             null
         }
         Box {
-            MarkdownHighlightedCode(
+            SafeMarkdownHighlightedCode(
                 code = code,
                 language = language,
                 style = style,

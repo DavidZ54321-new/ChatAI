@@ -44,7 +44,7 @@ import androidx.compose.ui.unit.sp
 import com.mikepenz.markdown.compose.LocalReferenceLinkHandler
 import com.mikepenz.markdown.compose.components.MarkdownComponentModel
 import com.mikepenz.markdown.compose.components.markdownComponents
-import com.mikepenz.markdown.compose.elements.MarkdownHighlightedCodeBlock
+import com.mikepenz.markdown.compose.elements.MarkdownCodeBlock
 import com.mikepenz.markdown.compose.elements.MarkdownTable
 import com.mikepenz.markdown.compose.elements.MarkdownTableHeader
 import com.mikepenz.markdown.compose.elements.MarkdownTableRow
@@ -279,13 +279,18 @@ private fun MarkdownBlock(text: String, cacheable: Boolean) {
                     },
                 )
             },
-            codeBlock = {
-                MarkdownHighlightedCodeBlock(
-                    content = it.content,
-                    node = it.node,
-                    highlightsBuilder = highlightsBuilder,
-                    showHeader = true,
-                )
+            codeBlock = { model ->
+                // 自己渲染而不是用库的 MarkdownHighlightedCodeBlock：高亮区间要先夹回文本范围，
+                // 否则高亮库的反向/越界区间会在 AnnotatedString/无障碍转换里炸（见 SafeHighlightedCode）。
+                MarkdownCodeBlock(content = model.content, node = model.node) { code, language, style ->
+                    SafeMarkdownHighlightedCode(
+                        code = code,
+                        language = language,
+                        style = style,
+                        highlightsBuilder = highlightsBuilder,
+                        showHeader = true,
+                    )
+                }
             },
             codeFence = { model ->
                 // 围栏（``` / ~~~）统一走这里：默认代码块外观；svg/mermaid/html 且已闭合时
