@@ -6,7 +6,7 @@ import java.time.ZoneId
 /**
  * 上下文尾条的环境注记（纯函数，JVM 可测）。
  *
- * 只报本机时间：年月日、星期、时分秒（24 小时制，设备时区）。
+ * 报本机时间（年月日、星期、时分秒，24 小时制，设备时区）与设备形态（移动端）。
  * 位置以后再加——届时把参数升级为结构即可，调用形式不变。
  *
  * 星期手写中文映射：`DayOfWeek.getDisplayName` 在 Android ICU 与 JVM 间行为有差，
@@ -26,7 +26,8 @@ object EnvNote {
         val local = Instant.ofEpochMilli(nowMs).atZone(zone).toLocalDateTime()
         val weekday = WEEKDAYS[local.dayOfWeek.value - 1]
         return "当前时间：" + local.year + "年" + local.monthValue + "月" + local.dayOfMonth + "日" +
-            " " + weekday + " " + pad(local.hour) + ":" + pad(local.minute) + ":" + pad(local.second)
+            " " + weekday + " " + pad(local.hour) + ":" + pad(local.minute) + ":" + pad(local.second) +
+            "；当前设备：移动端（Android 手机，触屏竖屏为主）"
     }
 
     private fun pad(value: Int): String = if (value < 10) "0$value" else value.toString()

@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<!--
+  mermaid 一次性渲染壳（v1：mermaid 11.16.0，打包在 assets/mermaid/mermaid.min.js）。
+  只加载本目录的本地 JS，不访问网络；渲染完把 SVG 字符串交给 Kotlin 后 WebView 立刻销毁。
+-->
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="./mermaid.min.js"></script>
+</head>
+<body>
+<script>
+  // code: 图源码；dark: 是否深色主题。成功 resolve SVG 字符串，失败 reject 错误信息。
+  window.renderMermaid = function (code, dark) {
+    mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: dark ? 'dark' : 'default' });
+    return mermaid.render('diagram', code).then(function (result) {
+      return result.svg;
+    }).catch(function (e) {
+      throw (e && (e.message || e.str)) || String(e);
+    });
+  };
+
+  function escapeHtml(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  // mermaid 默认 useMaxWidth 把 SVG 压成 100% 视窗宽：大图会被压成一条。
+  // 按 viewBox 恢复自然像素尺寸，页面原生滚动 + 双指缩放（viewer 已开 zoom）。
+  function restoreNaturalSize() {
+    try {
+      var svg = document.querySelector('svg');
+      if (!svg || !svg.viewBox || !svg.viewBox.baseVal) return;
+      var vb = svg.viewBox.baseVal;
+      if (vb.width > 0 && vb.height > 0) {
+        svg.setAttribute('width', vb.width);
+        svg.setAttribute('height', vb.height);
+        svg.style.maxWidth = 'none';
+        svg.style.height = 'auto';
+      }
+    } catch (e) { /* 保持原样 */ }
+  }
+  // MermaidViewer 只存在于 viewer 的 WebView，导出用 WebView 没有它，先判 typeof。
+  window.onerror = function (msg) {
+    try {
+      document.body.innerHTML =
+        '<div style="padding:32px;font-family:sans-serif;color:#888;">页面异常：' +
+        escapeHtml(msg) + '</div>';
+      if (typeof MermaidViewer !== 'undefined') MermaidViewer.onDone(false, String(msg));
+    } catch (e) { /* 兜底里不再抛 */ }
+  };
+
+  // viewer 用：把渲染结果直接写进页面（fire-and-forget，结果经 MermaidViewer 回传）。
+  window.renderIntoPage = function (code, dark) {
+    document.body.style.margin = '0';
+    document.body.style.background = dark ? '#212121' : '#ffffff';
+    document.body.innerHTML =
+      '<div style="padding:32px;font-family:sans-serif;color:#888;">渲染中…</div>';
+    return window.renderMermaid(code, dark).then(function (svg) {
+      document.body.innerHTML = svg;
+      restoreNaturalSize();
+      MermaidViewer.onDone(true, '');
+    }).catch(function (e) {
+      var msg = (e && (e.message || e.str)) || String(e);
+      document.body.innerHTML =
+        '<div style="padding:32px;font-family:sans-serif;color:#888;">渲染失败：' +
+        escapeHtml(msg) + '</div>';
+      MermaidViewer.onDone(false, msg);
+    });
+  };
+</script>
+</body>
+</html>

@@ -88,8 +88,24 @@ fun MessageMarkdown(
     modifier: Modifier = Modifier,
     cacheable: Boolean = true,
 ) {
-    val segments = remember(content) { ImageRowSplitter.split(content) }
+    val segments = remember(content) { PreviewBlockSplitter.split(content) }
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        for (segment in segments) {
+            when (segment) {
+                is PreviewSegment.Markdown -> PreviewMarkdownContent(segment.text, cacheable)
+                // 三种语言统一走卡片 + 全屏 viewer：mermaid 大图在列表内嵌里会超时，
+                // 且位图有高度截断，进 viewer 渐进渲染 + 缩放才是对的。
+                is PreviewSegment.Preview -> PreviewCard(segment)
+            }
+        }
+    }
+}
+
+/** 原有管线（图行 → LaTeX → markdown），预览段拆出来之后走这里。 */
+@Composable
+private fun PreviewMarkdownContent(text: String, cacheable: Boolean) {
+    val segments = remember(text) { ImageRowSplitter.split(text) }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         for (segment in segments) {
             when (segment) {
                 is ContentSegment.Markdown -> LatexContent(segment.text, cacheable)

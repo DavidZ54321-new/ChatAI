@@ -32,6 +32,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -59,6 +60,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import com.zcw.chatai.data.model.Role
+import com.zcw.chatai.ui.md.LocalPreviewOpener
+import com.zcw.chatai.ui.md.PreviewSegment
 import com.zcw.chatai.ui.theme.ChatTheme
 import java.io.File
 
@@ -93,6 +96,8 @@ fun ChatScreen(
     val topInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     var actionTarget by remember { mutableStateOf<ChatMessageItem?>(null) }
     var previewTarget by remember { mutableStateOf<MessageImage?>(null) }
+    // SVG/HTML 全屏 viewer 目标：Dialog 随开随建、退出即销毁，列表里不驻留 WebView。
+    var previewPage by remember { mutableStateOf<PreviewSegment.Preview?>(null) }
     var overflowOpen by remember { mutableStateOf(false) }
     var attachOpen by remember { mutableStateOf(false) }
 
@@ -178,62 +183,67 @@ fun ChatScreen(
             .imePadding()
             .clearFocusOnTapOutside { composerRect.value },
     ) {
-        if (messages.isEmpty()) {
-            EmptyChatState(
-                onSuggestionClick = onInputChange,
-                modifier = Modifier.fillMaxSize(),
-            )
-        } else {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .nestedScroll(follow.nestedScrollConnection)
-                    // 定位门：切会话后先隐藏，等 jumpToEnd 定位完成再显示，避免看到顶部再瞬移。
-                    .graphicsLayer { alpha = if (follow.located) 1f else 0f },
-                contentPadding = PaddingValues(
-                    // 含顶消散尾巴：停在顶部时第一条气泡在渐变之下，实色。
-                    top = topBand.height,
-                    // 静止时最后一行停在底引导带上方，正文本身保持实色。
-                    bottom = bottomBand.height + 12.dp,
-                ),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                val groups = MessageGroups.of(messages)
-                itemsIndexed(groups, key = { _, group -> group.key }) { index, group ->
-                    val previous = groups.getOrNull(index - 1)
-                    val turnGap = if (previous != null && (previous is MessageGroup.User) != (group is MessageGroup.User)) {
-                        18.dp
-                    } else {
-                        0.dp
-                    }
-                    Box(Modifier.padding(top = turnGap)) {
-                        when (group) {
-                            is MessageGroup.User -> UserMessageItem(
-                                message = group.items.single(),
-                                onLongPress = { actionTarget = group.items.single() },
-                                onOpenImage = { previewTarget = it },
-                            )
+        // 用 remember 固定这个 lambda 的身份：每次重组新建的话，所有读该 local 的
+        // 卡片（预览卡）都会跟着流式增量一起重组。
+        val previewOpener = remember { { target: PreviewSegment.Preview -> previewPage = target } }
+        CompositionLocalProvider(LocalPreviewOpener provides previewOpener) {
+            if (messages.isEmpty()) {
+                EmptyChatState(
+                    onSuggestionClick = onInputChange,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .nestedScroll(follow.nestedScrollConnection)
+                        // 定位门：切会话后先隐藏，等 jumpToEnd 定位完成再显示，避免看到顶部再瞬移。
+                        .graphicsLayer { alpha = if (follow.located) 1f else 0f },
+                    contentPadding = PaddingValues(
+                        // 含顶消散尾巴：停在顶部时第一条气泡在渐变之下，实色。
+                        top = topBand.height,
+                        // 静止时最后一行停在底引导带上方，正文本身保持实色。
+                        bottom = bottomBand.height + 12.dp,
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    val groups = MessageGroups.of(messages)
+                    itemsIndexed(groups, key = { _, group -> group.key }) { index, group ->
+                        val previous = groups.getOrNull(index - 1)
+                        val turnGap = if (previous != null && (previous is MessageGroup.User) != (group is MessageGroup.User)) {
+                            18.dp
+                        } else {
+                            0.dp
+                        }
+                        Box(Modifier.padding(top = turnGap)) {
+                            when (group) {
+                                is MessageGroup.User -> UserMessageItem(
+                                    message = group.items.single(),
+                                    onLongPress = { actionTarget = group.items.single() },
+                                    onOpenImage = { previewTarget = it },
+                                )
 
-                            is MessageGroup.Assistant -> AssistantTurnItem(
-                                group = group.items,
-                                streamingMessageId = state.streamingMessageId,
-                                isCurrentTurn = state.isTurnActive && index == groups.lastIndex,
-                                onUserExpand = follow.unpin,
-                                meta = state.messages.lastOrNull { it.role == Role.ASSISTANT }
-                                    ?.takeIf { last -> group.items.any { it.id == last.id } }
-                                    ?.let { metaOf(it) },
-                                onLongPress = { actionTarget = it },
-                                onRetry = { retryKeepingAlive(it.id) },
-                                onCopy = { clipboard.copy(it.content) },
-                                onRegenerate = { regenerateKeepingAlive(it.id) },
-                                onDelete = { onDeleteMessage(it.id) },
-                                onContinue = { continueKeepingAlive() },
-                            )
+                                is MessageGroup.Assistant -> AssistantTurnItem(
+                                    group = group.items,
+                                    streamingMessageId = state.streamingMessageId,
+                                    isCurrentTurn = state.isTurnActive && index == groups.lastIndex,
+                                    onUserExpand = follow.unpin,
+                                    meta = state.messages.lastOrNull { it.role == Role.ASSISTANT }
+                                        ?.takeIf { last -> group.items.any { it.id == last.id } }
+                                        ?.let { metaOf(it) },
+                                    onLongPress = { actionTarget = it },
+                                    onRetry = { retryKeepingAlive(it.id) },
+                                    onCopy = { clipboard.copy(it.content) },
+                                    onRegenerate = { regenerateKeepingAlive(it.id) },
+                                    onDelete = { onDeleteMessage(it.id) },
+                                    onContinue = { continueKeepingAlive() },
+                                )
+                            }
                         }
                     }
+                    item(key = "disclaimer") { Disclaimer() }
                 }
-                item(key = "disclaimer") { Disclaimer() }
             }
         }
 
@@ -417,6 +427,11 @@ fun ChatScreen(
         } else {
             ImagePreviewDialog(image = preview, onDismiss = { previewTarget = null })
         }
+    }
+
+    val page = previewPage
+    if (page != null) {
+        PreviewViewerDialog(segment = page, onDismiss = { previewPage = null })
     }
 }
 
