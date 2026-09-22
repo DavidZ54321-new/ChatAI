@@ -108,6 +108,7 @@ fun AssistantTurnItem(
                     AssistantStep(
                         message = message,
                         isStreaming = message.id == streamingMessageId,
+                        isCurrentTurn = isCurrentTurn,
                         onUserExpand = onUserExpand,
                         onLongPress = { onLongPress(message) },
                         onRetry = { onRetry(message) },
@@ -134,6 +135,7 @@ fun AssistantTurnItem(
 private fun AssistantStep(
     message: ChatMessageItem,
     isStreaming: Boolean,
+    isCurrentTurn: Boolean,
     onUserExpand: () -> Unit,
     onLongPress: () -> Unit,
     onRetry: () -> Unit,
@@ -149,7 +151,12 @@ private fun AssistantStep(
                 reasoningMs = message.reasoningMs,
                 onUserExpand = onUserExpand,
             )
-        } else if (isStreaming && message.content.isEmpty()) {
+        } else if (message.content.isEmpty() &&
+            (isStreaming || (isCurrentTurn && message.status == MessageStatus.STREAMING))
+        ) {
+            // 兜底：当前回合的 DB 行还是 STREAMING 空壳（overlay 已撤、定稿内容未发射）时
+            // 也占住高度，不让助手气泡塌成 0 高把视口钳回用户气泡。
+            // 限定 isCurrentTurn：崩溃遗留的 STREAMING 行不是当前回合，不挂永久转圈。
             StreamingIndicator()
         }
         if (message.content.isNotEmpty()) {

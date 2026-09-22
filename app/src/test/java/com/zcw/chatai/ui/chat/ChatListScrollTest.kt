@@ -39,4 +39,22 @@ class ChatListScrollTest {
     fun bottomOverflowIsThePixelAmountBelowTheViewport() {
         assertEquals(120, bottomOverflow(lastOffset = 320, lastSize = 200, viewportEndOffset = 400))
     }
+
+    @Test
+    fun followScrollAllowedOnlyNearEndAndWithMoreToScroll() {
+        // 贴底跟滑（末项/倒数第二项可见）且还有前向余量 → 可以补滚。
+        assertTrue(canFollowScroll(lastVisibleIndex = 4, totalItems = 5, canScrollForward = true))
+        assertTrue(canFollowScroll(lastVisibleIndex = 3, totalItems = 5, canScrollForward = true))
+        // 已贴底（无前向余量）→ 不动。
+        assertFalse(canFollowScroll(lastVisibleIndex = 4, totalItems = 5, canScrollForward = false))
+    }
+
+    @Test
+    fun followScrollForbiddenWhileReadingHistory() {
+        // 可见末项离末尾还差两项以上 = 用户在读内容，绝不动。
+        assertFalse(canFollowScroll(lastVisibleIndex = 2, totalItems = 5, canScrollForward = true))
+        assertFalse(canFollowScroll(lastVisibleIndex = 0, totalItems = 5, canScrollForward = true))
+        assertFalse(canFollowScroll(lastVisibleIndex = null, totalItems = 5, canScrollForward = true))
+        assertFalse(canFollowScroll(lastVisibleIndex = 0, totalItems = 0, canScrollForward = true))
+    }
 }

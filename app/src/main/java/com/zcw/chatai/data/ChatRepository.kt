@@ -202,14 +202,15 @@ class ChatRepository(
     // ---------- 会话 ----------
 
     /**
-     * 新建会话。[model] / [providerId] / [personaId] 用来把「会话还不存在时用户已经选好的绑定」
-     * 一次性落库，缺省则跟随当前激活供应商/角色（激活角色已被会话内切换同步更新，
-     * 所以新会话自然「记住上次选择」）。
+     * 新建会话。[model] / [providerId] / [personaId] / [webSearchEnabled] 用来把
+     * 「会话还不存在时用户已经选好的绑定」一次性落库，缺省则跟随当前激活供应商/角色
+     * （激活角色已被会话内切换同步更新，所以新会话自然「记住上次选择」）。
      */
     suspend fun createConversation(
         model: String? = null,
         providerId: String? = null,
         personaId: String? = null,
+        webSearchEnabled: Boolean = false,
     ): String {
         val settings = settingsRepository.settings.first()
         val boundProviderId = providerId?.takeIf { it.isNotBlank() } ?: settings.activeProviderId
@@ -232,6 +233,7 @@ class ChatRepository(
                 isPinned = false,
                 providerId = boundProviderId,
                 personaId = boundPersonaId,
+                webSearchEnabled = webSearchEnabled,
             ),
         )
         return id

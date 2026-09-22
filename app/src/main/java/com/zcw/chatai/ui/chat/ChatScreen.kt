@@ -52,6 +52,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInParent
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
@@ -185,6 +186,13 @@ fun ChatScreen(
 
     val messages = state.messages
 
+    val follow = rememberChatListFollow(
+        listState = listState,
+        conversationId = state.conversationId,
+        messages = messages,
+        isStreaming = state.isStreaming,
+    )
+
     val pickImages = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(8),
     ) { uris -> uris.forEach(onAddImage) }
@@ -212,6 +220,8 @@ fun ChatScreen(
 
     fun sendKeepingAlive() {
         onSend()
+        // 显式跳到底：「发出 → 看到自己的消息和回答」，不依赖列表形状的巧合。
+        follow.jumpToBottom()
         // 按发送键就收键盘：Started/Busy/Rejected 都收（用户意图是「发出去」）。
         focusManager.clearFocus()
         keyboardController?.hide()
@@ -220,16 +230,19 @@ fun ChatScreen(
 
     fun regenerateKeepingAlive(id: String) {
         onRegenerate(id)
+        follow.jumpToBottom()
         requestNotifyIfNeeded()
     }
 
     fun retryKeepingAlive(id: String) {
         onRetry(id)
+        follow.jumpToBottom()
         requestNotifyIfNeeded()
     }
 
     fun continueKeepingAlive() {
         onContinue()
+        follow.jumpToBottom()
         requestNotifyIfNeeded()
     }
 
@@ -244,13 +257,6 @@ fun ChatScreen(
         }
         captureUriText = null
     }
-
-    val follow = rememberChatListFollow(
-        listState = listState,
-        conversationId = state.conversationId,
-        messages = messages,
-        isStreaming = state.isStreaming,
-    )
 
     Box(
         modifier = modifier
@@ -273,6 +279,19 @@ fun ChatScreen(
                     state = listState,
                     modifier = Modifier
                         .fillMaxSize()
+                        // 手指一碰就停跟随：跟手指抢滚动会把跳转打断在半路（用户气泡上）。
+                        .pointerInput(Unit) {
+                            awaitPointerEventScope {
+                                while (true) {
+                                    var event = awaitPointerEvent()
+                                    if (event.changes.none { it.pressed }) continue
+                                    follow.unpin()
+                                    while (event.changes.any { it.pressed }) {
+                                        event = awaitPointerEvent()
+                                    }
+                                }
+                            }
+                        }
                         .nestedScroll(follow.nestedScrollConnection)
                         // 定位门：切会话后先隐藏，等 jumpToEnd 定位完成再显示，避免看到顶部再瞬移。
                         .graphicsLayer { alpha = if (follow.located) 1f else 0f },

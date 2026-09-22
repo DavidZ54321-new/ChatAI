@@ -5,6 +5,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -20,23 +21,28 @@ import kotlinx.coroutines.launch
 class ChatListFollow(
     /** 视口是否真的停在列表末尾。 */
     val atBottom: Boolean,
-    /** 是否处于「跟随」状态（用户上滑或展开详情会松钉）。 */
+    /** 是否处于「跟随」状态（用户上滑、触摸或展开详情会松钉）。 */
     val following: Boolean,
     /** 当前会话是否已完成首次定位（切会话后先藏起来定位，避免看到顶部再瞬移）。 */
     val located: Boolean,
     val nestedScrollConnection: NestedScrollConnection,
     /** 跳到底部并恢复跟随（切会话 / 发消息 / 点「回到底部」）。 */
     val jumpToBottom: () -> Unit,
-    /** 临时松钉：用户展开工具/思考详情时调用，避免随后到达的结果把他拽走。 */
+    /** 停止跟随：用户触摸列表 / 展开工具、思考详情时调用。 */
     val unpin: () -> Unit,
 )
 
 /**
- * 跟随政策：
- * - 切会话（消息就绪后）→ 先**跳**到底并标记已定位，之后才允许显示/跟随（定位门）；
- * - 刚发出用户消息 → **跳**到底；
- * - 其余内容增长（流式正文、工具结果）→ 仅在钉住且已定位时**跟**（只补溢出、不重定位）；
- * - 用户上滑第一下 [atBottom] 往往还是 true，所以钉住和 [atBottom] 必须分开。
+ * 跟随政策（用户正在看内容就绝不能被打扰）：
+ * - **只有贴底跟随时才随生成下滑**，且只向前补溢出、绝不重定位；
+ * - **其余任何时刻不自动跳转**——停在内容上（生成气泡区/历史）就纹丝不动；
+ * - 切会话（消息就绪后）→ 先**跳**到底并标记已定位（定位门）；
+ * - 列表**长出**新的用户消息（刚发出/继续）→ **跳**到底；
+ *   流式幽灵消失等造成的列表回缩**不算**——那是竞态帧，跳过去就是「瞬移到用户气泡」；
+ * - **手指一碰就松钉**（不再跟随）；上滑第一下 [atBottom] 往往还是 true，
+ *   所以钉住和 [atBottom] 必须分开；
+ * - 回到底部**不自动重钉**：只有用户自己滚回到底（[userScrolled]）或走 [jumpToBottom]
+ *   才恢复跟随，避免生成结束时高度突变把 [atBottom] 闪成 true 就把人拽回底部。
  *
  * 定位任务用 [locatingTarget] 标记：**follow 不会取消它**，否则会出现「进去空白、划一下才出来」。
  */
@@ -53,6 +59,8 @@ fun rememberChatListFollow(
     // 已完成首次定位的会话；以及「正在定位哪个会话」。
     val locatedConversation = remember { mutableStateOf<String?>(null) }
     val locatingTarget = remember { mutableStateOf<String?>(null) }
+    // 用户手指刚滚过列表：只有这种情况「滚回到底」才恢复跟随。
+    val userScrolled = remember { mutableStateOf(false) }
     val lastMessage = messages.lastOrNull()
 
     val atBottom by remember {
@@ -95,16 +103,30 @@ fun rememberChatListFollow(
         job.value = scope.launch { listState.followToEnd(stillPinned = { pinned.value }) }
     }
 
+    // 身份固定：pointerInput / nestedScroll 拿到的永远是同一个 lambda。
+    val stopFollowing = remember {
+        {
+            pinned.value = false
+            // 首次定位还没完成时别把定位任务掐掉，否则会永远停在「未定位」。
+            if (locatingTarget.value == null) {
+                job.value?.cancel()
+                job.value = null
+            }
+        }
+    }
+
     val nestedScrollConnection = remember {
         object : NestedScrollConnection {
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
                 // 正 y = 内容下移 = 看更早的消息。程序滚动不走 UserInput。
-                if (source == NestedScrollSource.UserInput && available.y > 0f) {
-                    pinned.value = false
-                    // 首次定位还没完成时别把定位任务掐掉，否则会永远停在「未定位」。
-                    if (locatingTarget.value == null) {
-                        job.value?.cancel()
-                        job.value = null
+                if (source == NestedScrollSource.UserInput) {
+                    userScrolled.value = true
+                    if (available.y > 0f) {
+                        pinned.value = false
+                        if (locatingTarget.value == null) {
+                            job.value?.cancel()
+                            job.value = null
+                        }
                     }
                 }
                 return Offset.Zero
@@ -114,11 +136,24 @@ fun rememberChatListFollow(
 
     var previouslyAtBottom by remember { mutableStateOf(true) }
     LaunchedEffect(atBottom) {
-        if (atBottom && !previouslyAtBottom) pinned.value = true
+        when {
+            !atBottom -> {
+                // 离开底部就把「用户滚过」的记号清掉：此后哪怕高度突变把 atBottom 闪回 true，
+                // 也不再自动重钉（那是生成结束拽回底部的元凶）。
+                userScrolled.value = false
+            }
+
+            !previouslyAtBottom && userScrolled.value -> {
+                // 用户自己滚回到底 → 恢复跟随。
+                userScrolled.value = false
+                pinned.value = true
+            }
+        }
         previouslyAtBottom = atBottom
     }
 
     var lastSeenConversation by remember { mutableStateOf(conversationId) }
+    var lastSeenSize by remember { mutableIntStateOf(-1) }
     LaunchedEffect(
         conversationId,
         messages.size,
@@ -130,14 +165,21 @@ fun rememberChatListFollow(
         val target = conversationId ?: return@LaunchedEffect
         val switched = target != lastSeenConversation
         lastSeenConversation = target
-        if (switched) pinned.value = true
+        if (switched) {
+            pinned.value = true
+            lastSeenSize = -1
+        }
+        val grewToNewMessage = lastSeenSize >= 0 && messages.size > lastSeenSize
+        lastSeenSize = messages.size
 
         // 定位门：消息还没到（LazyColumn 本来也不显示）时先不动；有消息了才跳，跳完才允许显示。
         if (locatedConversation.value != target) {
             if (messages.isNotEmpty()) launchJump(target)
             return@LaunchedEffect
         }
-        if (lastMessage?.role == Role.USER) {
+        // 「长出了用户消息」= 刚发出/继续，跳到底。
+        // 回缩（流式幽灵消失、重生成删除）时末条也可能是 USER，那不是发送，绝不能跳。
+        if (lastMessage?.role == Role.USER && grewToNewMessage) {
             launchJump(target)
             return@LaunchedEffect
         }
@@ -151,9 +193,6 @@ fun rememberChatListFollow(
         located = located,
         nestedScrollConnection = nestedScrollConnection,
         jumpToBottom = { conversationId?.let { launchJump(it) } },
-        unpin = {
-            pinned.value = false
-            if (locatingTarget.value == null) cancel()
-        },
+        unpin = stopFollowing,
     )
 }

@@ -127,6 +127,7 @@ class ChatViewModel(
             notice = note,
             defaultModel = entry.model,
             webSearchAvailable = textAvailable || imageAvailable,
+            pendingWebSearch = binding?.webSearchEnabled == true,
             activeProviderId = settings.activeProviderId,
             pendingModel = binding?.model,
             pendingProviderId = binding?.providerId,
@@ -316,6 +317,8 @@ class ChatViewModel(
     fun selectConversation(id: String) {
         if (conversationId.value == id) return
         discardPending()
+        // 选的是已存在的会话：丢弃「新对话里先选好、还没落库」的绑定，避免它残留到下一个新对话。
+        pendingBinding.value = null
         conversationId.value = id
     }
 
@@ -332,6 +335,7 @@ class ChatViewModel(
                 binding?.model,
                 binding?.providerId,
                 binding?.personaId,
+                binding?.webSearchEnabled == true,
             )
             pendingBinding.value = null
         }
@@ -421,15 +425,22 @@ class ChatViewModel(
 
     /** 切换本会话的 🌐 联网开关；不可用时给可读提示而不静默失败。 */
     fun toggleWebSearch() {
-        val id = conversationId.value ?: return
         val current = state.value.webSearchEnabled
-        viewModelScope.launch {
-            if (!current && !state.value.webSearchAvailable) {
-                notice.value = "联网搜索不可用：请先在设置里填写 API Key"
-                return@launch
-            }
-            repository.setConversationWebSearch(id, !current)
+        // 可用性先判：新对话还没有会话行，不能因为 id 为空就把提示也吞掉。
+        if (!current && !state.value.webSearchAvailable) {
+            notice.value = "联网搜索不可用：请先在设置里填写 API Key"
+            return
         }
+        val id = conversationId.value
+        if (id == null) {
+            // 新对话（会话行还没建）：记成待落库绑定，建会话时随其它绑定一起落库。
+            pendingBinding.update { binding ->
+                (binding ?: PendingBinding(model = null, providerId = null))
+                    .copy(webSearchEnabled = !current)
+            }
+            return
+        }
+        viewModelScope.launch { repository.setConversationWebSearch(id, !current) }
     }
 
     override fun onCleared() {
@@ -441,7 +452,12 @@ class ChatViewModel(
     private suspend fun ensureConversation(): String = conversationLock.withLock {
         conversationId.value?.let { return@withLock it }
         val binding = pendingBinding.value
-        val created = repository.createConversation(binding?.model, binding?.providerId, binding?.personaId)
+        val created = repository.createConversation(
+            binding?.model,
+            binding?.providerId,
+            binding?.personaId,
+            binding?.webSearchEnabled == true,
+        )
         pendingBinding.value = null
         conversationId.value = created
         created
@@ -453,6 +469,12 @@ class ChatViewModel(
         pending.value = emptyList()
     }
 
+    /**
+     * 流式幽灵：`clearStreaming` 落在 Room 发射定稿内容之前时，用最后一帧流式内容顶住那一帧，
+     * 防止 assistant 渲染塌成 ~0 高、整列钳回用户气泡。纯逻辑见 [StreamGhost]；这里只持有状态。
+     */
+    private var streamGhost = StreamGhost()
+
     private fun buildState(
         id: String?,
         conversation: Conversation?,
@@ -461,26 +483,33 @@ class ChatViewModel(
         composer: ComposerSnapshot,
     ): ChatUiState {
         val activeStream = id?.let { turn.streaming[it] }
+        streamGhost = streamGhost.step(
+            conversationId = id,
+            activeStream = activeStream,
+            // 每行「正文 + 思考」的字符数：幽灵靠它判断 DB 的定稿内容有没有发射到位。
+            dbTextLengths = messages.associate { it.id to it.content.length + (it.reasoningContent?.length ?: 0) },
+        )
+        val overlay = streamGhost.overlay(activeStream)
         val items = messages.map { message ->
             val item = message.toItem()
-            if (activeStream != null && activeStream.messageId == message.id) {
+            if (overlay != null && overlay.messageId == message.id) {
                 item.copy(
-                    content = activeStream.content,
-                    reasoning = activeStream.reasoning.ifEmpty { null },
-                    reasoningMs = activeStream.reasoningMs,
+                    content = overlay.content,
+                    reasoning = overlay.reasoning.ifEmpty { null },
+                    reasoningMs = overlay.reasoningMs,
                     status = MessageStatus.STREAMING,
                 )
             } else {
                 item
             }
         }.let { list ->
-            if (activeStream != null && list.none { it.id == activeStream.messageId }) {
+            if (overlay != null && list.none { it.id == overlay.messageId }) {
                 list + ChatMessageItem(
-                    id = activeStream.messageId,
+                    id = overlay.messageId,
                     role = Role.ASSISTANT,
-                    content = activeStream.content,
-                    reasoning = activeStream.reasoning.ifEmpty { null },
-                    reasoningMs = activeStream.reasoningMs,
+                    content = overlay.content,
+                    reasoning = overlay.reasoning.ifEmpty { null },
+                    reasoningMs = overlay.reasoningMs,
                     status = MessageStatus.STREAMING,
                     model = conversation?.model,
                 )
@@ -510,14 +539,16 @@ class ChatViewModel(
             personaId = personaId,
             personaName = composer.personas[personaId]?.name.orEmpty(),
             messages = items,
-            isStreaming = activeStream != null,
-            streamingMessageId = activeStream?.messageId,
+            isStreaming = overlay != null,
+            streamingMessageId = overlay?.messageId,
             isTurnActive = id != null && turn.busy.contains(id),
             input = composer.input,
             pending = composer.pending,
             defaultModel = composer.defaultModel,
             notice = composer.notice,
-            webSearchEnabled = conversation?.webSearchEnabled == true,
+            // 还没有会话时用「待落库」的 🌐：新对话里点开也能立刻在界面上生效，首轮发送时落库。
+            webSearchEnabled = conversation?.webSearchEnabled == true ||
+                (id == null && composer.pendingWebSearch),
             webSearchAvailable = composer.webSearchAvailable,
             videoInputAvailable = ProviderCatalog.supportsVideo(providerId),
             videoUploadNotice = id?.let { turn.videoUploads[it] },
@@ -566,6 +597,8 @@ class ChatViewModel(
         val notice: String?,
         val defaultModel: String,
         val webSearchAvailable: Boolean,
+        /** 还没有会话时用户先开的 🌐；建会话时落库。 */
+        val pendingWebSearch: Boolean = false,
         val activeProviderId: String,
         /** 还没有会话时用户先选好的绑定；建会话时落库。 */
         val pendingModel: String? = null,
@@ -579,6 +612,8 @@ class ChatViewModel(
         val model: String?,
         val providerId: String?,
         val personaId: String? = null,
+        /** 新会话上先开好的 🌐：建会话时随绑定一起落库。 */
+        val webSearchEnabled: Boolean = false,
     )
 
     companion object {
