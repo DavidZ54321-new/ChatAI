@@ -33,15 +33,20 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -54,11 +59,16 @@ import androidx.compose.ui.platform.ClipboardManager
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.zcw.chatai.data.model.Role
 import com.zcw.chatai.ui.md.LocalPreviewOpener
 import com.zcw.chatai.ui.md.PreviewTarget
@@ -86,20 +96,83 @@ fun ChatScreen(
     onModelClick: () -> Unit,
     onToggleWebSearch: () -> Unit,
     onNoticeShown: () -> Unit,
+    autoFocusComposer: Boolean,
+    onAutoFocusComposerConsumed: () -> Unit,
+    composerFocusAllowed: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val colors = ChatTheme.colors
     val context = LocalContext.current
     val listState = rememberLazyListState()
     val clipboard = LocalClipboardManager.current
-    val composerRect = remember { mutableStateOf(Rect.Zero) }
-    val topInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val composerFocus = remember { FocusRequester() }
+
     var actionTarget by remember { mutableStateOf<ChatMessageItem?>(null) }
     var previewTarget by remember { mutableStateOf<MessageImage?>(null) }
     // SVG/HTML 全屏 viewer 目标：Dialog 随开随建、退出即销毁，列表里不驻留 WebView。
     var previewPage by remember { mutableStateOf<PreviewTarget?>(null) }
     var overflowOpen by remember { mutableStateOf(false) }
     var attachOpen by remember { mutableStateOf(false) }
+
+    // 只有聊天主界面可见、且没有被任何浮层遮挡时才允许唤键盘：
+    // 设置页 / 会话列表 / 模型选择（上层标志）与附件面板 / 溢出菜单 / 消息操作 / 图片预览（本地浮层）一律不唤醒。
+    val focusAllowedNow = rememberUpdatedState(
+        composerFocusAllowed && !attachOpen && !overflowOpen &&
+            actionTarget == null && previewTarget == null && previewPage == null,
+    )
+    // 聚焦成功才唤键盘：requestFocus 失败（节点已移除）时不弹，避免键盘飘到别的界面上。
+    fun focusComposerIfAllowed() {
+        if (!focusAllowedNow.value) return
+        val focused = runCatching { composerFocus.requestFocus() }.isSuccess
+        if (focused && focusAllowedNow.value) keyboardController?.show()
+    }
+    // 离开聊天主界面前收键盘：避免输入法跟到设置页/列表页上。
+    fun hideKeyboardForNavigation() {
+        focusManager.clearFocus()
+        keyboardController?.hide()
+    }
+
+    // 冷启动/进程重建的一次性聚焦：等首帧布局（FocusRequester 挂上）再 requestFocus + 唤输入法。
+    // 消费后不再触发；从设置页返回（ChatScreen 离开重组）也不会重触发。
+    LaunchedEffect(autoFocusComposer) {
+        if (autoFocusComposer) {
+            withFrameNanos { }
+            focusComposerIfAllowed()
+            onAutoFocusComposerConsumed()
+        }
+    }
+
+    // 切后台再回聊天页（含锁屏亮屏）：非流式且主界面可见时聚焦 + 弹键盘，方便粘贴剪贴板。
+    // 首次 RESUME 时 everStopped 仍为 false → 跳过，冷启动仍由上面的 autoFocusComposer 负责。
+    var everStopped by remember { mutableStateOf(false) }
+    var resumeTick by remember { mutableIntStateOf(0) }
+    // 系统相册/相机/文档选择器同样是「离开再回来」：从它们返回时不弹键盘（用户刚选完附件）。
+    var suppressResumeFocus by remember { mutableStateOf(false) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_STOP -> everStopped = true
+                Lifecycle.Event.ON_RESUME -> {
+                    if (everStopped) {
+                        if (suppressResumeFocus) suppressResumeFocus = false else resumeTick++
+                    }
+                }
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(resumeTick) {
+        if (resumeTick == 0 || state.isTurnActive) return@LaunchedEffect
+        withFrameNanos { }
+        focusComposerIfAllowed()
+    }
+    val composerRect = remember { mutableStateOf(Rect.Zero) }
+    val topInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
 
     // 底消散贴 Composer 上沿；顶消散在按钮行内实心，只在按钮下沿淡出。
     // 底部留白跟 Composer 实测高度走：待发图把它撑高时，最后一条消息不会被盖住。
@@ -139,6 +212,9 @@ fun ChatScreen(
 
     fun sendKeepingAlive() {
         onSend()
+        // 按发送键就收键盘：Started/Busy/Rejected 都收（用户意图是「发出去」）。
+        focusManager.clearFocus()
+        keyboardController?.hide()
         requestNotifyIfNeeded()
     }
 
@@ -278,7 +354,10 @@ fun ChatScreen(
                 ),
         )
         FloatingTopControls(
-            onOpenConversations = onOpenConversations,
+            onOpenConversations = {
+                hideKeyboardForNavigation()
+                onOpenConversations()
+            },
             onNewConversation = onNewConversation,
             onOverflow = { overflowOpen = true },
             modifier = Modifier.align(Alignment.TopCenter),
@@ -324,6 +403,7 @@ fun ChatScreen(
                     webSearchEnabled = state.webSearchEnabled,
                     webSearchAvailable = state.webSearchAvailable,
                     onToggleWebSearch = onToggleWebSearch,
+                    focusRequester = composerFocus,
                 )
             }
         }
@@ -374,6 +454,7 @@ fun ChatScreen(
             },
             onOpenSettings = {
                 overflowOpen = false
+                hideKeyboardForNavigation()
                 onOpenSettings()
             },
         )
@@ -385,6 +466,7 @@ fun ChatScreen(
                 label = "从相册选择",
                 onClick = {
                     attachOpen = false
+                    suppressResumeFocus = true
                     pickImages.launch(
                         PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
                     )
@@ -396,7 +478,10 @@ fun ChatScreen(
                     attachOpen = false
                     val uri = createCaptureUri(context)
                     captureUriText = uri?.toString()
-                    if (uri != null) takePicture.launch(uri)
+                    if (uri != null) {
+                        suppressResumeFocus = true
+                        takePicture.launch(uri)
+                    }
                 },
             )
             if (state.videoInputAvailable) {
@@ -404,6 +489,7 @@ fun ChatScreen(
                     label = "选择视频（MP4）",
                     onClick = {
                         attachOpen = false
+                        suppressResumeFocus = true
                         pickVideo.launch(
                             PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly),
                         )
@@ -414,6 +500,7 @@ fun ChatScreen(
                 label = "选择文档（PDF / Word / 表格 / 文本）",
                 onClick = {
                     attachOpen = false
+                    suppressResumeFocus = true
                     pickDocument.launch(DOCUMENT_MIME_TYPES)
                 },
             )

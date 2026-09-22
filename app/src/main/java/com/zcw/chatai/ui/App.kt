@@ -38,9 +38,13 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val conversations by viewModel.searchResults.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
+    val autoFocusComposer by viewModel.autoFocusComposer.collectAsStateWithLifecycle()
     var showSettings by remember { mutableStateOf(false) }
     var showConversations by remember { mutableStateOf(false) }
     var showModelPicker by remember { mutableStateOf(false) }
+
+    // 只有聊天主界面（无设置/会话列表/模型选择浮层）才允许自动唤键盘；任何其他界面都不唤醒。
+    val chatSurfaceActive = !showSettings && !showConversations && !showModelPicker
 
     BackHandler(enabled = showSettings && !showConversations) { showSettings = false }
     BackHandler(enabled = showConversations) { showConversations = false }
@@ -75,6 +79,9 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
                 onModelClick = { showModelPicker = true },
                 onToggleWebSearch = viewModel::toggleWebSearch,
                 onNoticeShown = viewModel::consumeNotice,
+                autoFocusComposer = autoFocusComposer,
+                onAutoFocusComposerConsumed = viewModel::consumeAutoFocusComposer,
+                composerFocusAllowed = chatSurfaceActive,
             )
             if (showModelPicker) {
                 ModelPickerSheet(

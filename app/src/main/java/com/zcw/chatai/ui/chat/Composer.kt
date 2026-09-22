@@ -33,6 +33,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.lerp
@@ -63,6 +65,7 @@ fun Composer(
     webSearchEnabled: Boolean,
     webSearchAvailable: Boolean,
     onToggleWebSearch: () -> Unit,
+    focusRequester: FocusRequester = remember { FocusRequester() },
     modifier: Modifier = Modifier,
 ) {
     val colors = ChatTheme.colors
@@ -106,7 +109,8 @@ fun Composer(
             onValueChange = onValueChange,
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 26.dp, max = 150.dp),
+                .heightIn(min = 26.dp, max = 150.dp)
+                .focusRequester(focusRequester),
             textStyle = MaterialTheme.typography.bodyLarge.copy(color = scheme.onSurface),
             cursorBrush = SolidColor(scheme.primary),
             maxLines = 6,

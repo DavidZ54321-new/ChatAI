@@ -57,6 +57,13 @@ class ChatViewModel(
     private val conversationId = MutableStateFlow<String?>(null)
 
     /**
+     * 冷启动/进程重建后的一次性聚焦请求：进「新对话」空态时聚焦输入框并唤醒输入法。
+     * 消费后置 false——回后台再回来（VM 还活着）不再抢焦点。
+     */
+    private val _autoFocusComposer = MutableStateFlow(true)
+    val autoFocusComposer: StateFlow<Boolean> = _autoFocusComposer.asStateFlow()
+
+    /**
      * 还没有会话时，用户先选好的模型/供应商只是**界面状态**：不急着建一条空会话，
      * 等真正建会话（首次发送或点「+」）时再一次性落库。
      */
@@ -160,25 +167,10 @@ class ChatViewModel(
                 }
             }
         }
-        viewModelScope.launch {
-            val existing = repository.observeConversations().first()
-            if (conversationId.value == null && existing.isNotEmpty()) {
-                val id = existing.first().id
-                conversationId.value = id
-                // 采纳既有会话后，把用户在建会话之前选的绑定补写到它上面，别让选择落空。
-                pendingBinding.value?.let { binding ->
-                    when {
-                        binding.providerId != null && binding.model != null ->
-                            repository.setConversationProvider(id, binding.providerId, binding.model)
-                        binding.model != null -> repository.setConversationModel(id, binding.model)
-                    }
-                    if (binding.personaId != null) {
-                        repository.setConversationPersona(id, binding.personaId)
-                    }
-                }
-                pendingBinding.value = null
-            }
-        }
+    }
+
+    fun consumeAutoFocusComposer() {
+        _autoFocusComposer.value = false
     }
 
     // ---------- Composer ----------
