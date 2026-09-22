@@ -16,7 +16,7 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 fun FloatingTopControls(
-    onOpenDrawer: () -> Unit,
+    onOpenConversations: () -> Unit,
     onNewConversation: () -> Unit,
     onOverflow: () -> Unit,
     modifier: Modifier = Modifier,
@@ -31,7 +31,7 @@ fun FloatingTopControls(
         IconBareButton(
             icon = Icons.Filled.Menu,
             contentDescription = "会话列表",
-            onClick = onOpenDrawer,
+            onClick = onOpenConversations,
         )
         Spacer(Modifier.weight(1f))
         IconBareButton(

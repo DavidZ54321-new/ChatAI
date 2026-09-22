@@ -1,13 +1,16 @@
 package com.zcw.chatai.ui
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.material3.DrawerValue
-import androidx.compose.material3.rememberDrawerState
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -17,9 +20,8 @@ import com.zcw.chatai.ChatAiApp
 import com.zcw.chatai.ui.chat.ChatScreen
 import com.zcw.chatai.ui.chat.ChatViewModel
 import com.zcw.chatai.ui.chat.ModelPickerSheet
-import com.zcw.chatai.ui.drawer.ConversationDrawer
+import com.zcw.chatai.ui.drawer.ConversationListScreen
 import com.zcw.chatai.ui.settings.SettingsScreen
-import kotlinx.coroutines.launch
 
 @Composable
 fun ChatAiRoot(modifier: Modifier = Modifier) {
@@ -34,30 +36,25 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
         ),
     )
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val conversations by viewModel.conversations.collectAsStateWithLifecycle()
-    val drawerState = rememberDrawerState(DrawerValue.Closed)
-    val scope = rememberCoroutineScope()
+    val conversations by viewModel.searchResults.collectAsStateWithLifecycle()
+    val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     var showSettings by remember { mutableStateOf(false) }
+    var showConversations by remember { mutableStateOf(false) }
     var showModelPicker by remember { mutableStateOf(false) }
 
-    BackHandler(enabled = showSettings) { showSettings = false }
+    BackHandler(enabled = showSettings && !showConversations) { showSettings = false }
+    BackHandler(enabled = showConversations) { showConversations = false }
 
-    if (showSettings) {
-        SettingsScreen(onBack = { showSettings = false }, modifier = modifier)
-    } else {
-        ConversationDrawer(
-            conversations = conversations,
-            selectedId = state.conversationId,
-            currentModel = state.model,
-            drawerState = drawerState,
-            scope = scope,
-            onSelect = viewModel::selectConversation,
-            onNew = viewModel::newConversation,
-            onRename = viewModel::renameConversation,
-            onDelete = viewModel::deleteConversation,
-            onOpenSettings = { showSettings = true },
-            modifier = modifier,
-        ) {
+    // 关闭列表一律连搜索词一起清掉：否则下次打开会看到「没有搜索框却已被过滤」的列表。
+    val closeConversations = {
+        showConversations = false
+        viewModel.setSearchQuery("")
+    }
+
+    Box(modifier = modifier.fillMaxSize()) {
+        if (showSettings) {
+            SettingsScreen(onBack = { showSettings = false })
+        } else {
             ChatScreen(
                 state = state,
                 onInputChange = viewModel::setInput,
@@ -70,7 +67,7 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
                 onNewConversation = viewModel::newConversation,
                 onClearConversation = viewModel::clearConversation,
                 onOpenSettings = { showSettings = true },
-                onOpenDrawer = { scope.launch { drawerState.open() } },
+                onOpenConversations = { showConversations = true },
                 onAddImage = viewModel::addAttachment,
                 onAddVideo = viewModel::addVideo,
                 onAddDocument = viewModel::addDocument,
@@ -79,24 +76,64 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
                 onToggleWebSearch = viewModel::toggleWebSearch,
                 onNoticeShown = viewModel::consumeNotice,
             )
+            if (showModelPicker) {
+                ModelPickerSheet(
+                    currentModel = state.model,
+                    providerId = state.providerId,
+                    personaId = state.personaId,
+                    onDismiss = { showModelPicker = false },
+                    onSelect = { model ->
+                        viewModel.setModel(model)
+                        showModelPicker = false
+                    },
+                    onSelectProvider = viewModel::setProvider,
+                    onSelectPersona = viewModel::setPersona,
+                    onOpenSettings = {
+                        showModelPicker = false
+                        showSettings = true
+                    },
+                )
+            }
         }
-        if (showModelPicker) {
-            ModelPickerSheet(
-                currentModel = state.model,
-                providerId = state.providerId,
-                personaId = state.personaId,
-                onDismiss = { showModelPicker = false },
-                onSelect = { model ->
-                    viewModel.setModel(model)
-                    showModelPicker = false
+
+        // 全屏会话列表：从左侧滑入/滑回左侧（与页内「左滑收起」同一方向）。
+        // 偏移量必须显式给满宽：`slideIn/OutHorizontally` 的默认值只有 `-it / 2`，会滑一半就停。
+        AnimatedVisibility(
+            visible = showConversations,
+            enter = slideInHorizontally(
+                animationSpec = tween(LIST_SLIDE_IN_MS),
+                initialOffsetX = { -it },
+            ),
+            exit = slideOutHorizontally(
+                animationSpec = tween(LIST_SLIDE_OUT_MS),
+                targetOffsetX = { -it },
+            ),
+        ) {
+            ConversationListScreen(
+                visible = showConversations,
+                conversations = conversations,
+                selectedId = state.conversationId,
+                searchQuery = searchQuery,
+                onSearchQueryChange = viewModel::setSearchQuery,
+                onSelect = { id ->
+                    viewModel.selectConversation(id)
+                    closeConversations()
                 },
-                onSelectProvider = viewModel::setProvider,
-                onSelectPersona = viewModel::setPersona,
+                onNew = {
+                    viewModel.newConversation()
+                    closeConversations()
+                },
+                onRename = viewModel::renameConversation,
+                onDelete = viewModel::deleteConversation,
                 onOpenSettings = {
-                    showModelPicker = false
+                    closeConversations()
                     showSettings = true
                 },
+                onClose = closeConversations,
             )
         }
     }
 }
+
+private const val LIST_SLIDE_IN_MS = 260
+private const val LIST_SLIDE_OUT_MS = 200

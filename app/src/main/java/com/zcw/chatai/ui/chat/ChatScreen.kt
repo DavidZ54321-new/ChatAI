@@ -78,7 +78,7 @@ fun ChatScreen(
     onNewConversation: () -> Unit,
     onClearConversation: () -> Unit,
     onOpenSettings: () -> Unit,
-    onOpenDrawer: () -> Unit,
+    onOpenConversations: () -> Unit,
     onAddImage: (Uri) -> Unit,
     onAddVideo: (Uri) -> Unit,
     onAddDocument: (Uri) -> Unit,
@@ -278,7 +278,7 @@ fun ChatScreen(
                 ),
         )
         FloatingTopControls(
-            onOpenDrawer = onOpenDrawer,
+            onOpenConversations = onOpenConversations,
             onNewConversation = onNewConversation,
             onOverflow = { overflowOpen = true },
             modifier = Modifier.align(Alignment.TopCenter),

@@ -27,6 +27,7 @@ import com.zcw.chatai.data.web.WebSearchProvider
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
@@ -65,6 +66,18 @@ class ChatViewModel(
     private val conversationLock = Mutex()
 
     val conversations: StateFlow<List<Conversation>> = repository.observeConversations()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** 会话列表页的搜索词；空串 = 不过滤（直接看全部会话）。 */
+    private val _searchQuery = MutableStateFlow("")
+
+    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+
+    /** 会话列表页展示的数据：有关键词就走标题+消息正文检索，否则全部会话。 */
+    val searchResults: StateFlow<List<Conversation>> = _searchQuery
+        .flatMapLatest { query ->
+            if (query.isBlank()) conversations else repository.searchConversations(query)
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val messagesFlow = conversationId.flatMapLatest { id ->
@@ -312,6 +325,11 @@ class ChatViewModel(
         if (conversationId.value == id) return
         discardPending()
         conversationId.value = id
+    }
+
+    /** 会话列表页搜索：关键词变化时 [searchResults] 自动重算。 */
+    fun setSearchQuery(query: String) {
+        _searchQuery.value = query
     }
 
     fun newConversation() {

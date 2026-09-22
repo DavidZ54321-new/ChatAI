@@ -12,6 +12,21 @@ interface ConversationDao {
     @Query("SELECT * FROM conversations ORDER BY is_pinned DESC, updated_at DESC")
     fun observeAll(): Flow<List<ConversationEntity>>
 
+    /**
+     * 标题或任一条消息正文命中 `pattern` 的会话（`pattern` 由 [LikePattern.contains] 转义好）。
+     * 一个会话多条消息命中时用 DISTINCT 去重，排序与 [observeAll] 一致。
+     */
+    @Query(
+        """
+        SELECT DISTINCT c.* FROM conversations c
+        LEFT JOIN messages m ON m.conversation_id = c.id
+        WHERE c.title LIKE :pattern ESCAPE '\'
+           OR m.content LIKE :pattern ESCAPE '\'
+        ORDER BY c.is_pinned DESC, c.updated_at DESC
+        """,
+    )
+    fun search(pattern: String): Flow<List<ConversationEntity>>
+
     @Query("SELECT * FROM conversations WHERE id = :id")
     fun observeById(id: String): Flow<ConversationEntity?>
 

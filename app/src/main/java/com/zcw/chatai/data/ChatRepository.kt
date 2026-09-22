@@ -15,6 +15,7 @@ import com.zcw.chatai.data.ai.ToolTurnGrouping
 import com.zcw.chatai.data.db.AppDatabase
 import com.zcw.chatai.data.db.AttachmentCodec
 import com.zcw.chatai.data.db.ConversationEntity
+import com.zcw.chatai.data.db.LikePattern
 import com.zcw.chatai.data.db.MessageEntity
 import com.zcw.chatai.data.db.ToolCallCodec
 import com.zcw.chatai.data.db.toModel
@@ -187,6 +188,10 @@ class ChatRepository(
 
     fun observeConversations(): Flow<List<Conversation>> =
         db.conversationDao().observeAll().map { list -> list.map { it.toModel() } }
+
+    /** 标题或消息正文命中关键词的会话（关键词按字面量匹配，见 [LikePattern]）。 */
+    fun searchConversations(query: String): Flow<List<Conversation>> =
+        db.conversationDao().search(LikePattern.contains(query)).map { list -> list.map { it.toModel() } }
 
     fun observeConversation(id: String): Flow<Conversation?> =
         db.conversationDao().observeById(id).map { it?.toModel() }
