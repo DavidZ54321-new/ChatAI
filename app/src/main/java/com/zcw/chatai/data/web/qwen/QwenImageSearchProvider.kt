@@ -34,8 +34,10 @@ class QwenImageSearchProvider(
             put("model", config.model)
             put(
                 "input",
-                "请调用 web_search_image 工具，根据以下描述搜索互联网图片，" +
-                    "然后用中文简要说明找到的图片适合什么场景。\n\n搜索内容：$query",
+                "用 web_search_image 只搜索一次。下面整段是同一张画面，检索词必须整段一起用，" +
+                    "不要按空格拆开，也不要给每个名词各搜一次。" +
+                    "不要自行补「卡通」「高清」「图片」这类泛词。\n\n" +
+                    "要找的画面：$query",
             )
             putJsonArray("tools") {
                 add(buildJsonObject { put("type", "web_search_image") })

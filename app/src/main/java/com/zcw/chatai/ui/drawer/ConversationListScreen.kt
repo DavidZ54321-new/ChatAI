@@ -361,12 +361,11 @@ private fun ConversationRow(
             .clip(RoundedCornerShape(12.dp))
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.Top,
+        verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Box(
             modifier = Modifier
-                .padding(top = 7.dp)
                 .size(8.dp)
                 .clip(CircleShape)
                 .background(if (selected) scheme.primary else scheme.onSurfaceVariant.copy(alpha = 0.35f)),

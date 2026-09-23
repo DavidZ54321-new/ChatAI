@@ -61,6 +61,7 @@ import com.mikepenz.markdown.model.rememberMarkdownState
 import com.mikepenz.markdown.utils.resolveImageAlt
 import com.mikepenz.markdown.utils.resolveImageLink
 import com.zcw.chatai.ui.chat.ChatMetrics
+import com.zcw.chatai.ui.chat.PreviewImage
 import com.zcw.chatai.ui.chat.RemoteImage
 import com.zcw.chatai.ui.chat.RemoteImagePreviewDialog
 import com.zcw.chatai.ui.md.latex.MathFormula
@@ -91,13 +92,33 @@ fun MessageMarkdown(
     // 而是由 MarkdownBlock 的 codeFence 槽统一渲染：外观与普通代码块一致，围栏闭合后
     // 语言头右侧多一个「预览」入口（点进全屏 viewer）。
     val segments = remember(content) { ImageRowSplitter.split(content) }
+    // 一篇正文里的全部网图，按从上到下的阅读顺序。点开任意一张，左右滑按这个顺序切换。
+    val gallery = remember(segments) {
+        segments.flatMap { segment ->
+            if (segment is ContentSegment.ImageRow) segment.images else emptyList()
+        }
+    }
+    var previewAt by remember { mutableStateOf<Int?>(null) }
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        var cursor = 0
         for (segment in segments) {
             when (segment) {
                 is ContentSegment.Markdown -> LatexContent(segment.text, cacheable)
-                is ContentSegment.ImageRow -> MarkdownImageRow(segment.images)
+                is ContentSegment.ImageRow -> {
+                    val start = cursor
+                    MarkdownImageRow(segment.images) { local -> previewAt = start + local }
+                    cursor += segment.images.size
+                }
             }
         }
+    }
+    val index = previewAt
+    if (index != null && gallery.isNotEmpty()) {
+        RemoteImagePreviewDialog(
+            images = gallery.map { PreviewImage(url = it.url, title = it.alt) },
+            initialIndex = index,
+            onDismiss = { previewAt = null },
+        )
     }
 }
 
@@ -120,20 +141,19 @@ private fun LatexContent(text: String, cacheable: Boolean) {
  * 多张用 [LazyRow]：一屏放不下的图（如 16 张的图搜回答）不会一次性全部发起下载/解码。
  */
 @Composable
-private fun MarkdownImageRow(images: List<MarkdownImageRef>) {
+private fun MarkdownImageRow(images: List<MarkdownImageRef>, onOpen: (Int) -> Unit) {
     if (images.size == 1) {
-        MarkdownSingleImage(images.first())
+        MarkdownSingleImage(images.first()) { onOpen(0) }
         return
     }
     val windowWidth = LocalWindowInfo.current.containerDpSize.width
     val imageHeight = ChatMetrics.markdownImageHeight(windowWidth)
     val maxWidth = ChatMetrics.markdownImageMaxWidth(windowWidth)
-    var preview by remember { mutableStateOf<MarkdownImageRef?>(null) }
     LazyRow(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        itemsIndexed(images, key = { index, image -> "$index:${image.url}" }) { _, image ->
+        itemsIndexed(images, key = { index, image -> "$index:${image.url}" }) { index, image ->
             RemoteImage(
                 url = image.url,
                 contentDescription = image.alt,
@@ -143,16 +163,9 @@ private fun MarkdownImageRow(images: List<MarkdownImageRef>) {
                     .height(imageHeight)
                     .widthIn(min = ChatMetrics.MARKDOWN_IMAGE_MIN_WIDTH, max = maxWidth)
                     .clip(RoundedCornerShape(12.dp))
-                    .clickable { preview = image },
+                    .clickable { onOpen(index) },
             )
         }
-    }
-    preview?.let { image ->
-        RemoteImagePreviewDialog(
-            url = image.url,
-            title = image.alt,
-            onDismiss = { preview = null },
-        )
     }
 }
 
@@ -161,10 +174,9 @@ private fun MarkdownImageRow(images: List<MarkdownImageRef>) {
  * 图片加载完才量到宽高比，之前用宽度上限 + 占位高度过渡。
  */
 @Composable
-private fun MarkdownSingleImage(image: MarkdownImageRef) {
+private fun MarkdownSingleImage(image: MarkdownImageRef, onOpen: () -> Unit) {
     val window = LocalWindowInfo.current.containerDpSize
     var aspect by remember(image.url) { mutableFloatStateOf(0f) }
-    var preview by remember { mutableStateOf<MarkdownImageRef?>(null) }
     val size = ChatMetrics.markdownSingleImageSize(aspect, window.width, window.height)
     val sizeModifier = if (size.height > 0.dp) {
         Modifier.size(size)
@@ -183,15 +195,8 @@ private fun MarkdownSingleImage(image: MarkdownImageRef) {
         onAspect = { aspect = it },
         modifier = sizeModifier
             .clip(RoundedCornerShape(12.dp))
-            .clickable { preview = image },
+            .clickable(onClick = onOpen),
     )
-    preview?.let { image ->
-        RemoteImagePreviewDialog(
-            url = image.url,
-            title = image.alt,
-            onDismiss = { preview = null },
-        )
-    }
 }
 
 @Composable

@@ -7,12 +7,15 @@ import android.util.LruCache
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -35,7 +38,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -255,16 +257,47 @@ fun RemoteImage(
     }
 }
 
-/** 点开图搜结果的全屏预览：捏合缩放 + 拖动，退出即关。 */
+/** 全屏预览里的一张图。 */
+data class PreviewImage(val url: String, val title: String?)
+
+/**
+ * 点开后的全屏预览：捏合缩放。未放大时左右滑在 [images] 之间切换
+ * （工具结果和图文气泡同一方向，顺序都是列表顺序）；
+ * 放大后拖动改为平移，缩回 1× 再翻页。
+ *
+ * 调用方保证 [images] 至少有一张。
+ */
 @Composable
 fun RemoteImagePreviewDialog(
-    url: String,
-    title: String?,
+    images: List<PreviewImage>,
+    initialIndex: Int,
     onDismiss: () -> Unit,
 ) {
+    val start = initialIndex.coerceIn(0, images.lastIndex)
+    val pagerState = rememberPagerState(initialPage = start, pageCount = { images.size })
     var scale by remember { mutableFloatStateOf(1f) }
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
+    // 停住之后才换页：滑到一半时 currentPage 已经变了，缩放还留在原来那张上。
+    var zoomPage by remember { mutableIntStateOf(start) }
+    val settled = pagerState.settledPage
+    if (zoomPage != settled) {
+        zoomPage = settled
+        scale = 1f
+        offsetX = 0f
+        offsetY = 0f
+    }
+    val transformState = rememberTransformableState { zoomChange, panChange, _ ->
+        val next = (scale * zoomChange).coerceIn(1f, 6f)
+        if (next > 1f) {
+            offsetX += panChange.x
+            offsetY += panChange.y
+        } else {
+            offsetX = 0f
+            offsetY = 0f
+        }
+        scale = next
+    }
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -272,34 +305,47 @@ fun RemoteImagePreviewDialog(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.94f))
-                .pointerInput(Unit) {
-                    detectTransformGestures { _, pan, zoom, _ ->
-                        scale = (scale * zoom).coerceIn(1f, 6f)
-                        if (scale > 1f) {
-                            offsetX += pan.x
-                            offsetY += pan.y
-                        } else {
-                            offsetX = 0f
-                            offsetY = 0f
-                        }
-                    }
-                },
+                .background(Color.Black.copy(alpha = 0.94f)),
         ) {
-            RemoteImage(
-                url = url,
-                contentDescription = title ?: "图片预览",
-                maxEdge = 2048,
-                contentScale = ContentScale.Fit,
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize(),
+                userScrollEnabled = scale <= 1f,
+            ) { index ->
+                val image = images[index]
+                val zoomed = index == settled
+                RemoteImage(
+                    url = image.url,
+                    contentDescription = image.title ?: "图片预览",
+                    maxEdge = 2048,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(12.dp)
+                        .then(
+                            if (zoomed) {
+                                Modifier
+                                    .graphicsLayer(
+                                        scaleX = scale,
+                                        scaleY = scale,
+                                        translationX = offsetX,
+                                        translationY = offsetY,
+                                    )
+                                    // 未放大时不吃平移，交给 Pager 翻页；放大后才平移。
+                                    .transformable(state = transformState, canPan = { scale > 1f })
+                            } else {
+                                Modifier
+                            },
+                        ),
+                )
+            }
+            Text(
+                text = "${pagerState.currentPage + 1} / ${images.size}",
+                color = Color.White,
+                style = MaterialTheme.typography.labelMedium,
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(12.dp)
-                    .graphicsLayer(
-                        scaleX = scale,
-                        scaleY = scale,
-                        translationX = offsetX,
-                        translationY = offsetY,
-                    ),
+                    .align(Alignment.TopStart)
+                    .padding(start = 20.dp, top = 24.dp),
             )
             Box(
                 modifier = Modifier
@@ -318,11 +364,12 @@ fun RemoteImagePreviewDialog(
                     modifier = Modifier.size(20.dp),
                 )
             }
+            val title = images[pagerState.currentPage].title
             if (!title.isNullOrBlank()) {
                 Text(
                     text = title,
                     color = Color.White,
-                    style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.labelMedium,
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .padding(24.dp),

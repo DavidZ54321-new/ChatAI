@@ -275,10 +275,7 @@ fun ChatScreen(
         val previewOpener = remember { { target: PreviewTarget -> previewPage = target } }
         CompositionLocalProvider(LocalPreviewOpener provides previewOpener) {
             if (messages.isEmpty()) {
-                EmptyChatState(
-                    onSuggestionClick = onInputChange,
-                    modifier = Modifier.fillMaxSize(),
-                )
+                EmptyChatState(modifier = Modifier.fillMaxSize())
             } else {
                 LazyColumn(
                     state = listState,

@@ -202,6 +202,8 @@ Chat Completions **共用一个基址**。
   **没有 annotations**（角标引用别指望）。
 - `tools:[{"type":"web_search_image"}]`（文搜图）：`output` 项 `web_search_image_call.output` 是
   **JSON 字符串**，parse 后 `[{index,title,url}]`（实测 30 条，带 title）；~30s。
+  工具体没有 query / 关键词数量参数，检索意图只在 `input`。空格词袋会被内部模型拆成多次独立搜图，
+  再被 `parseImages` 拼进同一条结果，所以 `input` 要求只搜一次、整段当作同一张画面。
 - `tools:[{"type":"image_search"}]`（图搜图）：`input` 必须含 `input_image`，
   **base64 data URI 实测可用**（无需公网 URL）；返回同 `image_search_call.output` 形状；
   `output[]` 顺序不保证（实测 `message → call → message`），解析取最后一个 message。

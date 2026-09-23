@@ -172,14 +172,22 @@ object WebTools {
     private fun searchImagesSpec() = ChatTool(
         function = FunctionSpec(
             name = SEARCH_IMAGES,
-            description = "Search the web for images matching a text description (text-to-image search). " +
-                "Use it when the user asks to find images, pictures, wallpapers or visual references.",
+            description = "Search the web for images of one concrete picture. " +
+                "Use it when the user asks to find images, pictures, wallpapers or visual references. " +
+                "One call describes one picture. For two different subjects, call it once per subject.",
             parameters = buildJsonObject {
                 put("type", "object")
                 putJsonObject("properties") {
                     putJsonObject("query") {
                         put("type", "string")
-                        put("description", "Image search query, e.g. '科技感 PPT 封面背景'.")
+                        put(
+                            "description",
+                            "One picture as a single phrase: the subject and what it is doing stay together. " +
+                                "Good: \"蕉太狼吃香蕉\". " +
+                                "Bad: \"蕉太狼 吃香蕉 卡通形象\" — space-separated words are searched as " +
+                                "separate pictures and mix in unrelated hits. " +
+                                "Do not append generic words like 卡通, 高清, or 图片.",
+                        )
                     }
                 }
                 put("required", JsonArray(listOf(JsonPrimitive("query"))))

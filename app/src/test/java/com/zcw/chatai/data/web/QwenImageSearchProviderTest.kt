@@ -43,6 +43,8 @@ class QwenImageSearchProviderTest {
         val payload = recorded.body.readUtf8()
         assertTrue(payload, payload.contains("\"type\":\"web_search_image\""))
         assertTrue(payload, payload.contains("科技感封面"))
+        assertTrue(payload, payload.contains("只搜索一次"))
+        assertTrue(payload, payload.contains("不要按空格拆开"))
         assertTrue(payload, payload.contains("\"enable_thinking\":false"))
     }
 

@@ -10,7 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -31,7 +31,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.zcw.chatai.data.model.SearchedImage
 import com.zcw.chatai.data.model.ToolKind
 import com.zcw.chatai.data.model.ToolResult
 import com.zcw.chatai.data.model.ToolStatus
@@ -50,7 +49,7 @@ fun ToolCallBlock(
 ) {
     val scheme = MaterialTheme.colorScheme
     var expanded by rememberSaveable { mutableStateOf(false) }
-    var preview by remember { mutableStateOf<SearchedImage?>(null) }
+    var previewIndex by remember { mutableStateOf<Int?>(null) }
     val title = toolTitle(result)
     Column(modifier = modifier.fillMaxWidth().animateContentSize()) {
         Row(
@@ -109,7 +108,7 @@ fun ToolCallBlock(
                             .padding(start = 8.dp, top = 4.dp, bottom = 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        items(items = result.images, key = { it.url }) { image ->
+                        itemsIndexed(result.images, key = { _, image -> image.url }) { index, image ->
                             RemoteImage(
                                 url = image.url,
                                 contentDescription = image.title.ifBlank { "搜索结果图片" },
@@ -119,7 +118,7 @@ fun ToolCallBlock(
                                     .size(92.dp)
                                     .clip(RoundedCornerShape(12.dp))
                                     .background(ChatTheme.colors.surfaceSoft)
-                                    .clickable { preview = image },
+                                    .clickable { previewIndex = index },
                             )
                         }
                     }
@@ -147,11 +146,13 @@ fun ToolCallBlock(
             }
         }
     }
-    preview?.let { image ->
+    previewIndex?.takeIf { result.images.isNotEmpty() }?.let { index ->
         RemoteImagePreviewDialog(
-            url = image.url,
-            title = image.title.takeIf { it.isNotBlank() },
-            onDismiss = { preview = null },
+            images = result.images.map { image ->
+                PreviewImage(url = image.url, title = image.title.takeIf { it.isNotBlank() })
+            },
+            initialIndex = index,
+            onDismiss = { previewIndex = null },
         )
     }
 }
