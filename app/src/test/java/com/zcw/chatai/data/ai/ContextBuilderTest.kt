@@ -8,6 +8,7 @@ import com.zcw.chatai.data.model.Role
 import com.zcw.chatai.data.model.ToolCall
 import com.zcw.chatai.data.model.ToolResult
 import com.zcw.chatai.data.model.ToolStatus
+import com.zcw.chatai.data.net.ChatRequestAudio
 import com.zcw.chatai.data.net.ChatRequestImage
 import com.zcw.chatai.data.net.ChatRequestVideo
 import org.junit.Assert.assertEquals
@@ -443,6 +444,93 @@ class ContextBuilderTest {
         assertEquals(1, built.single().images.size)
         assertEquals(1, built.single().videos.size)
     }
+
+    @Test
+    fun audioOnlyMessageIsEncodedAsAudioBlock() {
+        val history = listOf(
+            message("u1", Role.USER, "听这个", attachments = listOf(audioAttachment("au1"))),
+        )
+        val built = ContextBuilder.build(
+            history,
+            imageTurns = 1,
+            imageProvider = { null },
+            audioProvider = { audio },
+        )
+        assertEquals(listOf(audio), built.single().audios)
+        assertTrue(built.single().images.isEmpty())
+        assertTrue(built.single().videos.isEmpty())
+        assertEquals("听这个", built.single().content)
+    }
+
+    @Test
+    fun olderAudioIsDemotedToAudioPlaceholder() {
+        val history = listOf(
+            message("u1", Role.USER, "第一段音频", attachments = listOf(audioAttachment("au1"))),
+            message("a1", Role.ASSISTANT, "听到了"),
+            message("u2", Role.USER, "第二段音频", attachments = listOf(audioAttachment("au2"))),
+            message("a2", Role.ASSISTANT, "嗯"),
+            message("u3", Role.USER, "第三段音频", attachments = listOf(audioAttachment("au3"))),
+        )
+        val built = ContextBuilder.build(
+            history,
+            imageTurns = 1,
+            imageProvider = { null },
+            audioProvider = { audio },
+        )
+        assertTrue(built.first().audios.isEmpty())
+        assertTrue(built.first().content.contains(ContextBuilder.AUDIO_OMITTED))
+        assertEquals(1, built[2].audios.size)
+        assertEquals(1, built[4].audios.size)
+    }
+
+    @Test
+    fun missingAudioFileBecomesUnavailablePlaceholder() {
+        val history = listOf(
+            message("u1", Role.USER, "音频丢了", attachments = listOf(audioAttachment("au1"))),
+        )
+        val built = ContextBuilder.build(
+            history,
+            imageTurns = 1,
+            imageProvider = { null },
+            audioProvider = { null },
+        )
+        assertTrue(built.single().audios.isEmpty())
+        assertTrue(built.single().content.contains(ContextBuilder.AUDIO_MISSING))
+    }
+
+    @Test
+    fun imageAndAudioInOneMessageAreBothEncoded() {
+        val history = listOf(
+            message(
+                "u1",
+                Role.USER,
+                "图文音频",
+                attachments = listOf(attachment("a1", "attachments/c/a1.jpg"), audioAttachment("au1")),
+            ),
+        )
+        val built = ContextBuilder.build(
+            history,
+            imageTurns = 1,
+            imageProvider = { image },
+            audioProvider = { audio },
+        )
+        assertEquals(1, built.single().images.size)
+        assertEquals(1, built.single().audios.size)
+        assertNull("音图混排不该出占位", built.single().content.takeIf { it.contains("已省略") })
+    }
+
+    private val audio = ChatRequestAudio(dataUrl = "data:audio/mpeg;base64,AAAA")
+
+    private fun audioAttachment(id: String) = Attachment(
+        id = id,
+        kind = AttachmentKind.AUDIO,
+        relativePath = "attachments/c/$id.mp3",
+        mimeType = "audio/mpeg",
+        width = 0,
+        height = 0,
+        sizeBytes = 2_000_000,
+        durationMs = 30_000,
+    )
 
     private fun attachment(id: String, path: String) = Attachment(
         id = id,

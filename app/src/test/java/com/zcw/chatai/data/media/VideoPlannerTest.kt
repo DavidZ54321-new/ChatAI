@@ -81,6 +81,34 @@ class VideoPlannerTest {
         assertEquals(VideoPlan.Upload(null, null), VideoPlanner.plan(attachment, "m", now))
     }
 
+    @Test
+    fun uploadForbiddenAndOversizedYieldsTooLargeForInline() {
+        // MiMo 场景：35MiB 上限、无 DashScope 路由。
+        val limit = 35L * 1024 * 1024
+        assertEquals(
+            VideoPlan.TooLargeForInline(limit),
+            VideoPlanner.plan(video(size = limit + 1), "m", now, inlineMaxBytes = limit, allowUpload = false),
+        )
+    }
+
+    @Test
+    fun uploadForbiddenButWithinInlineLimitStaysInline() {
+        val limit = 35L * 1024 * 1024
+        assertEquals(
+            VideoPlan.Inline,
+            VideoPlanner.plan(video(size = limit), "m", now, inlineMaxBytes = limit, allowUpload = false),
+        )
+    }
+
+    @Test
+    fun uploadAllowedKeepsLegacyUploadBeyondLimit() {
+        // 默认参数（Qwen 等）行为不变：超限仍走上传。
+        assertEquals(
+            VideoPlan.Upload(null, null),
+            VideoPlanner.plan(video(size = 5 * 1024 * 1024 + 1), "m", now),
+        )
+    }
+
     private fun video(
         size: Long,
         remoteUrl: String? = null,

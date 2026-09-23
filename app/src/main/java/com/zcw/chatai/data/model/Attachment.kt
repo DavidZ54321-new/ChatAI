@@ -1,6 +1,6 @@
 package com.zcw.chatai.data.model
 
-enum class AttachmentKind { IMAGE, VIDEO, DOCUMENT }
+enum class AttachmentKind { IMAGE, VIDEO, DOCUMENT, AUDIO }
 
 /**
  * 消息附件。二进制不入库，只把元数据以 JSON 存进 `messages.attachments`，

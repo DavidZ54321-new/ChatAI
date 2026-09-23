@@ -23,9 +23,10 @@ DeepSeek 兼容端点的**实测**事实、模拟器联调手法、以及一节�
 .\gradlew.bat lint                 # 未配置 formatter / typecheck 任务
 ```
 
-单测 278 个，**全是 JVM 测试**（无 Robolectric）：网络层走 MockWebServer，其余是纯函数
-（错误映射、图片压缩尺寸、模型能力表、LaTeX 分段、行内公式、Markdown、思考摘要/耗时格式化、
-视觉度量、Room 映射往返）。完整验证 = `assembleDebug` + `test`。
+单测 680 个，**全是 JVM 测试**（无 Robolectric）：网络层走 MockWebServer，其余是纯函数
+（错误映射、图片压缩尺寸、模型能力表、供应商目录/工具后端、思考字段线型、LaTeX 分段、
+行内公式、Markdown、思考摘要/耗时格式化、视觉度量、Room 映射往返、音频/视频编解码）。
+完整验证 = `assembleDebug` + `test`。
 
 `app/src/androidTest/` 只有一个脚手架示例，别指望端到端测试。
 

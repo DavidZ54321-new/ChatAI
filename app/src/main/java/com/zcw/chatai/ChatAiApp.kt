@@ -17,6 +17,7 @@ import com.zcw.chatai.data.provider.ProviderCatalog
 import com.zcw.chatai.data.web.deepseek.DeepSeekNativeSearchProvider
 import com.zcw.chatai.data.web.HttpWebFetcher
 import com.zcw.chatai.data.web.ImageSearchProvider
+import com.zcw.chatai.data.web.mimo.MiMoWebSearchProvider
 import com.zcw.chatai.data.web.opencode.OpenCodeGoSearchRouter
 import com.zcw.chatai.data.web.qwen.QwenImageSearchProvider
 import com.zcw.chatai.data.web.qwen.QwenWebSearchProvider
@@ -44,13 +45,14 @@ class ChatAiApp : Application() {
 
     val attachmentStore: AttachmentStore by lazy { AttachmentStore(this) }
 
-    /** 按供应商选搜索后端：DeepSeek 走 Anthropic 面，Qwen 走 Responses，Go 按模型路由两面。 */
+    /** 按供应商选搜索后端：DeepSeek 走 Anthropic 面，Qwen 走 Responses，Go 按模型路由两面，MiMo 走 Chat 面插件。 */
     val webSearchProviders: Map<String, WebSearchProvider> by lazy {
         val anthropicSearch = DeepSeekNativeSearchProvider()
         mapOf(
             ProviderCatalog.DEEPSEEK to anthropicSearch,
             ProviderCatalog.OPENCODE_GO to OpenCodeGoSearchRouter(messages = anthropicSearch),
             ProviderCatalog.QWEN to QwenWebSearchProvider(),
+            ProviderCatalog.MIMO to MiMoWebSearchProvider(),
         )
     }
 

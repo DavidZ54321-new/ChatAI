@@ -27,6 +27,8 @@ object ResponsesHistory {
     }
 
     fun translate(systemPrompt: String, messages: List<ChatRequestMessage>): Result {
+        // 音频（MiMo `input_audio`）没有加 HasAudio 守卫：MiMo 不在 FailoverChatApi 的
+        // responsesFallbacks 名单里（只有 OpenCode Go 的 Luna/Grok/Muse 走这面），永不触达。
         if (messages.any { it.videos.isNotEmpty() }) return Result.HasVideo
         return Result.Ok(
             buildJsonArray {

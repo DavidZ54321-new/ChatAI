@@ -6,6 +6,7 @@ import com.zcw.chatai.data.model.Message
 import com.zcw.chatai.data.model.MessageStatus
 import com.zcw.chatai.data.model.Role
 import com.zcw.chatai.data.model.wire
+import com.zcw.chatai.data.net.ChatRequestAudio
 import com.zcw.chatai.data.net.ChatRequestImage
 import com.zcw.chatai.data.net.ChatRequestMessage
 import com.zcw.chatai.data.net.ChatRequestVideo
@@ -23,8 +24,10 @@ object ContextBuilder {
 
     const val IMAGE_OMITTED = "［图片已省略］"
     const val VIDEO_OMITTED = "［视频已省略］"
+    const val AUDIO_OMITTED = "［音频已省略］"
     const val IMAGE_MISSING = "［图片不可用］"
     const val VIDEO_MISSING = "［视频不可用］"
+    const val AUDIO_MISSING = "［音频不可用］"
     const val DOCUMENT_MISSING = "［文档不可用］"
 
     /** 工具返回空文本时的占位：保留该行以应答对应的 assistant tool_calls。 */
@@ -51,6 +54,7 @@ object ContextBuilder {
         imageProvider: (Attachment) -> ChatRequestImage?,
         videoProvider: (Attachment) -> ChatRequestVideo? = { null },
         documentProvider: (Attachment) -> String? = { null },
+        audioProvider: (Attachment) -> ChatRequestAudio? = { null },
         /**
          * 上下文尾条的环境注记（当前时间等），以 `system` 身份追加在**最后**：
          * 在窗口截断之后加，永远占末位；图片编号只认 USER 行附件，不受影响；
@@ -86,11 +90,17 @@ object ContextBuilder {
                 Role.TOOL -> Unit
 
                 Role.ASSISTANT -> {
-                    wire += toWire(message, keepAttachments, labels, imageProvider, videoProvider, documentProvider)
+                    wire += toWire(
+                        message, keepAttachments, labels,
+                        imageProvider, videoProvider, documentProvider, audioProvider,
+                    )
                     for (call in message.toolCalls) {
                         val answer = answers[call.id]?.removeFirstOrNull()
                         wire += if (answer != null) {
-                            toWire(answer, keepAttachments, labels, imageProvider, videoProvider, documentProvider)
+                            toWire(
+                                answer, keepAttachments, labels,
+                                imageProvider, videoProvider, documentProvider, audioProvider,
+                            )
                         } else {
                             // assistant 已落 tool_calls 但应答行缺失（崩溃窗口）：
                             // 合成占位应答，绝不让请求非法。
@@ -103,7 +113,10 @@ object ContextBuilder {
                     }
                 }
 
-                else -> wire += toWire(message, keepAttachments, labels, imageProvider, videoProvider, documentProvider)
+                else -> wire += toWire(
+                    message, keepAttachments, labels,
+                    imageProvider, videoProvider, documentProvider, audioProvider,
+                )
             }
         }
         envNote?.takeIf { it.isNotBlank() }?.let { note ->
@@ -119,6 +132,7 @@ object ContextBuilder {
         imageProvider: (Attachment) -> ChatRequestImage?,
         videoProvider: (Attachment) -> ChatRequestVideo?,
         documentProvider: (Attachment) -> String?,
+        audioProvider: (Attachment) -> ChatRequestAudio?,
     ): ChatRequestMessage {
         if (message.role == Role.TOOL) {
             // 空白工具结果也必须保留：它对应的 assistant tool_calls 需要被应答，
@@ -158,20 +172,32 @@ object ContextBuilder {
         } else {
             emptyList()
         }
+        // 音频跟图片的保留规则（轮次制），不走文档豁免；始终内联，无上传路由。
+        val audios = if (keep) {
+            message.attachments.filter { it.kind == AttachmentKind.AUDIO }.mapNotNull(audioProvider)
+        } else {
+            emptyList()
+        }
         // 文档以纯文本出站：有多少发多少，不截断、不看保留轮次（配额在发送前拦）。
-        // 图片/视频仍按保留规则走。
+        // 图片/视频/音频仍按保留规则走。
         val documents = message.attachments.filter { it.kind == AttachmentKind.DOCUMENT }
         val docText = documentBlocks(documents, documentProvider)
         val hasVideo = message.attachments.any { it.kind == AttachmentKind.VIDEO }
         val hasImage = message.attachments.any { it.kind == AttachmentKind.IMAGE }
+        val hasAudio = message.attachments.any { it.kind == AttachmentKind.AUDIO }
         val hasDocument = documents.isNotEmpty()
         // 纯文档消息不受保留影响；图文混排沿用旧规则（已有单测锁定）。
         // sidecar 丢失的文档必须亮牌：不能因为同条消息里有图就静默吞掉。
         val note = when {
-            !keep && (hasVideo || hasImage) -> if (hasVideo) VIDEO_OMITTED else IMAGE_OMITTED
+            !keep && (hasVideo || hasImage || hasAudio) -> when {
+                hasVideo -> VIDEO_OMITTED
+                hasImage -> IMAGE_OMITTED
+                else -> AUDIO_OMITTED
+            }
             hasDocument && docText.isBlank() -> DOCUMENT_MISSING
-            images.isEmpty() && videos.isEmpty() && docText.isBlank() -> when {
+            images.isEmpty() && videos.isEmpty() && audios.isEmpty() && docText.isBlank() -> when {
                 hasVideo -> VIDEO_MISSING
+                hasAudio -> AUDIO_MISSING
                 else -> IMAGE_MISSING
             }
             else -> null
@@ -181,6 +207,7 @@ object ContextBuilder {
             content = withNote(withNote(message.content, docText.ifBlank { null }), note),
             images = images,
             videos = videos,
+            audios = audios,
         )
     }
 

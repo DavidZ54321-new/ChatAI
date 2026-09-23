@@ -34,10 +34,29 @@ class AttachmentCodecTest {
 
     @Test
     fun unknownKindDropsOnlyThatItem() {
-        val raw = """[{"id":"x","kind":"AUDIO","path":"attachments/c/x.m4a"},{"id":"y","kind":"IMAGE","path":"attachments/c/y.jpg"}]"""
+        // kind 必须是枚举外的名字（AUDIO 已是合法 kind，不能再当未知样例）。
+        val raw = """[{"id":"x","kind":"HOLOGRAM","path":"attachments/c/x.m4a"},{"id":"y","kind":"IMAGE","path":"attachments/c/y.jpg"}]"""
         val decoded = AttachmentCodec.decode(raw)
         assertEquals(1, decoded.size)
         assertEquals("y", decoded.single().id)
+    }
+
+    @Test
+    fun roundTripsAudioAttachment() {
+        val original = listOf(
+            Attachment(
+                id = "au1",
+                kind = AttachmentKind.AUDIO,
+                relativePath = "attachments/c/au1.mp3",
+                mimeType = "audio/mpeg",
+                width = 0,
+                height = 0,
+                sizeBytes = 2_345_678,
+                durationMs = 42_000,
+                displayName = "recording.mp3",
+            ),
+        )
+        assertEquals(original, AttachmentCodec.decode(AttachmentCodec.encode(original)))
     }
 
     @Test

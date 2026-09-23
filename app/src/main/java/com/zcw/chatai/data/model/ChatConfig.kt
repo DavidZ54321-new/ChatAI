@@ -1,12 +1,15 @@
 package com.zcw.chatai.data.model
 
 import com.zcw.chatai.data.provider.ProviderCatalog
+import com.zcw.chatai.data.provider.ThinkingWire
 
 /**
  * 一次请求的全部可配置项。字段全部保持**厂商中立**：
  *
  * - [reasoningEffort] 用 OpenAI 标准的 `reasoning_effort`（`none` 即关闭思考），
  *   不发送厂商专有字段；为 null 时不带该字段，尊重服务端默认。
+ * - [thinkingWire] 决定思考开关的**上行序列化风格**（由供应商预设提供）：
+ *   标准面发 `reasoning_effort`，MiMo 发非标准 `thinking:{type}` 对象——差异走数据，不是 if-vendor。
  * - [maxTokens] 为 null 时不发送，让服务端用默认值（思考模式下默认 64K，设小了会被思维链吃光）。
  * - [imageDetail] 对应标准 `image_url.detail`（low/high/original/auto），null 时不发送。
  * - [extraParams] 是兼容逃生口：一段 JSON 对象，顶层键深度合并进请求体
@@ -47,4 +50,6 @@ data class ChatConfig(
     val anthropicBaseUrl: String = "",
     /** Responses 工具面 v1 基址（已解析；空则从 [baseUrl] 推导）。 */
     val responsesBaseUrl: String = "",
+    /** 思考字段上行风格（由供应商预设决定，见 `ProviderPreset.thinkingWire`）。 */
+    val thinkingWire: ThinkingWire = ThinkingWire.STANDARD_REASONING_EFFORT,
 )

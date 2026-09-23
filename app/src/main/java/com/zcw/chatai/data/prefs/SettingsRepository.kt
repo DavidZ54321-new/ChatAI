@@ -155,6 +155,7 @@ fun ChatSettings.toChatConfig(
         providerId = providerId,
         sendSessionHeader = ProviderCatalog.byId(providerId)?.sendSessionHeader == true,
         webSearchEnabled = false,
+        thinkingWire = ProviderCatalog.thinkingWireFor(providerId),
         anthropicBaseUrl = EndpointUrl.anthropicBase(
             entry.baseUrl,
             ProviderCatalog.byId(providerId)?.anthropicBaseLayout

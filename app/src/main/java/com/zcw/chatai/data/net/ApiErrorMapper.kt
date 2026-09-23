@@ -33,6 +33,7 @@ object ApiErrorMapper {
             status == 403 -> detail ?: "没有访问权限（403）"
             status == 404 -> "接口不存在（404），请检查 Base URL 是否填写正确"
             status == 413 -> "请求体过大，请减少图片/视频数量或降低图片精度"
+            status == 421 -> "内容安全审核未通过${detail?.let { "：$it" } ?: "，请调整内容后重试"}"
             status == 422 -> "服务端不接受该参数：${detail ?: "参数错误（422）"}"
             status == 429 -> "请求过于频繁或已达速率上限，请稍后重试"
             // 网关把「该模型没挂到这个协议面」也报成 503（实测 OpenCode Go 的
@@ -87,6 +88,8 @@ object ApiErrorMapper {
         "content_filter" -> "输出被内容策略过滤，请调整提问方式"
         "insufficient_system_resource" -> "服务端推理资源不足，本次生成被中断，可直接重试"
         "aborted" -> "生成被中断"
+        // MiMo 的重复截断（语义对齐 length：有正文带提示完成，无正文标错）。
+        "repetition_truncation" -> "输出出现重复而被截断，请换个说法重试"
         else -> "生成中断（$reason）"
     }
 }

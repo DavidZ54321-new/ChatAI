@@ -429,9 +429,14 @@ fun PendingAttachmentStrip(
                     onClick = {},
                     isVideo = item.attachment.kind == AttachmentKind.VIDEO,
                     durationMs = item.attachment.durationMs,
-                    label = item.attachment
-                        .takeIf { it.kind == AttachmentKind.DOCUMENT }
-                        ?.let { DocumentLabel.of(it.mimeType, it.displayName ?: it.relativePath) },
+                    label = when (item.attachment.kind) {
+                        AttachmentKind.DOCUMENT -> DocumentLabel.of(
+                            item.attachment.mimeType,
+                            item.attachment.displayName ?: item.attachment.relativePath,
+                        )
+                        AttachmentKind.AUDIO -> "AUDIO"
+                        else -> null
+                    },
                 )
                 Box(
                     modifier = Modifier

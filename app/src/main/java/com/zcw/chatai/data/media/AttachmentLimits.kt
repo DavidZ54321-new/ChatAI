@@ -29,7 +29,30 @@ object AttachmentLimits {
     /** 单个文档原文件上限（解析前按流式计数拦截，不 whole 读进内存再判）。 */
     const val MAX_DOC_BYTES = 20L * 1024 * 1024
 
-    /** base64 之后的估算请求体大小（图片 + 内联视频；文档以纯文本出站，另有 10 万字门限，不管这里）。 */
+    const val MAX_AUDIOS = 4
+
+    /** 单个音频原始字节上限：MiMo base64 编码后 ≤50MB 硬线，原始字节留头 35MiB。 */
+    const val MAX_AUDIO_BYTES = 35L * 1024 * 1024
+
+    /**
+     * 音频**合计**上限（音频始终内联、无上传路由）：单文件 35MiB × 4 = 140MiB
+     * base64 后约 187MB，服务端大概率 413——本地先拦。40MiB ≈ 54MB base64，
+     * 高于单文件线、低于已知的单文件 base64 硬线两倍。
+     */
+    const val MAX_AUDIO_TOTAL_BYTES = 40L * 1024 * 1024
+
+    /**
+     * **内联视频**合计上限（按供应商内联口径统计，上传路由的不计）。
+     * Qwen 内联线 5MiB × 2 = 10MiB 永远够不着；MiMo 抬到 35MiB × 2 = 70MiB
+     * 才可能越线（60MiB ≈ 80MB base64 起拦）。
+     */
+    const val MAX_INLINE_VIDEO_TOTAL_BYTES = 60L * 1024 * 1024
+
+    /**
+     * base64 之后的估算请求体大小（图片 + 按**全局 5MiB 口径**的内联视频；音频计入；文档以纯文本出站，另有 10 万字门限，不管这里）。
+     * 仅估算工具——MiMo 抬高的内联视频（≤35MiB）不在这个口径里，
+     * 发前门禁（`validate` / `audioGateOk` / `resolvePendingVideos`）按供应商口径另拦。
+     */
     fun estimatedRequestBytes(attachments: List<Attachment>): Long {
         val inline = attachments.sumOf { attachment ->
             if (attachment.kind == AttachmentKind.DOCUMENT) {
@@ -48,6 +71,7 @@ object AttachmentLimits {
         val images = attachments.filter { it.kind == AttachmentKind.IMAGE }
         val videos = attachments.filter { it.kind == AttachmentKind.VIDEO }
         val documents = attachments.filter { it.kind == AttachmentKind.DOCUMENT }
+        val audios = attachments.filter { it.kind == AttachmentKind.AUDIO }
         return when {
             images.size > MAX_IMAGES -> "最多只能发送 $MAX_IMAGES 张图片"
             images.sumOf { it.sizeBytes } > MAX_TOTAL_BYTES ->
@@ -61,6 +85,11 @@ object AttachmentLimits {
             documents.sumOf { it.extractedChars } > DocumentLimits.MAX_DOCS_SEND_CHARS ->
                 "本次发送的文档共 ${formatChars(documents.sumOf { it.extractedChars })}，" +
                     "超过 ${formatChars(DocumentLimits.MAX_DOCS_SEND_CHARS)}上限，请删减后发送"
+            audios.size > MAX_AUDIOS -> "最多只能发送 $MAX_AUDIOS 个音频"
+            audios.any { it.sizeBytes > MAX_AUDIO_BYTES } ->
+                "单个音频不能超过 ${MAX_AUDIO_BYTES / 1024 / 1024} MB"
+            audios.sumOf { it.sizeBytes } > MAX_AUDIO_TOTAL_BYTES ->
+                "音频合计超过 ${MAX_AUDIO_TOTAL_BYTES / 1024 / 1024} MB 上限，请减少数量或压缩"
             else -> null
         }
     }

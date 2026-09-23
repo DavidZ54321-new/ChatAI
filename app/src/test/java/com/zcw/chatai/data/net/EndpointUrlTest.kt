@@ -155,6 +155,32 @@ class EndpointUrlTest {
     }
 
     @Test
+    fun mimoLayoutsMatchOfficialEndpoints() {
+        // Anthropic 面官方 = {origin}/anthropic/v1/messages（ORIGIN_ANTHROPIC 布局命中）。
+        assertEquals(
+            "https://api.xiaomimimo.com/anthropic/v1",
+            EndpointUrl.anthropicBase("https://api.xiaomimimo.com/v1", AnthropicBaseLayout.ORIGIN_ANTHROPIC),
+        )
+        assertEquals(
+            "https://api.xiaomimimo.com/anthropic/v1/messages",
+            EndpointUrl.anthropicMessagesFor(ProviderCatalog.MIMO, "https://api.xiaomimimo.com/v1"),
+        )
+        // Responses 面与 Chat 同 /v1 根（responsesBase 返回根，完整端点再拼 /responses）。
+        assertEquals(
+            "https://api.xiaomimimo.com/v1",
+            EndpointUrl.responsesBase("https://api.xiaomimimo.com/v1"),
+        )
+        assertEquals(
+            "https://api.xiaomimimo.com/v1/responses",
+            EndpointUrl.responses("https://api.xiaomimimo.com/v1"),
+        )
+        assertEquals(
+            "https://api.xiaomimimo.com/v1/chat/completions",
+            EndpointUrl.chatCompletions("https://api.xiaomimimo.com/v1"),
+        )
+    }
+
+    @Test
     fun derivesResponsesEndpoint() {
         assertEquals(
             "https://dashscope.aliyuncs.com/compatible-mode/v1/responses",

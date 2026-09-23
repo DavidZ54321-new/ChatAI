@@ -475,6 +475,7 @@ class ChatRepository(
                 when {
                     attachments.any { it.kind == AttachmentKind.DOCUMENT } -> "文档"
                     attachments.any { it.kind == AttachmentKind.VIDEO } -> "视频"
+                    attachments.any { it.kind == AttachmentKind.AUDIO } -> "音频"
                     else -> "图片"
                 }
             }
@@ -491,6 +492,8 @@ class ChatRepository(
         val toolContexts = toolBackendContexts(settings, config)
         // 预检门禁：所有会出站的视频先归位（内联/复用/上传），全部成功才发请求。
         val resolvedVideos = resolvePendingVideos(conversationId, config) ?: return
+        // 音频能力门禁：保留轮次内有音频而供应商不支持 → 可读报错，不发注定 400 的请求。
+        if (!audioGateOk(conversationId, config)) return
         try {
             runAgentTurn(
                 conversationId = conversationId,
@@ -595,6 +598,22 @@ class ChatRepository(
             )
             return null
         }
+        // 内联合计门禁（按供应商口径）：只统计会走内联 base64 的视频（≤ 该供应商内联线），
+        // 上传路由的 oss:// 不占请求体。Qwen（5MiB×2=10MiB）够不着这条线；
+        // MiMo（35MiB×2=70MiB）越线时本地先拦，别白等服务端 413。
+        run {
+            val inlineCap = ProviderCatalog.videoInlineMaxBytesFor(config.providerId)
+            val inlineVideoBytes = videoMessages.sumOf { message ->
+                message.attachments
+                    .filter { it.kind == AttachmentKind.VIDEO && it.sizeBytes in 1..inlineCap }
+                    .sumOf { it.sizeBytes }
+            }
+            if (inlineVideoBytes > AttachmentLimits.MAX_INLINE_VIDEO_TOTAL_BYTES) {
+                val mb = AttachmentLimits.MAX_INLINE_VIDEO_TOTAL_BYTES / 1024 / 1024
+                failTurn(conversationId, "本轮出站的视频合计超过 ${mb} MB 内联上限，请压缩或分批发送")
+                return null
+            }
+        }
 
         val total = videoMessages.sumOf { message ->
             message.attachments.count { it.kind == AttachmentKind.VIDEO }
@@ -629,6 +648,38 @@ class ChatRepository(
         } finally {
             _videoUploads.update { it - conversationId }
         }
+    }
+
+    /**
+     * 音频能力门禁（镜像视频门禁）：保留轮次内存在音频附件、而会话供应商 caps.audio=false
+     * （例如切换过激活供应商/改过绑定）时，给出可读错误并阻止发送。
+     * 音频始终内联（无上传路由），所以这里做能力判定 + **历史累计**合计上限——
+     * `validate` 只看本次新发的附件，跨轮保留的音频合计只有这里能拦住。
+     */
+    private suspend fun audioGateOk(conversationId: String, config: ChatConfig): Boolean {
+        val messages = db.messageDao().getByConversation(conversationId).map { it.toModel() }
+        val kept = AttachmentRetention.keptMessageIds(messages, config.historyImageTurns)
+        val keptAudioBytes = messages.sumOf { message ->
+            if (message.id in kept) {
+                message.attachments.filter { it.kind == AttachmentKind.AUDIO }.sumOf { it.sizeBytes }
+            } else {
+                0L
+            }
+        }
+        if (keptAudioBytes == 0L) return true
+        if (!ProviderCatalog.supportsAudio(config.providerId)) {
+            failTurn(
+                conversationId,
+                "当前供应商「${ProviderCatalog.displayName(config.providerId)}」不支持音频输入，请切换供应商或移除音频",
+            )
+            return false
+        }
+        if (keptAudioBytes > AttachmentLimits.MAX_AUDIO_TOTAL_BYTES) {
+            val mb = AttachmentLimits.MAX_AUDIO_TOTAL_BYTES / 1024 / 1024
+            failTurn(conversationId, "本轮出站的音频合计超过 ${mb} MB 上限，请减少保留的音频或压缩")
+            return false
+        }
+        return true
     }
 
     private fun List<Attachment>.replaceAttachment(id: String, updated: Attachment): List<Attachment> =
@@ -785,6 +836,7 @@ class ChatRepository(
                 },
                 videoProvider = { attachment -> resolvedVideos[attachment.id] },
                 documentProvider = { attachment -> attachmentStore.documentText(attachment) },
+                audioProvider = { attachment -> attachmentStore.toRequestAudio(attachment) },
                 envNote = envNote,
             )
         }
@@ -1245,7 +1297,12 @@ class ChatRepository(
         val preview = messages.lastOrNull { it.role != Role.TOOL.name }?.toModel()?.let { message ->
             when {
                 message.content.isNotBlank() -> ConversationTitle.preview(message.content)
-                message.attachments.isNotEmpty() -> "［图片］"
+                message.attachments.isNotEmpty() -> when {
+                    message.attachments.any { it.kind == AttachmentKind.DOCUMENT } -> "［文档］"
+                    message.attachments.any { it.kind == AttachmentKind.VIDEO } -> "［视频］"
+                    message.attachments.any { it.kind == AttachmentKind.AUDIO } -> "［音频］"
+                    else -> "［图片］"
+                }
                 else -> ""
             }
         }.orEmpty()

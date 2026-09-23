@@ -385,6 +385,9 @@ private fun ProviderNote(providerId: String) {
         ProviderCatalog.OPENCODE_GO ->
             "OpenCode Go：主对话走 Chat 兼容面；联网搜索借道同一 v1 根的 Anthropic /messages。" +
                 "Grok/GPT/Muse 仅支持 Responses 面，本应用主对话暂不可用；不支持视频。抓取由本机完成。"
+        ProviderCatalog.MIMO ->
+            "MiMo：联网搜索走 Chat 面 web_search 插件（需在控制台启用插件，约 ¥16/千次 + 输入 token）；" +
+                "支持图片/视频（≤35MiB 内联发送）与音频理解；思考字段为 thinking:{type}。抓取由本机完成。"
         else ->
             "自定义端点：使用标准 OpenAI 兼容接口；连接与密钥只存在本机。"
     }

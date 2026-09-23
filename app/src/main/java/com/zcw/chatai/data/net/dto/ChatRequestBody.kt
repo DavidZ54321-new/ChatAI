@@ -1,7 +1,9 @@
 package com.zcw.chatai.data.net.dto
 
+import com.zcw.chatai.data.net.ChatRequestAudio
 import com.zcw.chatai.data.net.ChatRequestImage
 import com.zcw.chatai.data.net.ChatRequestVideo
+import com.zcw.chatai.data.provider.ThinkingWire
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -29,8 +31,15 @@ object ChatRequestBody {
 
     private val extraJson = Json { isLenient = true }
 
-    fun encode(json: Json, payload: ChatCompletionRequest, extraParams: String?): String {
-        val base = json.encodeToJsonElement(ChatCompletionRequest.serializer(), payload).jsonObject
+    fun encode(
+        json: Json,
+        payload: ChatCompletionRequest,
+        extraParams: String?,
+        thinkingWire: ThinkingWire = ThinkingWire.STANDARD_REASONING_EFFORT,
+        reasoningEffort: String? = null,
+    ): String {
+        val dto = json.encodeToJsonElement(ChatCompletionRequest.serializer(), payload).jsonObject
+        val base = applyThinkingWire(dto, thinkingWire, reasoningEffort)
         val extra = parseExtra(extraParams) ?: return json.encodeToString(JsonObject.serializer(), base)
         val merged = JsonObject(
             base.toMutableMap().apply {
@@ -42,12 +51,40 @@ object ChatRequestBody {
         return json.encodeToString(JsonObject.serializer(), merged)
     }
 
+    /**
+     * 按供应商预设的思考风格改写思考字段（纯函数，JVM 可测）。
+     *
+     * - [ThinkingWire.STANDARD_REASONING_EFFORT]：原样返回（DTO 已按需带了 `reasoning_effort`）。
+     * - [ThinkingWire.MIMO_THINKING_OBJECT]：剥掉 `reasoning_effort`，把 persona 档位映射到
+     *   MiMo 的非标准 `thinking:{type}` 对象——`none`→`disabled`、`low/high/max`→`enabled`、
+     *   `null`（FOLLOW_DEFAULT，DTO 本就不带该字段）→ 省略，尊重服务端默认开。
+     */
+    fun applyThinkingWire(
+        base: JsonObject,
+        wire: ThinkingWire,
+        reasoningEffort: String?,
+    ): JsonObject {
+        if (wire == ThinkingWire.STANDARD_REASONING_EFFORT) return base
+        val map = base.toMutableMap()
+        map.remove("reasoning_effort")
+        val type = when (reasoningEffort) {
+            null -> null
+            "none" -> "disabled"
+            else -> "enabled"
+        }
+        if (type != null) {
+            map["thinking"] = buildJsonObject { put("type", type) }
+        }
+        return JsonObject(map)
+    }
+
     fun content(
         text: String,
         images: List<ChatRequestImage>,
         videos: List<ChatRequestVideo> = emptyList(),
+        audios: List<ChatRequestAudio> = emptyList(),
     ): JsonElement {
-        if (images.isEmpty() && videos.isEmpty()) return JsonPrimitive(text)
+        if (images.isEmpty() && videos.isEmpty() && audios.isEmpty()) return JsonPrimitive(text)
         return buildJsonArray {
             if (text.isNotEmpty()) {
                 add(
@@ -83,6 +120,17 @@ object ChatRequestBody {
                         put("type", "video_url")
                         putJsonObject("video_url") {
                             put("url", video.url)
+                        }
+                    },
+                )
+            }
+            audios.forEach { audio ->
+                // MiMo 形状：input_audio 只有一个 data 字段（URL 或 data URI），不是 OpenAI 的 {data,format}。
+                add(
+                    buildJsonObject {
+                        put("type", "input_audio")
+                        putJsonObject("input_audio") {
+                            put("data", audio.dataUrl)
                         }
                     },
                 )

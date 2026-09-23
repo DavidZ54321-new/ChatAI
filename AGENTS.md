@@ -51,29 +51,44 @@ ui/theme                 →  设计系统（ThemeRegistry / ClaudeTheme / ChatG
   区分开）。测量用 `SystemClock.elapsedRealtime()`（单调钟，墙钟被 NTP 跳会落库荒谬值），
   口径 = 回合开始 → **最后一个 reasoning 增量**（不是第一个正文增量：输出顺序不保证）。
   UI 侧的秒数和落库值是同一个测量，别再用墙钟自己算一遍。
-- **供应商是数据，不是分支**：`ProviderCatalog` 描述基址/默认模型/能力（`ProviderCaps`），
-  `conversations.provider_id` 绑定会话（**空串 = 跟随激活供应商**；v4→v5 迁移的旧会话先统一回填空串，
+- **供应商是数据，不是分支**：`ProviderCatalog` 描述基址/默认模型/能力（`ProviderCaps`，含
+  `audio` 位）、内联/上传策略（`videoInlineMaxBytes`/`videoUploadViaDashScope`）与思考线型
+  （`thinkingWire`），`conversations.provider_id` 绑定会话（**空串 = 跟随激活供应商**；v4→v5 迁移的旧会话先统一回填空串，
   `resolveConfig`/`ChatUiState` 再解析成激活供应商——不能写死 deepseek，旧配置可能是 Qwen/自建端点）；
   连接参数按会话的供应商取（`ChatSettings.toChatConfig(providerId)`），生成参数全局。
   设置页保存**整张 providers 表**（切走供应商时暂存的编辑也一并落盘）。每个供应商除 Chat Base URL 外
   还有 Anthropic / Responses 两个**工具面**基址（空 = 按 `AnthropicBaseLayout` 从 Chat Base 推导；
-  新安装预设必须是对的：DeepSeek `{origin}/anthropic/v1`，Qwen `{origin}/apps/anthropic/v1`，
+  新安装预设必须是对的：DeepSeek/MiMo `{origin}/anthropic/v1`，Qwen `{origin}/apps/anthropic/v1`，
   OpenCode Go 同 Chat v1）。加新供应商=加一条 preset + 配后端实现，不在 UI/请求层写 if-vendor。
+  当前 5 个 preset：deepseek / qwen / opencode-go / **mimo** / custom。
 - **工具注入先算名单**：`ChatConfig.enabledTools` 由 `ChatRepository.resolveEnabledTools` 决定
   （🌐 开关 × 工具后端可用性），网络层只按名单组装 schema；四个客户端工具统一挂 🌐。
 - **工具后端与主对话供应商解耦（借道）**：`ToolBackendResolver` 解析出搜索/图搜各自的供应商
   （**要求 apiKey 非空**，空条目不能遮蔽后面配好的后端；图搜固定取 Qwen）。文本搜索是**有序候选**
   （显式 `search_provider` → 会话供应商 → preset 顺序补其余），运行时按序尝试，
-  **空结果或报错才借道下一个**（`ToolFallbackChain.firstUsable`）。文本搜索实现只有两种协议：
-  Anthropic Messages（DeepSeek 与 OpenCode Go 共用 `DeepSeekNativeSearchProvider`）和 Qwen Responses。
+  **空结果或报错才借道下一个**（`ToolFallbackChain.firstUsable`）。文本搜索实现有三种协议：
+  Anthropic Messages（DeepSeek 与 OpenCode Go 共用 `DeepSeekNativeSearchProvider`）、Qwen Responses、
+  **MiMo Chat 面 web_search 插件**（`MiMoWebSearchProvider`，借道旁路——见 MiMo 节）。
   图搜的**模型链**与对话模型解耦：
   默认 `qwen3.8-27b` → `qwen3.8-max`（`ProviderPreset.toolModels`，设置页「图搜模型」可覆盖），
   同样空/错才退下一个（实测 flash 对部分图返回空）。工具子调用用**后端自己的 `ChatConfig`**
   （model = 后端模型），所以 DeepSeek/GLM/任意会话都能借道 Qwen 的图搜与搜索。
-- **视频是双路由**（`VideoPlanner`）：≤5MB 内联 base64，>5MB 走 DashScope 临时上传得 `oss://`；
+- **视频按供应商分路由**（`VideoPlanner`）：内联上限与是否可上传由 preset 数据决定
+  （`videoInlineMaxBytes`/`videoUploadViaDashScope`）。Qwen：≤5MB 内联，>5MB 走 DashScope 临时上传得 `oss://`；
+  **MiMo：≤35MiB 内联（无 DashScope 路由），超限返回 `TooLargeForInline` → 可读拒绝**。
   **发送前预检门禁**（`resolvePendingVideos`）全部归位才发请求；能力门禁用
   `ProviderCatalog.supportsVideo(会话供应商)`（UI 附件面板与预检共用同一条判定，旧会话空绑定跟随激活）；
   本地文件是真相源，上传日志（`pendingKey`/`pendingPolicy` + `remoteUrl`）让崩溃后免二次上传（409=云端已完整）。
+- **音频是「无上传的视频」路线**：`AttachmentKind.AUDIO` + `ProviderCaps.audio` 门禁
+  （`supportsAudio`：附件面板入口 + 发送前 `audioGateOk` 预检，目前仅 MiMo 为 true）；
+  始终内联 base64（`AttachmentStore.toRequestAudio` → `input_audio.data`），**不走**文档的文本 sidecar 路线；
+  组块在 `ChatRequestBody.content`（`{"type":"input_audio","input_audio":{"data":…}}`，
+  MiMo 形状只有 `data` 字段、无 `format`）；`ContextBuilder` 按轮次保留，省略/丢失各有占位。
+  无 Room 迁移（kind 是 JSON 列里的枚举名字符串）。
+- **思考字段按 preset 选线型**（`ThinkingWire`）：标准面发 `reasoning_effort`（`none`=关）；
+  MiMo 发非标准 `thinking:{type:"enabled"|"disabled"}`（`none`→disabled、low/high/max→enabled、
+  FOLLOW_DEFAULT→省略），改写在 `ChatRequestBody.applyThinkingWire`（纯函数）。**不是** if-vendor：
+  线型由 `ProviderPreset.thinkingWire` 数据供给。
 - **图片一律不进 mikepenz 行内占位**：行内图在真机会压字/裁切（Compose 行高不随占位增长，库的
   `inlineImageAsBlock` 兜底又依赖 ImageTransformer，本仓库没接）。`ImageRowSplitter` 把「整行只有图」
   的图（单张也算）全抽成自有块级渲染；多张图行用 `LazyRow`（16 图不会再一次性发起下载）。
@@ -102,12 +117,12 @@ ui/theme                 →  设计系统（ThemeRegistry / ClaudeTheme / ChatG
 .\gradlew.bat lint                 # AGP default; no formatter or typecheck task is configured
 ```
 
-单测全是 JVM 测试（606 个）：网络层用 MockWebServer，其余是纯函数（错误映射、压缩尺寸、
+单测全是 JVM 测试（680 个）：网络层用 MockWebServer，其余是纯函数（错误映射、压缩尺寸、
 能力表、供应商目录/配置迁移/工具后端解析、工具模型优先级、工具回退链、主题注册表/默认主题、
 LaTeX 分段、Markdown 行内公式、图行分段、思考摘要/耗时格式化、视觉度量、Room 映射往返、
 工具调用累加/编解码、Agent 决策、工具预算、DSML 清洗、可见图片清单（编号/轮次标注）、
-上下文组装/工具应答配对/附件保留/视频规划、回合分组、HTML→文本、搜索与 Responses 响应解析、
-上传凭证/multipart）。
+上下文组装/工具应答配对/附件保留/视频规划/音频编解码、思考字段线型改写、回合分组、
+HTML→文本、搜索与 Responses 响应解析（含 MiMo annotations）、上传凭证/multipart）。
 
 ## AGP 9 DSL — differs from most examples you'll find
 
@@ -250,6 +265,71 @@ Chat Completions **共用一个基址**。
 - `glm-5.3-flash` 思考默认开且会吃 `max_tokens`（给 200 直接 `finish=length`）；默认别发 max_tokens。
 - 模拟器联调（境外域名 + 宿主机 TUN 代理会 TLS 拦截）：临时 Python 转发器 + `adb reverse tcp:8443`
   （脚本只放系统临时目录、不进仓库）；应用内 Base URL 用 `http://127.0.0.1:8443/zen/go/v1`。
+
+## MiMo / 小米的事实（2026-09 官方文档，勿凭记忆改）
+
+接入时照官方文档实现（`https://mimo.mi.com/docs`），真 key 端到端项标 ⚠ 待实测回填。
+
+**三个协议面（基址）**：
+
+- **Chat（主对话，本仓库走这面）**：`https://api.xiaomimimo.com/v1` → `/chat/completions`；
+  鉴权 `Authorization: Bearer`（官方也认 `api-key:` 头，我们用标准 Bearer）。
+- **Anthropic（辅）**：`https://api.xiaomimimo.com/anthropic/v1/messages`——
+  **正好命中 `ORIGIN_ANTHROPIC` 布局**（`{origin}/anthropic/v1`），预设零推导代码。
+- **Responses（辅）**：`https://api.xiaomimimo.com/v1/responses`——与 Chat 同 `/v1` 根，
+  现有 `responsesBase()` 推导直接适用。
+- Token Plan 有独立主机 `token-plan-cn.xiaomimimo.com`（Chat/Anthropic 各一），用条目里的
+  `baseUrl`/`anthropicBaseUrl`/`responsesBaseUrl` 覆盖字段即可，无需改代码。
+
+**模型**：`mimo-v2.6-flash`（默认）/`mimo-v2.6-pro`/`mimo-v2.6-pro-ultraspeed`（1M 上下文、128K 输出、
+全模态、含 web search 与 function calling）；`mimo-v2.5`/`mimo-v2.5-pro` **2026-10-21 下线**
+（不进默认值）。`GET /models` 标准 OpenAI 形状 → 设置页拉模型列表可用。
+
+**联网插件（`web_search`，仅 Chat 面——"暂不支持其他 API 协议"）**：
+
+- 请求 `tools:[{type:"web_search", max_keyword:3, force_search:true}]`，`tool_choice` **只接受 `auto`**
+  （其余值被服务端剥掉）。无 `max_uses`；`max_keyword` 控一轮并行关键词数。
+- **FAQ 写 `forced_search` 是笔误**，以主插件页 `force_search` 为准（若被拒翻这一个常量）。
+- 结果在 **`message.annotations[]`**（`type=url_citation` + `url/title/summary/site_name/publish_time/logo_url`），
+  **不是** Anthropic/Responses 的工具结果块；正文在同级 `message.content`；
+  流式时**首包带全部来源**（`delta.annotations`）。`usage.web_search_usage:{tool_usage,page_usage}`。
+- **需在 MiMo 控制台启用插件**（切换后 5 分钟缓存）；¥16/千次 + 抓取页 token。
+- 接入方式 = **借道旁路**（`data/web/mimo/MiMoWebSearchProvider`）：主回路模型照常调标准
+  `web_search` function，这里另发一次带插件的请求、把 annotations 解析成 `ToolSource` 回填；
+  空结果 → 空 `WebSearchResult` → `ToolFallbackChain` 借下一个后端。
+  ⚠ 真 key 待验：插件未启用时的行为（HTTP 错 vs 空 annotations）、`force_search` 拼写。
+
+**音频理解**：`{"type":"input_audio","input_audio":{"data":"<URL 或 data:MIME;base64,…>"}}`——
+**单 `data` 字段（URL 或 data URI），不是 OpenAI 的 `{data,format}`**。格式 MP3/WAV/FLAC/M4A/OGG；
+base64 编码后 ≤50MB、URL ≤100MB；**无本地文件上传接口**（必须内联 base64）；音频+文本可同消息。
+token ≈ 秒数 × 6.25；usage 有 `prompt_tokens_details.audio_tokens`。模型：v2.6 三兄弟 + v2.5。
+⚠ 真 key 待验：data URI 往返。
+
+**图片**：标准 `{"type":"image_url","image_url":{"url":"data:…;base64,…"}}`，JPEG/PNG/GIF/WebP/BMP，
+≤50MB；**未文档化 `detail` 参数**（我们照发，大概率被忽略）⚠ 待验 400 则剥离。
+**视频**：`{"type":"video_url","video_url":{"url":…},"fps":2,"media_resolution":"default"}`——
+`fps`/`media_resolution` 是**块级兄弟字段，省略即默认**（默认 2 / "default"，我们省略不发）；
+base64 ≤50MB 编码 / URL ≤300MB；MP4/MOV/AVI/WMV；**音轨会被理解**；**无 oss:// 路由**
+（DashScope 上传是 Qwen 独有）→ preset `videoInlineMaxBytes=35MiB`、`videoUploadViaDashScope=false`，
+超限 `TooLargeForInline` → 可读拒绝。⚠ 待验：省略 fps 是否被接受。
+
+**思考与工具**：`thinking:{type:"enabled"|"disabled"}`（**非标准**，OpenAI SDK 要放 extra_body），
+默认 enabled，开思考时 temperature/top_p 被强制 1.0/0.95；**带 `tool_calls` 的回合必须全量回传
+`reasoning_content` 否则 400**（与 DeepSeek 同约定，`ContextBuilder` 已覆盖）。线型走
+`ThinkingWire.MIMO_THINKING_OBJECT`（见上方「思考字段按 preset 选线型」）。
+**已知取舍**：官方 FAQ 建议调工具时关思考（否则 tool_calls 可能漏进 reasoning_content）——
+本期不自动关；真机若见工具解析异常，在 `applyThinkingWire` 加「enabledTools 非空 → disabled」分支。
+`max_completion_tokens`（非 `max_tokens`，默认 131072）：persona 默认不发 max_tokens（安全）；
+⚠ 设了才验，被拒则 preset 标志 + 编码期改名。⚠ `stream_options.include_usage` 未文档化，待验。
+
+**收尾与错误**：`finish_reason` 含 `stop/length/tool_calls/content_filter/repetition_truncation`
+（最后一个是新的，`ApiErrorMapper` 已映射「输出出现重复…」）；错误码 400/401/402/403/404/**421**（内容安全，
+已映射）/429/500/503。
+
+**文件布局约定（轻度整理拍板）**：新 MiMo 代码进 `data/web/mimo/`（主代码）+ 测试**平铺**在
+`data/web/`（现有 11 个 web 测试含子包类全平铺，统一遵循）。已知不改：`ToolBackends.kt` 文件名 ≠
+对象名 `ToolBackendResolver`；`QwenResponsesParser` 留在 `data/web/qwen/`（被平铺文件跨包引用）；
+`ProviderCatalog.kt` 多类型合居；`data/net` 不按协议面拆包。
 
 ## Android skills are installed project-locally
 

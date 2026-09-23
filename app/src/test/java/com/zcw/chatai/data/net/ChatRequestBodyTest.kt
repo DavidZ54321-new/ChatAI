@@ -4,11 +4,15 @@ import com.zcw.chatai.data.net.dto.ChatCompletionRequest
 import com.zcw.chatai.data.net.dto.ChatRequestBody
 import com.zcw.chatai.data.net.dto.RequestMessage
 import com.zcw.chatai.data.net.dto.chatJson
+import com.zcw.chatai.data.provider.ThinkingWire
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -116,5 +120,125 @@ class ChatRequestBodyTest {
         assertFalse(body.toString(), body.containsKey("temperature"))
         assertFalse(body.toString(), body.containsKey("reasoning_effort"))
         assertFalse(body.toString(), body.containsKey("max_tokens"))
+    }
+
+    @Test
+    fun standardThinkingWireLeavesBodyUntouched() {
+        val base = buildJsonObject {
+            put("model", "deepseek-flash")
+            put("reasoning_effort", "high")
+        }
+        val out = ChatRequestBody.applyThinkingWire(
+            base,
+            ThinkingWire.STANDARD_REASONING_EFFORT,
+            "high",
+        )
+        assertEquals("high", out.getValue("reasoning_effort").jsonPrimitive.content)
+        assertFalse(out.containsKey("thinking"))
+    }
+
+    @Test
+    fun mimoThinkingWireMapsNoneToDisabledAndStripsReasoningEffort() {
+        val base = buildJsonObject {
+            put("model", "mimo-v2.6-flash")
+            put("reasoning_effort", "none")
+        }
+        val out = ChatRequestBody.applyThinkingWire(base, ThinkingWire.MIMO_THINKING_OBJECT, "none")
+        assertFalse("标准字段必须剥掉", out.containsKey("reasoning_effort"))
+        assertEquals("disabled", out.getValue("thinking").jsonObject.getValue("type").jsonPrimitive.content)
+    }
+
+    @Test
+    fun mimoThinkingWireMapsGradedEffortsToEnabled() {
+        listOf("low", "high", "max").forEach { effort ->
+            val out = ChatRequestBody.applyThinkingWire(
+                JsonObject(mapOf("model" to JsonPrimitive("m"))),
+                ThinkingWire.MIMO_THINKING_OBJECT,
+                effort,
+            )
+            assertEquals(
+                "effort=$effort 应映射为 enabled",
+                "enabled",
+                out.getValue("thinking").jsonObject.getValue("type").jsonPrimitive.content,
+            )
+        }
+    }
+
+    @Test
+    fun mimoThinkingWireOmitsFieldWhenPersonaFollowsDefault() {
+        val out = ChatRequestBody.applyThinkingWire(
+            JsonObject(mapOf("model" to JsonPrimitive("m"))),
+            ThinkingWire.MIMO_THINKING_OBJECT,
+            null,
+        )
+        assertFalse("FOLLOW_DEFAULT 不发 thinking，尊重服务端默认开", out.containsKey("thinking"))
+        assertFalse(out.containsKey("reasoning_effort"))
+    }
+
+    @Test
+    fun encodeAppliesThinkingWireAndExtraParamsStillWin() {
+        val payload = ChatCompletionRequest(
+            model = "mimo-v2.6-flash",
+            messages = listOf(RequestMessage("user", ChatRequestBody.content("hi", emptyList()))),
+            reasoningEffort = "none",
+        )
+        // MiMo 线型：reasoning_effort 被剥、thinking 按档位生成。
+        val body = bodyOf(
+            ChatRequestBody.encode(
+                json,
+                payload,
+                extraParams = null,
+                thinkingWire = ThinkingWire.MIMO_THINKING_OBJECT,
+                reasoningEffort = "none",
+            ),
+        )
+        assertFalse(body.containsKey("reasoning_effort"))
+        assertEquals(
+            "disabled",
+            body.getValue("thinking").jsonObject.getValue("type").jsonPrimitive.content,
+        )
+        // 逃生口优先：extraParams 里的 thinking 覆盖预设映射。
+        val overridden = bodyOf(
+            ChatRequestBody.encode(
+                json,
+                payload,
+                extraParams = """{"thinking":{"type":"enabled"}}""",
+                thinkingWire = ThinkingWire.MIMO_THINKING_OBJECT,
+                reasoningEffort = "none",
+            ),
+        )
+        assertEquals(
+            "enabled",
+            overridden.getValue("thinking").jsonObject.getValue("type").jsonPrimitive.content,
+        )
+    }
+
+    @Test
+    fun audioBecomesInputAudioBlockWithSingleDataField() {
+        val parts = ChatRequestBody.content(
+            text = "",
+            images = emptyList(),
+            videos = emptyList(),
+            audios = listOf(ChatRequestAudio(dataUrl = "data:audio/mpeg;base64,AAAA")),
+        ).jsonArray
+        assertEquals(1, parts.size)
+        val audio = parts[0].jsonObject
+        assertEquals("input_audio", audio.getValue("type").jsonPrimitive.content)
+        val inner = audio.getValue("input_audio").jsonObject
+        assertEquals("data:audio/mpeg;base64,AAAA", inner.getValue("data").jsonPrimitive.content)
+        assertFalse("MiMo 形状不带 format", inner.containsKey("format"))
+    }
+
+    @Test
+    fun audioMixesWithTextInSameMessage() {
+        val parts = ChatRequestBody.content(
+            text = "总结这段音频",
+            images = emptyList(),
+            videos = emptyList(),
+            audios = listOf(ChatRequestAudio(dataUrl = "data:audio/wav;base64,BBBB")),
+        ).jsonArray
+        assertEquals(2, parts.size)
+        assertEquals("text", parts[0].jsonObject.getValue("type").jsonPrimitive.content)
+        assertEquals("input_audio", parts[1].jsonObject.getValue("type").jsonPrimitive.content)
     }
 }

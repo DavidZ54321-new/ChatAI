@@ -119,6 +119,33 @@ class ChatSettingsTest {
     }
 
     @Test
+    fun mimoDerivesAnthropicAndResponsesBasesFromChatBase() {
+        val mimo = settings.copy(
+            providers = mapOf(
+                ProviderCatalog.MIMO to ProviderEntry(
+                    "https://api.xiaomimimo.com/v1",
+                    "sk-mimo",
+                    "mimo-v2.6-flash",
+                ),
+            ),
+            activeProviderId = ProviderCatalog.MIMO,
+        )
+        val config = mimo.toChatConfig()
+        assertEquals("https://api.xiaomimimo.com/anthropic/v1", config.anthropicBaseUrl)
+        // responsesBaseUrl 存的是 v1 根，完整端点由 EndpointUrl.responses 再拼 /responses。
+        assertEquals("https://api.xiaomimimo.com/v1", config.responsesBaseUrl)
+        assertEquals(
+            com.zcw.chatai.data.provider.ThinkingWire.MIMO_THINKING_OBJECT,
+            config.thinkingWire,
+        )
+        // 其余供应商仍走标准 reasoning_effort。
+        assertEquals(
+            com.zcw.chatai.data.provider.ThinkingWire.STANDARD_REASONING_EFFORT,
+            settings.toChatConfig(ProviderCatalog.DEEPSEEK).thinkingWire,
+        )
+    }
+
+    @Test
     fun searchProviderPreferenceIsReadFromSettings() {
         val configured = settings.copy(searchProviderId = ProviderCatalog.QWEN)
         assertEquals(ProviderCatalog.QWEN, configured.searchProviderId)

@@ -249,6 +249,28 @@ class ChatViewModel(
         }
     }
 
+    /** 导入音频：原样复制 + 读时长；无位图缩略图（字母牌呈现）。 */
+    fun addAudio(uri: Uri) {
+        viewModelScope.launch {
+            val audioCount = pending.value.count { it.attachment.kind == AttachmentKind.AUDIO }
+            if (audioCount >= AttachmentLimits.MAX_AUDIOS) {
+                notice.value = "最多只能发送 ${AttachmentLimits.MAX_AUDIOS} 个音频"
+                return@launch
+            }
+            val id = ensureConversation()
+            runCatching { attachmentStore.importAudio(id, uri) }
+                .onSuccess { attachment ->
+                    pending.value = pending.value + PendingAttachment(
+                        id = attachment.id,
+                        // 音频没有位图缩略图：传空路径，缩略图组件显示字母牌（见前端）。
+                        thumbnailPath = "",
+                        attachment = attachment,
+                    )
+                }
+                .onFailure { t -> notice.value = t.message ?: "音频处理失败" }
+        }
+    }
+
     fun consumeNotice() {
         notice.value = null
     }
@@ -551,6 +573,7 @@ class ChatViewModel(
                 (id == null && composer.pendingWebSearch),
             webSearchAvailable = composer.webSearchAvailable,
             videoInputAvailable = ProviderCatalog.supportsVideo(providerId),
+            audioInputAvailable = ProviderCatalog.supportsAudio(providerId),
             videoUploadNotice = id?.let { turn.videoUploads[it] },
         )
     }
@@ -577,8 +600,14 @@ class ChatViewModel(
                 height = attachment.height,
                 isVideo = attachment.kind == AttachmentKind.VIDEO,
                 durationMs = attachment.durationMs,
-                label = attachment.takeIf { it.kind == AttachmentKind.DOCUMENT }?.let {
-                    DocumentLabel.of(it.mimeType, it.displayName ?: it.relativePath)
+                label = when (attachment.kind) {
+                    AttachmentKind.DOCUMENT -> DocumentLabel.of(
+                        attachment.mimeType,
+                        attachment.displayName ?: attachment.relativePath,
+                    )
+                    // 音频复用字母牌渲染路径（不可点、无播放器——v1 已知限制）。
+                    AttachmentKind.AUDIO -> "AUDIO"
+                    else -> null
                 },
             )
         },

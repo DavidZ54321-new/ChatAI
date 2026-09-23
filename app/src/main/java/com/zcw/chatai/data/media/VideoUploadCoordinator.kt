@@ -7,6 +7,7 @@ import com.zcw.chatai.data.net.DashScopeUpload
 import com.zcw.chatai.data.net.PendingUpload
 import com.zcw.chatai.data.net.UploadOutcome
 import com.zcw.chatai.data.net.UploadPolicy
+import com.zcw.chatai.data.provider.ProviderCatalog
 import kotlinx.serialization.json.Json
 
 /**
@@ -15,6 +16,7 @@ import kotlinx.serialization.json.Json
  * 崩溃安全的关键顺序：**先落 `pendingKey`+凭证日志，再发上传**；
  * 上传成功（或 409 = 云端已完整）后立刻落 `remoteUrl`，重发/重试绝不二次上传。
  * [persist] 由仓库层注入（写回 messages.attachments）。
+ * 内联上限与是否可上传由供应商预设决定（MiMo 只内联、Qwen 走 DashScope）。
  */
 class VideoUploadCoordinator(
     private val attachmentStore: AttachmentStore,
@@ -28,7 +30,15 @@ class VideoUploadCoordinator(
         config: ChatConfig,
         attachment: Attachment,
         persist: suspend (Attachment) -> Unit,
-    ): Pair<ChatRequestVideo, Attachment> = when (val plan = VideoPlanner.plan(attachment, config.model, nowMs())) {
+    ): Pair<ChatRequestVideo, Attachment> = when (
+        val plan = VideoPlanner.plan(
+            attachment,
+            config.model,
+            nowMs(),
+            inlineMaxBytes = ProviderCatalog.videoInlineMaxBytesFor(config.providerId),
+            allowUpload = ProviderCatalog.videoUploadViaDashScope(config.providerId),
+        )
+    ) {
         VideoPlan.Inline -> {
             val wire = attachmentStore.toRequestVideo(attachment)
                 ?: throw AttachmentException("视频文件不可读，请重新发送")
@@ -36,6 +46,13 @@ class VideoUploadCoordinator(
         }
 
         is VideoPlan.Reuse -> ChatRequestVideo(plan.url, isOss = true) to attachment
+
+        is VideoPlan.TooLargeForInline -> {
+            val mb = plan.limitBytes / 1024 / 1024
+            throw AttachmentException(
+                "视频超过 ${mb} MB 上限（当前供应商仅支持内联发送），请压缩或剪短",
+            )
+        }
 
         is VideoPlan.Upload -> {
             val pending = plan.resumePolicy?.let(::parsePending)

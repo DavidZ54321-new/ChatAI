@@ -75,6 +75,7 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
                 onAddImage = viewModel::addAttachment,
                 onAddVideo = viewModel::addVideo,
                 onAddDocument = viewModel::addDocument,
+                onAddAudio = viewModel::addAudio,
                 onRemoveAttachment = viewModel::removeAttachment,
                 onModelClick = { showModelPicker = true },
                 onToggleWebSearch = viewModel::toggleWebSearch,

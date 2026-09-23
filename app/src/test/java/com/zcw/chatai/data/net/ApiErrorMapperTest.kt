@@ -103,6 +103,26 @@ class ApiErrorMapperTest {
         assertTrue(ApiErrorMapper.finishReasonMessage("aborted").orEmpty().contains("中断"))
     }
 
+    /** MiMo 的 421 = 内容安全拦截（错误码文档）。 */
+    @Test
+    fun mapsContentModerationBlock() {
+        assertTrue(ApiErrorMapper.httpError(421, null).contains("内容安全审核未通过"))
+        val withDetail = ApiErrorMapper.httpError(421, "sensitive content")
+        assertTrue(withDetail, withDetail.contains("内容安全审核未通过"))
+        assertTrue(withDetail, withDetail.contains("sensitive content"))
+    }
+
+    /** MiMo 的重复截断 finish_reason：可读提示，不能落进「生成中断（…）」兜底。 */
+    @Test
+    fun repetitionTruncationIsReadableNotGenericInterruption() {
+        val message = ApiErrorMapper.finishReasonMessage("repetition_truncation").orEmpty()
+        assertTrue(message, message.contains("重复"))
+        assertFalse(message, message.contains("生成中断（"))
+        // 正常结束与 Agent 中间态仍然不报错。
+        assertNull(ApiErrorMapper.finishReasonMessage("stop"))
+        assertNull(ApiErrorMapper.finishReasonMessage("tool_calls"))
+    }
+
     @Test
     fun detectsImageRelatedMessages() {
         assertTrue(ApiErrorMapper.isImageRelated("unsupported image"))

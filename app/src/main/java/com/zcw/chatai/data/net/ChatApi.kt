@@ -13,7 +13,7 @@ interface ChatApi {
 
 /**
  * 一条出站消息。纯文本消息在请求体里仍然编码成 JSON 字符串（最兼容），
- * 只有 [images]/[videos] 非空时才编码成内容块数组。
+ * 只有 [images]/[videos]/[audios] 非空时才编码成内容块数组。
  */
 data class ChatRequestMessage(
     val role: String,
@@ -21,6 +21,8 @@ data class ChatRequestMessage(
     val images: List<ChatRequestImage> = emptyList(),
     /** 视频块（仅 user 角色会真正编码）。 */
     val videos: List<ChatRequestVideo> = emptyList(),
+    /** 音频块（仅 user 角色会真正编码；MiMo `input_audio` 形状）。 */
+    val audios: List<ChatRequestAudio> = emptyList(),
     /** assistant 消息携带的工具调用（重发历史时用）。 */
     val toolCalls: List<ToolCall> = emptyList(),
     /** `role=tool` 结果消息对应的调用 id。 */
@@ -44,6 +46,14 @@ data class ChatRequestImage(
 data class ChatRequestVideo(
     val url: String,
     val isOss: Boolean = false,
+)
+
+/**
+ * 内联音频（`data:audio/mpeg;base64,...` 或 http URL）。
+ * MiMo 的 `input_audio` 形状只认一个 `data` 字段（URL 或 data URI），无 `format`。
+ */
+data class ChatRequestAudio(
+    val dataUrl: String,
 )
 
 sealed interface ChatStreamEvent {

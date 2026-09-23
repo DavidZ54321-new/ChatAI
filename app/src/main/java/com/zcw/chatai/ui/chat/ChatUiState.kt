@@ -66,6 +66,8 @@ data class ChatUiState(
     val webSearchAvailable: Boolean = true,
     /** 会话绑定的供应商是否支持视频输入（决定附件面板里是否出现「选择视频」）。 */
     val videoInputAvailable: Boolean = false,
+    /** 会话绑定的供应商是否支持音频输入（决定附件面板里是否出现「选择音频」）。 */
+    val audioInputAvailable: Boolean = false,
     /** 视频上传/解析中的一行提示；null 表示没有进行中的视频处理。 */
     val videoUploadNotice: String? = null,
 ) {

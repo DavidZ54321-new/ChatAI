@@ -124,6 +124,7 @@ class OpenAiCompatibleChatApi(
         messages: List<ChatRequestMessage>,
     ): Request {
         val tools = WebTools.specsFor(config.enabledTools)
+        val reasoningEffort = config.reasoningEffort?.takeIf { it.isNotBlank() }
         val payload = ChatCompletionRequest(
             model = config.model,
             messages = buildList {
@@ -131,16 +132,17 @@ class OpenAiCompatibleChatApi(
                     add(RequestMessage("system", ChatRequestBody.content(config.systemPrompt, emptyList())))
                 }
                 messages.forEach { message ->
-                    // 图片与视频只能出现在 user 消息里，其它角色一律降级为纯文本。
+                    // 图片/视频/音频只能出现在 user 消息里，其它角色一律降级为纯文本。
                     val images = if (message.role == ROLE_USER) message.images else emptyList()
                     val videos = if (message.role == ROLE_USER) message.videos else emptyList()
+                    val audios = if (message.role == ROLE_USER) message.audios else emptyList()
                     add(
                         RequestMessage(
                             role = message.role,
                             content = if (message.toolCalls.isNotEmpty() && message.content.isEmpty()) {
                                 null
                             } else {
-                                ChatRequestBody.content(message.content, images, videos)
+                                ChatRequestBody.content(message.content, images, videos, audios)
                             },
                             toolCallId = message.toolCallId,
                             toolCalls = message.toolCalls.takeIf { it.isNotEmpty() }?.map {
@@ -155,13 +157,19 @@ class OpenAiCompatibleChatApi(
                 }
             },
             temperature = config.temperature,
-            reasoningEffort = config.reasoningEffort?.takeIf { it.isNotBlank() },
+            reasoningEffort = reasoningEffort,
             maxTokens = config.maxTokens,
             streamOptions = if (config.includeUsage) StreamOptions(includeUsage = true) else null,
             tools = tools.takeIf { it.isNotEmpty() },
             toolChoice = if (tools.isNotEmpty()) JsonPrimitive("auto") else null,
         )
-        val body = ChatRequestBody.encode(json, payload, config.extraParams)
+        val body = ChatRequestBody.encode(
+            json,
+            payload,
+            config.extraParams,
+            thinkingWire = config.thinkingWire,
+            reasoningEffort = reasoningEffort,
+        )
         val usesOssMedia = messages.any { message -> message.videos.any { it.isOss } }
         return Request.Builder()
             .url(url)

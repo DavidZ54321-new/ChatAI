@@ -93,6 +93,7 @@ fun ChatScreen(
     onAddImage: (Uri) -> Unit,
     onAddVideo: (Uri) -> Unit,
     onAddDocument: (Uri) -> Unit,
+    onAddAudio: (Uri) -> Unit,
     onRemoveAttachment: (String) -> Unit,
     onModelClick: () -> Unit,
     onToggleWebSearch: () -> Unit,
@@ -204,6 +205,10 @@ fun ChatScreen(
     val pickDocument = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { uri -> uri?.let(onAddDocument) }
+
+    val pickAudio = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri -> uri?.let(onAddAudio) }
 
     val notifyPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -523,6 +528,16 @@ fun ChatScreen(
                     pickDocument.launch(DOCUMENT_MIME_TYPES)
                 },
             )
+            if (state.audioInputAvailable) {
+                SheetAction(
+                    label = "选择音频（MP3 / WAV / M4A / OGG / FLAC）",
+                    onClick = {
+                        attachOpen = false
+                        suppressResumeFocus = true
+                        pickAudio.launch(AUDIO_MIME_TYPES)
+                    },
+                )
+            }
         }
     }
 
@@ -551,6 +566,26 @@ private val DOCUMENT_MIME_TYPES = arrayOf(
     "text/markdown",
     "text/csv",
     "application/json",
+)
+
+/**
+ * 音频选择器的 MIME 过滤（与 MiMo 支持的格式对齐：MP3/WAV/FLAC/M4A/OGG）。
+ * 必须与 `AttachmentStore.audioExtension()` 认的 MIME 集**完全一致**——
+ * OpenDocument 按精确 MIME 过滤，漏一个变体（如 `audio/x-wav`）该文件就选不出来。
+ */
+private val AUDIO_MIME_TYPES = arrayOf(
+    "audio/mpeg",
+    "audio/mp3",
+    "audio/wav",
+    "audio/x-wav",
+    "audio/wave",
+    "audio/flac",
+    "audio/x-flac",
+    "audio/mp4",
+    "audio/x-m4a",
+    "audio/aac",
+    "audio/ogg",
+    "application/ogg",
 )
 
 private fun createCaptureUri(context: android.content.Context): Uri? = try {

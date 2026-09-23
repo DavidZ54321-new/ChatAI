@@ -10,6 +10,7 @@ import com.zcw.chatai.data.doc.DocumentKind
 import com.zcw.chatai.data.doc.DocumentParser
 import com.zcw.chatai.data.model.Attachment
 import com.zcw.chatai.data.model.AttachmentKind
+import com.zcw.chatai.data.net.ChatRequestAudio
 import com.zcw.chatai.data.net.ChatRequestImage
 import com.zcw.chatai.data.net.ChatRequestVideo
 import java.io.ByteArrayOutputStream
@@ -215,7 +216,7 @@ class AttachmentStore(private val context: Context) {
         return name?.endsWith(".mp4", ignoreCase = true) == true
     }
 
-    /** 视频原文件字节（内联 base64 或上传路由用）。 */
+    /** 视频/音频原文件字节（内联 base64 或上传路由用）。 */
     fun videoBytes(attachment: Attachment): ByteArray? {
         val file = fileOf(attachment)
         if (!file.isFile) return null
@@ -230,6 +231,84 @@ class AttachmentStore(private val context: Context) {
     fun toRequestVideo(attachment: Attachment): ChatRequestVideo? {
         val bytes = videoBytes(attachment) ?: return null
         return ChatRequestVideo(url = ImageCodec.toDataUrl(attachment.mimeType, bytes), isOss = false)
+    }
+
+    /** 内联音频：整文件 base64 data URL（MiMo `input_audio.data` 形状）。 */
+    fun toRequestAudio(attachment: Attachment): ChatRequestAudio? {
+        val bytes = videoBytes(attachment) ?: return null
+        return ChatRequestAudio(dataUrl = ImageCodec.toDataUrl(attachment.mimeType, bytes))
+    }
+
+    /**
+     * 导入音频：原样复制（不转码），用 `MediaMetadataRetriever` 读时长。
+     * 无位图缩略图（用字母牌呈现）；只收 MiMo 支持的格式，超限/不可读给出可读错误。
+     */
+    suspend fun importAudio(
+        conversationId: String,
+        uri: Uri,
+        id: String = UUID.randomUUID().toString(),
+    ): Attachment = withContext(Dispatchers.IO) {
+        val resolverMime = runCatching { context.contentResolver.getType(uri) }.getOrNull()
+        val displayName = queryDisplayName(uri) ?: "未命名音频"
+        val extension = audioExtension(resolverMime, displayName)
+            ?: throw AttachmentException("暂不支持这种音频格式（支持 MP3/WAV/FLAC/M4A/OGG）")
+        val mime = audioMime(extension)
+        val relativePath = "$DIR/$conversationId/$id.$extension"
+        val target = File(context.filesDir, relativePath)
+        target.parentFile?.mkdirs()
+        try {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                target.outputStream().use { output -> input.copyTo(output) }
+            } ?: throw AttachmentException("无法读取这个音频（文件已损坏或权限不足）")
+        } catch (t: AttachmentException) {
+            throw t
+        } catch (t: Throwable) {
+            target.delete()
+            throw AttachmentException("无法读取这个音频（文件已损坏或权限不足）", t)
+        }
+        if (target.length() <= 0L) {
+            target.delete()
+            throw AttachmentException("音频文件为空")
+        }
+        if (target.length() > AttachmentLimits.MAX_AUDIO_BYTES) {
+            val mb = AttachmentLimits.MAX_AUDIO_BYTES / 1024 / 1024
+            target.delete()
+            throw AttachmentException("音频超过 ${mb} MB 上限，请先压缩或剪短")
+        }
+        val info = VideoMetadata.read(target)
+        Attachment(
+            id = id,
+            kind = AttachmentKind.AUDIO,
+            relativePath = relativePath,
+            mimeType = mime,
+            width = 0,
+            height = 0,
+            sizeBytes = target.length(),
+            durationMs = info?.durationMs,
+            displayName = displayName,
+        )
+    }
+
+    private fun audioExtension(resolverMime: String?, displayName: String): String? {
+        val fromMime = when (resolverMime) {
+            "audio/mpeg", "audio/mp3" -> "mp3"
+            "audio/wav", "audio/x-wav", "audio/wave" -> "wav"
+            "audio/flac", "audio/x-flac" -> "flac"
+            "audio/mp4", "audio/x-m4a", "audio/aac" -> "m4a"
+            "audio/ogg", "application/ogg" -> "ogg"
+            else -> null
+        }
+        if (fromMime != null) return fromMime
+        return displayName.substringAfterLast('.', "").lowercase()
+            .takeIf { it in setOf("mp3", "wav", "flac", "m4a", "ogg") }
+    }
+
+    private fun audioMime(extension: String): String = when (extension) {
+        "mp3" -> "audio/mpeg"
+        "wav" -> "audio/wav"
+        "flac" -> "audio/flac"
+        "m4a" -> "audio/mp4"
+        else -> "audio/ogg"
     }
 
     fun fileOf(attachment: Attachment): File = File(context.filesDir, attachment.relativePath)
