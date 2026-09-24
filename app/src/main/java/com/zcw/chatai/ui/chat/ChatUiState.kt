@@ -5,6 +5,8 @@ import com.zcw.chatai.data.model.AttachmentKind
 import com.zcw.chatai.data.model.MessageStatus
 import com.zcw.chatai.data.model.Role
 import com.zcw.chatai.data.model.ToolResult
+import com.zcw.chatai.data.doc.DocumentLabel
+import java.io.File
 
 /** 消息里一张图/一个视频/一段音频：缩略图给气泡，原文件给全屏预览/播放器。 */
 data class MessageImage(
@@ -29,6 +31,30 @@ data class PendingAttachment(
     val thumbnailPath: String,
     val attachment: Attachment,
 )
+
+internal fun PendingAttachment.toMessageImage(filesDir: File): MessageImage {
+    val attachment = attachment
+    return MessageImage(
+        id = id,
+        thumbnailPath = thumbnailPath,
+        fullPath = File(filesDir, attachment.relativePath).absolutePath,
+        width = attachment.width,
+        height = attachment.height,
+        kind = attachment.kind,
+        durationMs = attachment.durationMs,
+        displayName = attachment.displayName,
+        label = when (attachment.kind) {
+            AttachmentKind.DOCUMENT -> DocumentLabel.of(
+                attachment.mimeType,
+                attachment.displayName ?: attachment.relativePath,
+            )
+            AttachmentKind.AUDIO -> "AUDIO"
+            else -> null
+        },
+        mimeType = attachment.mimeType,
+        extractedPath = attachment.extractedPath?.let { File(filesDir, it).absolutePath },
+    )
+}
 
 /**
  * 编辑用户消息的草稿。会话级语义：模型/供应商/🌐 的改动随「重新发送」一起写回会话，

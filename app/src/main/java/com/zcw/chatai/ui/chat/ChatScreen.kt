@@ -72,6 +72,7 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.zcw.chatai.data.model.AttachmentKind
 import com.zcw.chatai.data.model.Role
 import com.zcw.chatai.ui.md.LocalPreviewOpener
 import com.zcw.chatai.ui.md.PreviewTarget
@@ -269,6 +270,17 @@ fun ChatScreen(
         requestNotifyIfNeeded()
     }
 
+    fun openPendingAttachment(item: PendingAttachment, attachments: List<PendingAttachment>) {
+        val images = attachments.map { it.toMessageImage(context.filesDir) }
+        if (item.attachment.kind == AttachmentKind.DOCUMENT) {
+            documentTarget = images.firstOrNull { it.id == item.id }
+        } else {
+            val previewable = AttachmentPreview.previewable(images)
+            val index = AttachmentPreview.indexOf(previewable, item.id)
+            if (index >= 0) previewTarget = AttachmentPreviewTarget(previewable, index)
+        }
+    }
+
     // 拍照目标 URI 必须活过进程重建：相机在前台时我们的进程被杀是很常见的，
     // 只放在 remember 里会丢结果，表现为「确认后什么都没发生」。
     var captureUriText by rememberSaveable { mutableStateOf<String?>(null) }
@@ -453,6 +465,7 @@ fun ChatScreen(
                     onStop = onStop,
                     onAttachClick = { attachOpen = true },
                     onRemoveAttachment = onRemoveAttachment,
+                    onOpenAttachment = { item -> openPendingAttachment(item, state.pending) },
                     onModelClick = onModelClick,
                     webSearchEnabled = state.webSearchEnabled,
                     webSearchAvailable = state.webSearchAvailable,
@@ -516,6 +529,7 @@ fun ChatScreen(
             // 弹层挡着主界面的提示条：把同一份文案搬进来，否则「点了没反应」。
             notice = state.notice,
             actions = editActions,
+            onOpenAttachment = { item -> openPendingAttachment(item, draft.attachments) },
             onResend = { if (draft.laterCount > 0) confirmResend = true else resendKeepingAlive() },
         )
     }

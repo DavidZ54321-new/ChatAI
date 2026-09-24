@@ -231,6 +231,7 @@ fun PendingAttachmentStrip(
     modifier: Modifier = Modifier,
     /** 非空时在末尾追加一个「＋」方块（编辑弹层用它直达系统选择器）。 */
     onAdd: (() -> Unit)? = null,
+    onOpen: (PendingAttachment) -> Unit = {},
 ) {
     val colors = ChatTheme.colors
     LazyRow(
@@ -242,7 +243,7 @@ fun PendingAttachmentStrip(
                 AttachmentThumbnail(
                     path = item.thumbnailPath,
                     size = 64.dp,
-                    onClick = {},
+                    onClick = { onOpen(item) },
                     isVideo = item.attachment.kind == AttachmentKind.VIDEO,
                     durationMs = item.attachment.durationMs,
                     label = when (item.attachment.kind) {

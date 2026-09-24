@@ -61,6 +61,7 @@ fun Composer(
     onStop: () -> Unit,
     onAttachClick: () -> Unit,
     onRemoveAttachment: (String) -> Unit,
+    onOpenAttachment: (PendingAttachment) -> Unit = {},
     onModelClick: () -> Unit,
     webSearchEnabled: Boolean,
     webSearchAvailable: Boolean,
@@ -102,7 +103,11 @@ fun Composer(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         if (pending.isNotEmpty()) {
-            PendingAttachmentStrip(pending = pending, onRemove = onRemoveAttachment)
+            PendingAttachmentStrip(
+                pending = pending,
+                onRemove = onRemoveAttachment,
+                onOpen = onOpenAttachment,
+            )
         }
         BasicTextField(
             value = value,

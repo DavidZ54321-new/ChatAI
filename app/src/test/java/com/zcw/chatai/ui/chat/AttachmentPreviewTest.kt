@@ -1,6 +1,8 @@
 package com.zcw.chatai.ui.chat
 
+import com.zcw.chatai.data.model.Attachment
 import com.zcw.chatai.data.model.AttachmentKind
+import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -46,6 +48,77 @@ class AttachmentPreviewTest {
 
         assertEquals(-1, AttachmentPreview.indexOf(images, "d"))
         assertEquals(-1, AttachmentPreview.indexOf(images, "nope"))
+    }
+
+    @Test
+    fun pendingDocumentMapsPrivateFileAndExtractedPaths() {
+        val pending = PendingAttachment(
+            id = "doc",
+            thumbnailPath = "",
+            attachment = Attachment(
+                id = "doc",
+                kind = AttachmentKind.DOCUMENT,
+                relativePath = "attachments/c/doc.pdf",
+                mimeType = "application/pdf",
+                width = 0,
+                height = 0,
+                sizeBytes = 42,
+                extractedPath = "attachments/c/doc.extracted.txt",
+                displayName = "report.pdf",
+            ),
+        )
+
+        val image = pending.toMessageImage(File("/private"))
+
+        assertEquals(File(File("/private"), "attachments/c/doc.pdf").absolutePath, image.fullPath)
+        assertEquals(
+            File(File("/private"), "attachments/c/doc.extracted.txt").absolutePath,
+            image.extractedPath,
+        )
+        assertEquals("report.pdf", image.displayName)
+        assertEquals("application/pdf", image.mimeType)
+        assertEquals("PDF", image.label)
+        assertEquals(AttachmentKind.DOCUMENT, image.kind)
+    }
+
+    @Test
+    fun pendingMediaMapsTypeAndPlaybackMetadata() {
+        val pending = PendingAttachment(
+            id = "video",
+            thumbnailPath = "/private/video.thumb.jpg",
+            attachment = Attachment(
+                id = "video",
+                kind = AttachmentKind.VIDEO,
+                relativePath = "attachments/c/video.mp4",
+                mimeType = "video/mp4",
+                width = 640,
+                height = 480,
+                sizeBytes = 512,
+                durationMs = 12_000,
+            ),
+        )
+
+        val image = pending.toMessageImage(File("/private"))
+
+        assertEquals(File(File("/private"), "attachments/c/video.mp4").absolutePath, image.fullPath)
+        assertEquals("/private/video.thumb.jpg", image.thumbnailPath)
+        assertEquals(AttachmentKind.VIDEO, image.kind)
+        assertEquals(12_000L, image.durationMs)
+        assertEquals(640, image.width)
+        assertEquals(480, image.height)
+    }
+
+    @Test
+    fun pendingAttachmentsUseFilteredIndexForMediaPreview() {
+        val images = listOf(
+            image("doc", AttachmentKind.DOCUMENT),
+            image("i1", AttachmentKind.IMAGE),
+            image("audio", AttachmentKind.AUDIO),
+        )
+
+        val previewable = AttachmentPreview.previewable(images)
+
+        assertEquals(1, AttachmentPreview.indexOf(previewable, "audio"))
     }
 
     @Test

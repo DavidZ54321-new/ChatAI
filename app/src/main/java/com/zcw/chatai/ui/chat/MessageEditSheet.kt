@@ -52,6 +52,7 @@ fun MessageEditSheet(
     /** 导入失败 / 重发被拒的提示：弹层挡着主界面，得在这里也能看到。 */
     notice: String?,
     actions: MessageEditActions,
+    onOpenAttachment: (PendingAttachment) -> Unit = {},
     /** 是否要先弹截断确认框由调用方决定（ChatScreen 知道这条消息后面还有多少内容）。 */
     onResend: () -> Unit,
 ) {
@@ -148,6 +149,7 @@ fun MessageEditSheet(
             pending = draft.attachments,
             onRemove = actions.onRemoveAttachment,
             onAdd = { pickAttachments.launch(mimeTypes) },
+            onOpen = onOpenAttachment,
             modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
         )
         Row(
