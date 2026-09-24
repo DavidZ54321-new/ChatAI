@@ -72,3 +72,7 @@ UI (Compose)  →  ChatViewModel  →  ChatRepository  →  Room / ChatApi
 - 模拟器/设备操作走 `scrcpy` MCP 工具（screenshot / tap / swipe / `input_text` / `ui_find_element` /
   logcat）。若 `mcp__scrcpy__*` 工具在当前会话取不到，说明会话是在配置之前启动的——重启 Claude Code。
   相关坑（旋转后截图错位、中文输入、坐标获取）见 AGENTS.md「Driving an emulator / device」。
+- **推 GitHub 别裸 `git push`**：会连环弹 Git Credential Manager 登录窗（用户点到手酸）。
+  用 AGENTS.md「Pushing to GitHub」的零弹窗配方：`git credential fill` 取已存 PAT →
+  一次性 `GIT_ASKPASS` 喂凭据 → `git -c credential.helper=` 推送。环境变量 `GITHUB_TOKEN`
+  是别的账号（OrganCanvasGlass），不能拿来推本仓库；PAT 只在管道里用，不回显、不落文件。
