@@ -17,6 +17,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
@@ -87,6 +88,7 @@ fun MessageMarkdown(
     content: String,
     modifier: Modifier = Modifier,
     cacheable: Boolean = true,
+    allowRemoteImages: Boolean = true,
 ) {
     // 管线：图行 → LaTeX → markdown。svg/mermaid/html 围栏**不再**从正文里抽出来换卡片，
     // 而是由 MarkdownBlock 的 codeFence 槽统一渲染：外观与普通代码块一致，围栏闭合后
@@ -103,10 +105,16 @@ fun MessageMarkdown(
         var cursor = 0
         for (segment in segments) {
             when (segment) {
-                is ContentSegment.Markdown -> LatexContent(segment.text, cacheable)
+                is ContentSegment.Markdown -> LatexContent(segment.text, cacheable, allowRemoteImages)
                 is ContentSegment.ImageRow -> {
                     val start = cursor
-                    MarkdownImageRow(segment.images) { local -> previewAt = start + local }
+                    if (allowRemoteImages) {
+                        MarkdownImageRow(segment.images) { local -> previewAt = start + local }
+                    } else {
+                        segment.images.forEach { image ->
+                            image.alt?.takeIf { it.isNotBlank() }?.let { Text(it) }
+                        }
+                    }
                     cursor += segment.images.size
                 }
             }
@@ -124,11 +132,11 @@ fun MessageMarkdown(
 
 /** 块级公式仍在 Markdown 片段内部单独分段渲染。 */
 @Composable
-private fun LatexContent(text: String, cacheable: Boolean) {
+private fun LatexContent(text: String, cacheable: Boolean, allowRemoteImages: Boolean) {
     val segments = remember(text) { LatexSplitter.split(text) }
     for (segment in segments) {
         when (segment) {
-            is MdSegment.Markdown -> MarkdownBlock(segment.text, cacheable)
+            is MdSegment.Markdown -> MarkdownBlock(segment.text, cacheable, allowRemoteImages)
             is MdSegment.BlockMath -> BlockMathView(segment.latex)
         }
     }
@@ -200,7 +208,7 @@ private fun MarkdownSingleImage(image: MarkdownImageRef, onOpen: () -> Unit) {
 }
 
 @Composable
-private fun MarkdownBlock(text: String, cacheable: Boolean) {
+private fun MarkdownBlock(text: String, cacheable: Boolean, allowRemoteImages: Boolean) {
     val scheme = MaterialTheme.colorScheme
     val colors = ChatTheme.colors
     val chatType = ChatTheme.typography
@@ -310,8 +318,8 @@ private fun MarkdownBlock(text: String, cacheable: Boolean) {
             // 正文里的网图（如文搜图返回的 markdown 图片）走统一的远程加载器。
             // 库的默认 image/inlineImage 都依赖 Coil 风格的 transformer（没接就什么都不画），
             // 且 URL 必须从 AST 节点解析（model.content 是整段 markdown，不是链接）。
-            image = { model -> MarkdownNetworkImage(model) },
-            inlineImage = { model -> MarkdownNetworkImage(model) },
+            image = { model -> MarkdownNetworkImage(model, allowRemoteImages) },
+            inlineImage = { model -> MarkdownNetworkImage(model, allowRemoteImages) },
         )
     Markdown(
         state = rememberParsedMarkdown(prepared.text, cacheable),
@@ -366,7 +374,8 @@ private val NoTextSizeAnimation = object : MarkdownAnimations {
 }
 
 @Composable
-private fun MarkdownNetworkImage(model: MarkdownComponentModel) {
+private fun MarkdownNetworkImage(model: MarkdownComponentModel, enabled: Boolean) {
+    if (!enabled) return
     // inline 图片路径：model.content 直接就是链接；
     // 块级图片路径：URL 在 AST 节点里（content 是整段 markdown，节点偏移只对它成立）。
     // 两种形态都要兼容，且解析失败不能崩。

@@ -313,6 +313,9 @@ class AttachmentStore(private val context: Context) {
 
     fun fileOf(attachment: Attachment): File = File(context.filesDir, attachment.relativePath)
 
+    fun extractedFileOf(attachment: Attachment): File? =
+        attachment.extractedPath?.let { File(context.filesDir, it) }
+
     fun thumbnailOf(attachment: Attachment): File = thumbnailOf(attachment.relativePath)
 
     /** 读文件并内联成 data URL。调用方保证在 IO 线程上（组上下文时统一切过一次线程）。 */

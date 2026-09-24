@@ -213,8 +213,7 @@ fun MessageImageRow(
             AttachmentThumbnail(
                 path = image.thumbnailPath,
                 size = side,
-                // 文档不可点（尚无预览器）：点透会导致空白预览弹层。图片/视频/音频都进预览。
-                onClick = { if (image.kind != AttachmentKind.DOCUMENT) onOpen(image) },
+                onClick = { onOpen(image) },
                 isVideo = image.kind == AttachmentKind.VIDEO,
                 durationMs = image.durationMs,
                 label = image.label,

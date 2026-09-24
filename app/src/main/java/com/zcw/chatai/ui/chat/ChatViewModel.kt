@@ -808,6 +808,8 @@ class ChatViewModel(
                 kind = attachment.kind,
                 durationMs = attachment.durationMs,
                 displayName = attachment.displayName,
+                mimeType = attachment.mimeType,
+                extractedPath = attachmentStore.extractedFileOf(attachment)?.absolutePath,
                 label = when (attachment.kind) {
                     AttachmentKind.DOCUMENT -> DocumentLabel.of(
                         attachment.mimeType,

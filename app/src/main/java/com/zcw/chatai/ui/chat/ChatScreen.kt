@@ -121,6 +121,7 @@ fun ChatScreen(
 
     var actionTarget by remember { mutableStateOf<ChatMessageItem?>(null) }
     var previewTarget by remember { mutableStateOf<AttachmentPreviewTarget?>(null) }
+    var documentTarget by remember { mutableStateOf<MessageImage?>(null) }
     // SVG/HTML 全屏 viewer 目标：Dialog 随开随建、退出即销毁，列表里不驻留 WebView。
     var previewPage by remember { mutableStateOf<PreviewTarget?>(null) }
     var overflowOpen by remember { mutableStateOf(false) }
@@ -132,7 +133,7 @@ fun ChatScreen(
     // 编辑弹层也算浮层：从系统相册选完附件回来时不该把键盘飘到 Composer 上。
     val focusAllowedNow = rememberUpdatedState(
         composerFocusAllowed && !attachOpen && !overflowOpen &&
-            actionTarget == null && previewTarget == null && previewPage == null &&
+        actionTarget == null && previewTarget == null && documentTarget == null && previewPage == null &&
             editDraft == null && !confirmResend,
     )
     // 聚焦成功才唤键盘：requestFocus 失败（节点已移除）时不弹，避免键盘飘到别的界面上。
@@ -337,15 +338,18 @@ fun ChatScreen(
                                     onLongPress = { actionTarget = group.items.single() },
                                     // 点气泡进编辑弹层；能不能编辑（生成中/非用户消息）由 VM 判。
                                     onClick = { editActions.onBegin(group.items.single().id) },
-                                    // 点附件进预览弹层（可左右滑）；文档不可预览，index 为 -1 时忽略。
                                     onOpenImage = { tapped ->
-                                        val images = group.items.single().images
-                                        val index = AttachmentPreview.indexOf(images, tapped.id)
-                                        if (index >= 0) {
-                                            previewTarget = AttachmentPreviewTarget(
-                                                images = AttachmentPreview.previewable(images),
-                                                index = index,
-                                            )
+                                        if (tapped.kind == com.zcw.chatai.data.model.AttachmentKind.DOCUMENT) {
+                                            documentTarget = tapped
+                                        } else {
+                                            val images = group.items.single().images
+                                            val index = AttachmentPreview.indexOf(images, tapped.id)
+                                            if (index >= 0) {
+                                                previewTarget = AttachmentPreviewTarget(
+                                                    images = AttachmentPreview.previewable(images),
+                                                    index = index,
+                                                )
+                                            }
                                         }
                                     },
                                 )
@@ -615,6 +619,11 @@ fun ChatScreen(
             initialIndex = preview.index,
             onDismiss = { previewTarget = null },
         )
+    }
+
+    val document = documentTarget
+    if (document != null) {
+        DocumentPreviewDialog(document = document, onDismiss = { documentTarget = null })
     }
 
     val page = previewPage
