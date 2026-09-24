@@ -19,6 +19,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.zcw.chatai.ChatAiApp
 import com.zcw.chatai.ui.chat.ChatScreen
 import com.zcw.chatai.ui.chat.ChatViewModel
+import com.zcw.chatai.ui.chat.MessageEditActions
 import com.zcw.chatai.ui.chat.ModelPickerSheet
 import com.zcw.chatai.ui.drawer.ConversationListScreen
 import com.zcw.chatai.ui.settings.SettingsScreen
@@ -38,13 +39,30 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val conversations by viewModel.searchResults.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
+    val editDraft by viewModel.editDraft.collectAsStateWithLifecycle()
     val autoFocusComposer by viewModel.autoFocusComposer.collectAsStateWithLifecycle()
     var showSettings by remember { mutableStateOf(false) }
     var showConversations by remember { mutableStateOf(false) }
     var showModelPicker by remember { mutableStateOf(false) }
 
-    // 只有聊天主界面（无设置/会话列表/模型选择浮层）才允许自动唤键盘；任何其他界面都不唤醒。
-    val chatSurfaceActive = !showSettings && !showConversations && !showModelPicker
+    // 编辑弹层的回调打包一次构建：ChatScreen 的参数已经很多，不再逐个往下传。
+    val editActions = remember(viewModel) {
+        MessageEditActions(
+            onBegin = viewModel::beginEdit,
+            onTextChange = viewModel::setEditText,
+            onRemoveAttachment = viewModel::removeEditAttachment,
+            onAddAttachments = viewModel::addEditAttachments,
+            onModelChange = viewModel::setEditModel,
+            onProviderChange = viewModel::setEditProvider,
+            onToggleWebSearch = viewModel::toggleEditWebSearch,
+            onResend = viewModel::resendEdit,
+            onDismiss = viewModel::dismissEdit,
+            onNoticeShown = viewModel::consumeNotice,
+        )
+    }
+
+    // 只有聊天主界面（无设置/会话列表/模型选择/编辑弹层）才允许自动唤键盘；任何其他界面都不唤醒。
+    val chatSurfaceActive = !showSettings && !showConversations && !showModelPicker && editDraft == null
 
     BackHandler(enabled = showSettings && !showConversations) { showSettings = false }
     BackHandler(enabled = showConversations) { showConversations = false }
@@ -79,6 +97,8 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
                 onRemoveAttachment = viewModel::removeAttachment,
                 onModelClick = { showModelPicker = true },
                 onToggleWebSearch = viewModel::toggleWebSearch,
+                editDraft = editDraft,
+                editActions = editActions,
                 onNoticeShown = viewModel::consumeNotice,
                 autoFocusComposer = autoFocusComposer,
                 onAutoFocusComposerConsumed = viewModel::consumeAutoFocusComposer,

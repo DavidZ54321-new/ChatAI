@@ -43,6 +43,7 @@ import com.zcw.chatai.ui.theme.SpikeMark
 fun UserMessageItem(
     message: ChatMessageItem,
     onLongPress: () -> Unit,
+    onClick: () -> Unit,
     onOpenImage: (MessageImage) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -56,7 +57,8 @@ fun UserMessageItem(
         ) {
             if (message.images.isNotEmpty()) {
                 // 图片行占满宽度：少则靠右对齐（LazyRow 内部 End 排列），多则可横向滑动。
-                MessageImageRow(images = message.images, onOpen = onOpenImage)
+                // 长按等同气泡长按：只有图没有文字时，这是够到消息菜单的唯一入口。
+                MessageImageRow(images = message.images, onOpen = onOpenImage, onLongPress = onLongPress)
             }
             if (message.content.isNotEmpty()) {
                 Box(
@@ -64,7 +66,7 @@ fun UserMessageItem(
                         .widthIn(max = bubbleMaxWidth)
                         .clip(RoundedCornerShape(20.dp))
                         .background(colors.bubbleUser)
-                        .combinedClickable(onClick = {}, onLongClick = onLongPress)
+                        .combinedClickable(onClick = onClick, onLongClick = onLongPress)
                         .padding(horizontal = 16.dp, vertical = 11.dp),
                 ) {
                     Text(

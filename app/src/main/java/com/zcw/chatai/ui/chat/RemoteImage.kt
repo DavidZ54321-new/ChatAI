@@ -9,7 +9,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -29,8 +31,10 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -39,13 +43,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.zcw.chatai.data.media.GalleryStore
 import com.zcw.chatai.ui.theme.ChatTheme
 import java.io.InputStream
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
@@ -64,6 +71,8 @@ import okhttp3.Request
 object RemoteImages {
 
     private const val MAX_BYTES = 8 * 1024 * 1024
+    /** 保存原图时的上限：比缩略图宽一档，但不至于把大图整张读进内存。 */
+    private const val MAX_SAVE_BYTES = 20 * 1024 * 1024
     private const val DISK_CACHE_BYTES = 48L * 1024 * 1024
     private const val MAX_CONCURRENT_LOADS = 4
 
@@ -124,6 +133,25 @@ object RemoteImages {
 
     private fun key(url: String, maxEdge: Int): String = "$url@$maxEdge"
 
+    /** 取远程图**原始字节**（不降采样、不入缓存），供「保存到相册」用；失败返回 null。 */
+    suspend fun downloadBytes(url: String): ByteArray? = withContext(Dispatchers.IO) {
+        try {
+            val httpUrl = url.toHttpUrlOrNull() ?: return@withContext null
+            val request = Request.Builder()
+                .url(httpUrl)
+                .header("User-Agent", "ChatAI/1.0")
+                .build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext null
+                val declared = response.body.contentLength()
+                if (declared > MAX_SAVE_BYTES) return@withContext null
+                response.body.byteStream().use { readCapped(it, MAX_SAVE_BYTES) }
+            }
+        } catch (t: Throwable) {
+            null
+        }
+    }
+
     private fun fetch(url: String, maxEdge: Int): Bitmap? = try {
         val httpUrl = url.toHttpUrlOrNull() ?: return null
         val request = Request.Builder()
@@ -134,21 +162,21 @@ object RemoteImages {
             if (!response.isSuccessful) return null
             val declared = response.body.contentLength()
             if (declared > MAX_BYTES) return null
-            val bytes = response.body.byteStream().use(::readCapped) ?: return null
+            val bytes = response.body.byteStream().use { readCapped(it, MAX_BYTES) } ?: return null
             decodeSampled(bytes, maxEdge)
         }
     } catch (t: Throwable) {
         null
     }
 
-    /** 最多读 [MAX_BYTES]；超过上限视为失败（截断的图片解不出来，不如早退）。 */
-    private fun readCapped(stream: InputStream): ByteArray? {
+    /** 最多读 [cap] 字节；超过上限视为失败（截断的图片解不出来，不如早退）。 */
+    private fun readCapped(stream: InputStream, cap: Int): ByteArray? {
         val buffer = ByteArray(16 * 1024)
         val out = java.io.ByteArrayOutputStream()
         while (true) {
             val read = stream.read(buffer)
             if (read == -1) break
-            if (out.size() + read > MAX_BYTES) return null
+            if (out.size() + read > cap) return null
             out.write(buffer, 0, read)
         }
         return out.toByteArray()
@@ -168,6 +196,19 @@ object RemoteImages {
     } catch (t: Throwable) {
         null
     }
+}
+
+/**
+ * 从 URL 末段取扩展名（去掉查询串/锚点），未知或过长回落 `jpg`。
+ * 用于「保存到相册」的文件名与 MIME 推断。
+ */
+internal fun fileNameExtension(url: String): String {
+    val path = url.substringBefore('#').substringBefore('?')
+    val name = path.substringAfterLast('/')
+    val dot = name.lastIndexOf('.')
+    if (dot < 0 || dot == name.length - 1) return "jpg"
+    val extension = name.substring(dot + 1).lowercase()
+    return if (extension.length <= 5 && extension.all { it.isLetterOrDigit() }) extension else "jpg"
 }
 
 /** 远程图片的三种状态：加载中 / 已就绪 / 失败（失败占位可点重载）。 */
@@ -298,6 +339,26 @@ fun RemoteImagePreviewDialog(
         }
         scale = next
     }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var saving by remember { mutableStateOf(false) }
+    var notice by remember { mutableStateOf<String?>(null) }
+    // 保存当前页的原图字节到系统相册（文搜图/图搜图结果与回答里的图共用这个弹层）。
+    fun saveCurrent() {
+        val url = images[pagerState.currentPage].url
+        saving = true
+        notice = null
+        scope.launch {
+            val bytes = RemoteImages.downloadBytes(url)
+            val name = GalleryStore.exportFileName(System.currentTimeMillis(), fileNameExtension(url))
+            // MediaStore 插入 + 落盘是阻塞 IO，别放主线程（最多 20MB，会卡帧甚至 ANR）。
+            val saved = bytes != null && withContext(Dispatchers.IO) {
+                GalleryStore.saveBytes(context, bytes, GalleryStore.mimeFor(name), name)
+            }
+            notice = if (saved) "已保存到相册" else "保存失败，请重试"
+            saving = false
+        }
+    }
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -347,22 +408,51 @@ fun RemoteImagePreviewDialog(
                     .align(Alignment.TopStart)
                     .padding(start = 20.dp, top = 24.dp),
             )
-            Box(
+            notice?.let { text ->
+                Text(
+                    text = text,
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 24.dp)
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(Color.White.copy(alpha = 0.16f))
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                )
+            }
+            Row(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .padding(16.dp)
-                    .size(36.dp)
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(Color.White.copy(alpha = 0.16f))
-                    .clickable(onClick = onDismiss),
-                contentAlignment = Alignment.Center,
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Icon(
-                    imageVector = Icons.Filled.Close,
-                    contentDescription = "关闭",
-                    tint = Color.White,
-                    modifier = Modifier.size(20.dp),
+                Text(
+                    text = if (saving) "保存中…" else "保存到相册",
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(Color.White.copy(alpha = 0.16f))
+                        .clickable(enabled = !saving) { saveCurrent() }
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
                 )
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(Color.White.copy(alpha = 0.16f))
+                        .clickable(onClick = onDismiss),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = "关闭",
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
             }
             val title = images[pagerState.currentPage].title
             if (!title.isNullOrBlank()) {

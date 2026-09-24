@@ -29,8 +29,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -76,6 +78,9 @@ import com.zcw.chatai.ui.md.PreviewTarget
 import com.zcw.chatai.ui.theme.ChatTheme
 import java.io.File
 
+/** 附件预览目标：这条用户消息里可预览的附件 + 起始下标（左右滑的整组）。 */
+private data class AttachmentPreviewTarget(val images: List<MessageImage>, val index: Int)
+
 @Composable
 fun ChatScreen(
     state: ChatUiState,
@@ -97,6 +102,9 @@ fun ChatScreen(
     onRemoveAttachment: (String) -> Unit,
     onModelClick: () -> Unit,
     onToggleWebSearch: () -> Unit,
+    /** 编辑用户消息的草稿与回调（会话级语义：模型/供应商/🌐 写回会话，见 [MessageEditActions]）。 */
+    editDraft: EditDraft?,
+    editActions: MessageEditActions,
     onNoticeShown: () -> Unit,
     autoFocusComposer: Boolean,
     onAutoFocusComposerConsumed: () -> Unit,
@@ -112,17 +120,20 @@ fun ChatScreen(
     val composerFocus = remember { FocusRequester() }
 
     var actionTarget by remember { mutableStateOf<ChatMessageItem?>(null) }
-    var previewTarget by remember { mutableStateOf<MessageImage?>(null) }
+    var previewTarget by remember { mutableStateOf<AttachmentPreviewTarget?>(null) }
     // SVG/HTML 全屏 viewer 目标：Dialog 随开随建、退出即销毁，列表里不驻留 WebView。
     var previewPage by remember { mutableStateOf<PreviewTarget?>(null) }
     var overflowOpen by remember { mutableStateOf(false) }
     var attachOpen by remember { mutableStateOf(false) }
+    var confirmResend by remember { mutableStateOf(false) }
 
     // 只有聊天主界面可见、且没有被任何浮层遮挡时才允许唤键盘：
     // 设置页 / 会话列表 / 模型选择（上层标志）与附件面板 / 溢出菜单 / 消息操作 / 图片预览（本地浮层）一律不唤醒。
+    // 编辑弹层也算浮层：从系统相册选完附件回来时不该把键盘飘到 Composer 上。
     val focusAllowedNow = rememberUpdatedState(
         composerFocusAllowed && !attachOpen && !overflowOpen &&
-            actionTarget == null && previewTarget == null && previewPage == null,
+            actionTarget == null && previewTarget == null && previewPage == null &&
+            editDraft == null && !confirmResend,
     )
     // 聚焦成功才唤键盘：requestFocus 失败（节点已移除）时不弹，避免键盘飘到别的界面上。
     fun focusComposerIfAllowed() {
@@ -251,6 +262,12 @@ fun ChatScreen(
         requestNotifyIfNeeded()
     }
 
+    fun resendKeepingAlive() {
+        editActions.onResend()
+        follow.jumpToBottom()
+        requestNotifyIfNeeded()
+    }
+
     // 拍照目标 URI 必须活过进程重建：相机在前台时我们的进程被杀是很常见的，
     // 只放在 remember 里会丢结果，表现为「确认后什么都没发生」。
     var captureUriText by rememberSaveable { mutableStateOf<String?>(null) }
@@ -318,7 +335,19 @@ fun ChatScreen(
                                 is MessageGroup.User -> UserMessageItem(
                                     message = group.items.single(),
                                     onLongPress = { actionTarget = group.items.single() },
-                                    onOpenImage = { previewTarget = it },
+                                    // 点气泡进编辑弹层；能不能编辑（生成中/非用户消息）由 VM 判。
+                                    onClick = { editActions.onBegin(group.items.single().id) },
+                                    // 点附件进预览弹层（可左右滑）；文档不可预览，index 为 -1 时忽略。
+                                    onOpenImage = { tapped ->
+                                        val images = group.items.single().images
+                                        val index = AttachmentPreview.indexOf(images, tapped.id)
+                                        if (index >= 0) {
+                                            previewTarget = AttachmentPreviewTarget(
+                                                images = AttachmentPreview.previewable(images),
+                                                index = index,
+                                            )
+                                        }
+                                    },
                                 )
 
                                 is MessageGroup.Assistant -> AssistantTurnItem(
@@ -455,6 +484,14 @@ fun ChatScreen(
                 clipboard.copy(target.content)
                 actionTarget = null
             },
+            onEdit = if (target.role == Role.USER) {
+                {
+                    editActions.onBegin(target.id)
+                    actionTarget = null
+                }
+            } else {
+                null
+            },
             onRegenerate = {
                 regenerateKeepingAlive(target.id)
                 actionTarget = null
@@ -462,6 +499,39 @@ fun ChatScreen(
             onDelete = {
                 onDeleteMessage(target.id)
                 actionTarget = null
+            },
+        )
+    }
+
+    // 编辑弹层：破坏性截断先确认（只有后面还有消息时才问一次）。
+    val draft = editDraft
+    if (draft != null) {
+        MessageEditSheet(
+            draft = draft,
+            webSearchAvailable = state.webSearchAvailable,
+            // 弹层挡着主界面的提示条：把同一份文案搬进来，否则「点了没反应」。
+            notice = state.notice,
+            actions = editActions,
+            onResend = { if (draft.laterCount > 0) confirmResend = true else resendKeepingAlive() },
+        )
+    }
+    if (draft != null && confirmResend) {
+        AlertDialog(
+            onDismissRequest = { confirmResend = false },
+            title = { Text("重新发送？") },
+            text = { Text("这条消息之后的 ${draft.laterCount} 轮对话会被删除，且无法恢复。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmResend = false
+                        resendKeepingAlive()
+                    },
+                ) {
+                    Text("重新发送")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmResend = false }) { Text("取消") }
             },
         )
     }
@@ -540,11 +610,11 @@ fun ChatScreen(
 
     val preview = previewTarget
     if (preview != null) {
-        if (preview.isVideo) {
-            VideoPreviewDialog(image = preview, onDismiss = { previewTarget = null })
-        } else {
-            ImagePreviewDialog(image = preview, onDismiss = { previewTarget = null })
-        }
+        AttachmentPreviewDialog(
+            images = preview.images,
+            initialIndex = preview.index,
+            onDismiss = { previewTarget = null },
+        )
     }
 
     val page = previewPage
@@ -554,7 +624,7 @@ fun ChatScreen(
 }
 
 /** 文档选择器的 MIME 过滤（与 DocumentKind 首期范围对齐）。 */
-private val DOCUMENT_MIME_TYPES = arrayOf(
+internal val DOCUMENT_MIME_TYPES = arrayOf(
     "application/pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -570,7 +640,7 @@ private val DOCUMENT_MIME_TYPES = arrayOf(
  * 必须与 `AttachmentStore.audioExtension()` 认的 MIME 集**完全一致**——
  * OpenDocument 按精确 MIME 过滤，漏一个变体（如 `audio/x-wav`）该文件就选不出来。
  */
-private val AUDIO_MIME_TYPES = arrayOf(
+internal val AUDIO_MIME_TYPES = arrayOf(
     "audio/mpeg",
     "audio/mp3",
     "audio/wav",

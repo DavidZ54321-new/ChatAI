@@ -158,8 +158,9 @@ fun Composer(
     }
 }
 
+/** 🌐 联网开关：编辑弹层复用同一视觉与「不可用就点不动」的语义。 */
 @Composable
-private fun WebSearchToggle(enabled: Boolean, available: Boolean, onClick: () -> Unit) {
+internal fun WebSearchToggle(enabled: Boolean, available: Boolean, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     Box(
         modifier = Modifier

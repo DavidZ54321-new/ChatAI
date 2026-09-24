@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.zcw.chatai.data.ChatRepository
+import com.zcw.chatai.data.ConversationBinding
 import com.zcw.chatai.data.SendResult
 import com.zcw.chatai.data.StreamingMessage
 import com.zcw.chatai.data.doc.DocumentLabel
@@ -55,6 +56,14 @@ class ChatViewModel(
     private val pending = MutableStateFlow<List<PendingAttachment>>(emptyList())
     private val notice = MutableStateFlow<String?>(null)
     private val conversationId = MutableStateFlow<String?>(null)
+
+    /**
+     * 编辑用户消息的草稿。独立于 [state] 的 combine 链（那条链已有 5 个源，再加要改结构），
+     * 由 App 单独 collect 后传给 ChatScreen；弹层是否显示只看它是否为 null。
+     */
+    private val _editDraft = MutableStateFlow<EditDraft?>(null)
+
+    val editDraft: StateFlow<EditDraft?> = _editDraft.asStateFlow()
 
     /**
      * 冷启动/进程重建后的一次性聚焦请求：进「新对话」空态时聚焦输入框并唤醒输入法。
@@ -336,9 +345,204 @@ class ChatViewModel(
 
     fun deleteMessage(messageId: String) = repository.deleteMessage(messageId)
 
+    // ---------- 编辑用户消息 ----------
+
+    /**
+     * 进编辑：从当前消息列表取原始附件与正文，模型/供应商/🌐 取**会话级**当前值（会话级语义）。
+     * 生成中先拦下——截断会打断正在流式的回合。
+     */
+    fun beginEdit(messageId: String) {
+        if (state.value.isTurnActive) {
+            notice.value = "正在生成回答，请先停止或稍后编辑"
+            return
+        }
+        val current = state.value
+        val conversationId = current.conversationId ?: return
+        val message = current.messages.firstOrNull { it.id == messageId }
+        if (message == null || message.role != Role.USER) return
+        // 上一个草稿（例如没关就点了另一条）按取消处理：新导入的文件得删掉。
+        discardEditDraft()
+        _editDraft.value = EditDraft(
+            messageId = message.id,
+            conversationId = conversationId,
+            text = message.content,
+            attachments = message.attachments.map { it.toPending() },
+            model = current.model,
+            providerId = current.providerId,
+            webSearchEnabled = current.webSearchEnabled,
+            laterCount = MessageEdit.laterCount(current.messages, message.id),
+        )
+    }
+
+    fun setEditText(text: String) = updateEditDraft { it.copy(text = text) }
+
+    fun setEditModel(model: String) {
+        if (model.isBlank()) return
+        updateEditDraft { it.copy(model = model, bindingDirty = true) }
+    }
+
+    /** 弹层里换供应商：与 Composer 的 setProvider 同一条规则，但只改草稿（确认重发才落库）。 */
+    fun setEditProvider(providerId: String) {
+        if (providerId.isBlank()) return
+        viewModelScope.launch {
+            val settings = settingsRepository.settings.first()
+            val model = ProviderCatalog.defaultModelFor(settings.providers, providerId)
+            if (model.isBlank()) {
+                notice.value = "「${ProviderCatalog.displayName(providerId)}」还没配置模型，请先到设置里填写"
+                return@launch
+            }
+            updateEditDraft { it.copy(providerId = providerId, model = model, bindingDirty = true) }
+        }
+    }
+
+    fun toggleEditWebSearch() {
+        val draft = _editDraft.value ?: return
+        if (!draft.webSearchEnabled && !state.value.webSearchAvailable) {
+            notice.value = "联网搜索不可用：请先在设置里填写 API Key"
+            return
+        }
+        updateEditDraft { it.copy(webSearchEnabled = !it.webSearchEnabled, bindingDirty = true) }
+    }
+
+    fun removeEditAttachment(attachmentId: String) {
+        val draft = _editDraft.value ?: return
+        val removal = MessageEdit.remove(draft, attachmentId)
+        // 只有本次新导入的附件可以立刻删文件（它还不属于任何消息）。
+        if (removal.deleteNow.isNotEmpty()) attachmentStore.delete(removal.deleteNow)
+        _editDraft.value = removal.draft
+    }
+
+    /**
+     * 系统选择器回来的一批附件：**逐个**导入，每张都在前一张落进草稿之后再判额度，
+     * 多选才不会整批读到同一份旧草稿而绕过上限。
+     */
+    fun addEditAttachments(picked: List<PickedAttachment>) {
+        if (picked.isEmpty()) return
+        viewModelScope.launch {
+            for (item in picked) importIntoDraft(item.uri, item.kind)
+        }
+    }
+
+    private suspend fun importIntoDraft(uri: Uri, kind: AttachmentKind) {
+        val draft = _editDraft.value ?: return
+        val limits = when (kind) {
+            AttachmentKind.IMAGE -> AttachmentLimits.MAX_IMAGES
+            AttachmentKind.DOCUMENT -> AttachmentLimits.MAX_DOCUMENTS
+            AttachmentKind.VIDEO -> AttachmentLimits.MAX_VIDEOS
+            AttachmentKind.AUDIO -> AttachmentLimits.MAX_AUDIOS
+        }
+        // 计数口径含草稿里已有的附件：原有附件在出站时同样占额度。
+        if (draft.attachments.count { it.attachment.kind == kind } >= limits) {
+            notice.value = "最多只能发送 ${kind.countNoun(limits)}"
+            return
+        }
+        val conversationId = draft.conversationId
+        val messageId = draft.messageId
+        runCatching {
+            when (kind) {
+                AttachmentKind.IMAGE -> attachmentStore.importImage(conversationId, uri)
+                AttachmentKind.DOCUMENT -> attachmentStore.importDocument(conversationId, uri)
+                AttachmentKind.VIDEO -> attachmentStore.importVideo(conversationId, uri)
+                AttachmentKind.AUDIO -> attachmentStore.importAudio(conversationId, uri)
+            }
+        }
+            .onSuccess { attachment -> addImportedToDraft(messageId, attachment) }
+            .onFailure { t -> notice.value = t.message ?: kind.failureMessage }
+    }
+
+    /** 附件数量上限的说明词：与 Composer 的提示口径一致（图片论「张」，其余论「个」）。 */
+    private fun AttachmentKind.countNoun(count: Int): String = when (this) {
+        AttachmentKind.IMAGE -> "$count 张图片"
+        AttachmentKind.DOCUMENT -> "$count 个文档"
+        AttachmentKind.VIDEO -> "$count 个视频"
+        AttachmentKind.AUDIO -> "$count 个音频"
+    }
+
+    /** 导入失败的兜底文案（导入器自己抛的可读原因优先）。 */
+    private val AttachmentKind.failureMessage: String
+        get() = when (this) {
+            AttachmentKind.IMAGE -> "图片处理失败"
+            AttachmentKind.DOCUMENT -> "文档处理失败"
+            AttachmentKind.VIDEO -> "视频处理失败"
+            AttachmentKind.AUDIO -> "音频处理失败"
+        }
+
+    /**
+     * 导入回来的新附件进草稿：记进 importedIds，取消编辑时才知道该删哪些文件。
+     * 草稿已经关掉或换成了另一条消息 → 这份文件没人要，立刻删。
+     */
+    private fun addImportedToDraft(messageId: String, attachment: Attachment) {
+        val pending = attachment.toPending()
+        var kept = false
+        _editDraft.update { current ->
+            if (current == null || current.messageId != messageId) {
+                current
+            } else {
+                MessageEdit.add(current, pending).also { kept = true }
+            }
+        }
+        if (!kept) attachmentStore.delete(listOf(attachment))
+    }
+
+    fun dismissEdit() = discardEditDraft()
+
+    /** 放弃草稿：只删本次新导入的文件；原有附件仍被消息引用，一律不动。 */
+    private fun discardEditDraft() {
+        val draft = _editDraft.value ?: return
+        val files = MessageEdit.discardFiles(draft)
+        if (files.isNotEmpty()) attachmentStore.delete(files)
+        _editDraft.value = null
+    }
+
+    /**
+     * 确认重发：绑定（模型/供应商/🌐）先暂存在草稿里，到这里才随回合一起写回会话。
+     * 失败只提示、不关弹层，用户改完可以再点一次。
+     */
+    fun resendEdit() {
+        val draft = _editDraft.value ?: return
+        if (!draft.canResend) {
+            notice.value = "请输入内容"
+            return
+        }
+        val result = repository.editAndResend(
+            conversationId = draft.conversationId,
+            messageId = draft.messageId,
+            text = draft.text,
+            attachments = draft.attachments.map { it.attachment },
+            // 没动过模型/供应商/🌐 就不写回会话：老会话的空 provider_id（跟随激活供应商）不该被钉死。
+            binding = if (draft.bindingDirty) {
+                ConversationBinding(draft.model, draft.providerId, draft.webSearchEnabled)
+            } else {
+                null
+            },
+        )
+        when (result) {
+            // 新导入的文件所有权已转移给消息，不能再按「取消要删」处理。
+            SendResult.Started -> _editDraft.value = null
+            SendResult.Busy -> Unit
+            is SendResult.Rejected -> notice.value = result.reason
+        }
+    }
+
+    private inline fun updateEditDraft(block: (EditDraft) -> EditDraft) {
+        _editDraft.update { current -> current?.let(block) }
+    }
+
+    /** 草稿里的附件与 Composer 的待发附件同形：图片/视频有缩略图，文档/音频用字母牌。 */
+    private fun Attachment.toPending(): PendingAttachment = PendingAttachment(
+        id = id,
+        thumbnailPath = when (kind) {
+            AttachmentKind.IMAGE, AttachmentKind.VIDEO -> attachmentStore.thumbnailOf(this).absolutePath
+            else -> ""
+        },
+        attachment = this,
+    )
+
     fun selectConversation(id: String) {
         if (conversationId.value == id) return
         discardPending()
+        // 草稿跟着会话走：切走就把新导入的文件删掉，别把上一个会话的编辑带到下一个。
+        discardEditDraft()
         // 选的是已存在的会话：丢弃「新对话里先选好、还没落库」的绑定，避免它残留到下一个新对话。
         pendingBinding.value = null
         conversationId.value = id
@@ -351,6 +555,7 @@ class ChatViewModel(
 
     fun newConversation() {
         discardPending()
+        discardEditDraft()
         viewModelScope.launch {
             val binding = pendingBinding.value
             conversationId.value = repository.createConversation(
@@ -366,6 +571,7 @@ class ChatViewModel(
     fun clearConversation() {
         val id = conversationId.value ?: return
         discardPending()
+        discardEditDraft()
         repository.clearConversation(id)
     }
 
@@ -467,6 +673,7 @@ class ChatViewModel(
 
     override fun onCleared() {
         discardPending()
+        discardEditDraft()
         super.onCleared()
     }
 
@@ -598,19 +805,21 @@ class ChatViewModel(
                 fullPath = attachmentStore.fileOf(attachment).absolutePath,
                 width = attachment.width,
                 height = attachment.height,
-                isVideo = attachment.kind == AttachmentKind.VIDEO,
+                kind = attachment.kind,
                 durationMs = attachment.durationMs,
+                displayName = attachment.displayName,
                 label = when (attachment.kind) {
                     AttachmentKind.DOCUMENT -> DocumentLabel.of(
                         attachment.mimeType,
                         attachment.displayName ?: attachment.relativePath,
                     )
-                    // 音频复用字母牌渲染路径（不可点、无播放器——v1 已知限制）。
+                    // 音频用字母牌渲染；点开走预览弹层的音频播放页。
                     AttachmentKind.AUDIO -> "AUDIO"
                     else -> null
                 },
             )
         },
+        attachments = attachments,
         toolResult = toolResult,
     )
 

@@ -69,6 +69,16 @@ interface MessageDao {
     @Query("UPDATE messages SET attachments = :attachments, updated_at = :updatedAt WHERE id = :id")
     suspend fun updateAttachments(id: String, attachments: String?, updatedAt: Long)
 
+    /** 编辑用户消息：改写正文与附件（列表顺序即出站顺序），并记录此次重发所用的模型。 */
+    @Query("UPDATE messages SET content = :content, attachments = :attachments, model = :model, updated_at = :updatedAt WHERE id = :id")
+    suspend fun updateUserMessage(
+        id: String,
+        content: String,
+        attachments: String?,
+        model: String,
+        updatedAt: Long,
+    )
+
     @Query("UPDATE messages SET content = :content, tool_result = :toolResult, updated_at = :updatedAt WHERE id = :id")
     suspend fun updateToolResultContent(id: String, content: String, toolResult: String?, updatedAt: Long)
 

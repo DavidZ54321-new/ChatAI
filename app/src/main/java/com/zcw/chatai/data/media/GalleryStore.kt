@@ -7,11 +7,10 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
-import java.io.File
 import java.io.OutputStream
 
 /**
- * 相册写入（MediaStore）：统一 MIME / 文件名的解析，导出 PNG/GIF 与保存已有附件图共用。
+ * 相册写入（MediaStore）：统一 MIME / 文件名的解析，导出 PNG/GIF 与保存远程图共用。
  * minSdk 29（Q）起插自己的媒体项无需存储权限。
  */
 object GalleryStore {
@@ -30,14 +29,6 @@ object GalleryStore {
     /** 导出文件名：`chat_ai_<时间戳>.<扩展名>`（扩展名接受带/不带点、大小写混合）。 */
     fun exportFileName(timestampMs: Long, extension: String): String =
         "chat_ai_$timestampMs.${normalizeExtension(extension)}"
-
-    /** 把已存在的图片文件复制进相册。 */
-    fun saveFile(context: Context, source: File): Boolean {
-        if (!source.isFile) return false
-        return insert(context, source.name, mimeFor(source.name)) { output ->
-            source.inputStream().use { it.copyTo(output) }
-        }
-    }
 
     /** 把内存里的导出字节写进相册。 */
     fun saveBytes(context: Context, bytes: ByteArray, mime: String, displayName: String): Boolean =
