@@ -15,4 +15,6 @@ data class Conversation(
     val providerId: String = "",
     /** 绑定的角色 id；决定提示词与生成参数。空串 = 跟随当前激活角色。 */
     val personaId: String = "",
+    /** 分支的来源会话 id；空串 = 普通会话。只用于列表里的父子嵌套展示。 */
+    val parentConversationId: String = "",
 )

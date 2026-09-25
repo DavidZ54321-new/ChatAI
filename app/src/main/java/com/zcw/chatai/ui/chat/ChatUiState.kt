@@ -130,6 +130,9 @@ data class ChatUiState(
     val audioInputAvailable: Boolean = false,
     /** 视频上传/解析中的一行提示；null 表示没有进行中的视频处理。 */
     val videoUploadNotice: String? = null,
+    /** 当前会话是分支时，它的来源会话 id 与标题（用于顶部的「分支自…」横幅）；非分支为 null。 */
+    val branchParentId: String? = null,
+    val branchParentTitle: String? = null,
 ) {
     val canSend: Boolean
         get() = (input.isNotBlank() || pending.isNotEmpty()) && !isTurnActive

@@ -219,6 +219,37 @@ class SettingsRepository(context: Context) {
     }
 
     /**
+     * 备份还原专用：一次 edit 写全**所有**设置（含主题）。
+     * 与 [updateConfig] 的区别是它把主题也一起写，且不看设置页的表单状态——
+     * 导入之后界面立刻按新主题与供应商渲染，不需要用户再点一次保存。
+     * 合并导入时先用 `BackupCodec.mergeSettings` 算出结果再传进来。
+     */
+    suspend fun replaceAll(settings: ChatSettings) {
+        store.edit { prefs ->
+            prefs[KEY_PROVIDERS] = ProviderConfigCodec.encode(settings.providers)
+            prefs[KEY_ACTIVE_PROVIDER] = settings.activeProviderId
+            if (settings.searchProviderId.isNullOrBlank()) {
+                prefs.remove(KEY_SEARCH_PROVIDER)
+            } else {
+                prefs[KEY_SEARCH_PROVIDER] = settings.searchProviderId
+            }
+            prefs[KEY_PERSONAS] = PersonaConfigCodec.encode(settings.personas)
+            prefs[KEY_ACTIVE_PERSONA] = settings.activePersonaId
+            prefs[KEY_IMAGE_DETAIL] = settings.imageDetail.name
+            prefs[KEY_INCLUDE_USAGE] = settings.includeUsage
+            prefs[KEY_INCLUDE_ENV_TIME] = settings.includeEnvTime
+            prefs[KEY_HISTORY_IMAGE_TURNS] = settings.historyImageTurns
+            if (settings.imageSearchModelsRaw.isBlank()) {
+                prefs.remove(KEY_IMAGE_SEARCH_MODELS)
+            } else {
+                prefs[KEY_IMAGE_SEARCH_MODELS] = settings.imageSearchModelsRaw
+            }
+            prefs[KEY_THEME_MODE] = settings.themeMode.name
+            prefs[KEY_THEME_FAMILY] = settings.themeFamily.name
+        }
+    }
+
+    /**
      * 保存整张角色表 + 激活角色（角色管理页用）。
      * 删到空表时不合法：调用方必须至少保留一张（UI 侧拦截）。
      */

@@ -24,12 +24,14 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -65,6 +67,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -72,6 +75,7 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.zcw.chatai.R
 import com.zcw.chatai.data.model.AttachmentKind
 import com.zcw.chatai.data.model.Role
 import com.zcw.chatai.ui.md.LocalPreviewOpener
@@ -92,6 +96,10 @@ fun ChatScreen(
     onRetry: (String) -> Unit,
     onRegenerate: (String) -> Unit,
     onDeleteMessage: (String) -> Unit,
+    /** 从某条 AI 回复签出分支（复制该条及之前的消息到新会话）。 */
+    onBranch: (String) -> Unit,
+    /** 切到指定会话（分支横幅点回来源会话用）。 */
+    onSwitchConversation: (String) -> Unit,
     onNewConversation: () -> Unit,
     onClearConversation: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -128,6 +136,8 @@ fun ChatScreen(
     var overflowOpen by remember { mutableStateOf(false) }
     var attachOpen by remember { mutableStateOf(false) }
     var confirmResend by remember { mutableStateOf(false) }
+    // 分支确认：点的是哪条 AI 回复，确认后才真的复制（破坏性小但不可逆，值得问一次）。
+    var branchTarget by remember { mutableStateOf<ChatMessageItem?>(null) }
 
     // 只有聊天主界面可见、且没有被任何浮层遮挡时才允许唤键盘：
     // 设置页 / 会话列表 / 模型选择（上层标志）与附件面板 / 溢出菜单 / 消息操作 / 图片预览（本地浮层）一律不唤醒。
@@ -135,7 +145,7 @@ fun ChatScreen(
     val focusAllowedNow = rememberUpdatedState(
         composerFocusAllowed && !attachOpen && !overflowOpen &&
         actionTarget == null && previewTarget == null && documentTarget == null && previewPage == null &&
-            editDraft == null && !confirmResend,
+            editDraft == null && !confirmResend && branchTarget == null,
     )
     // 聚焦成功才唤键盘：requestFocus 失败（节点已移除）时不弹，避免键盘飘到别的界面上。
     fun focusComposerIfAllowed() {
@@ -336,6 +346,15 @@ fun ChatScreen(
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
                     val groups = MessageGroups.of(messages)
+                    // 分支会话的说明条：列表最上面一行，点一下回到来源会话。
+                    state.branchParentId?.let { parentId ->
+                        item(key = "branch-header") {
+                            BranchHeader(
+                                parentTitle = state.branchParentTitle,
+                                onClick = { onSwitchConversation(parentId) },
+                            )
+                        }
+                    }
                     itemsIndexed(groups, key = { _, group -> group.key }) { index, group ->
                         val previous = groups.getOrNull(index - 1)
                         val turnGap = if (previous != null && (previous is MessageGroup.User) != (group is MessageGroup.User)) {
@@ -379,6 +398,7 @@ fun ChatScreen(
                                     onCopy = { clipboard.copy(it.content) },
                                     onRegenerate = { regenerateKeepingAlive(it.id) },
                                     onDelete = { onDeleteMessage(it.id) },
+                                    onBranch = { branchTarget = it },
                                     onContinue = { continueKeepingAlive() },
                                 )
                             }
@@ -554,6 +574,32 @@ fun ChatScreen(
         )
     }
 
+    // 分支确认：复制是不可逆的（新会话会多出一份消息与附件），先问一次。
+    val branching = branchTarget
+    if (branching != null) {
+        AlertDialog(
+            onDismissRequest = { branchTarget = null },
+            title = { Text("从此处创建分支？") },
+            text = {
+                Text(
+                    "会把这条 AI 回复以及它之前的全部聊天记录复制到一个新的分支会话，" +
+                        "并切换过去继续对话。附件也会复制一份，原会话不受影响。",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        branchTarget = null
+                        onBranch(branching.id)
+                    },
+                ) { Text("创建分支") }
+            },
+            dismissButton = {
+                TextButton(onClick = { branchTarget = null }) { Text("取消") }
+            },
+        )
+    }
+
     if (overflowOpen) {
         ChatOverflowSheet(
             onDismiss = { overflowOpen = false },
@@ -684,6 +730,44 @@ private fun createCaptureUri(context: android.content.Context): Uri? = try {
     FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
 } catch (t: Throwable) {
     null
+}
+
+/**
+ * 分支会话的说明条：告诉用户这条会话是从哪儿签出来的，点一下切回来源会话。
+ * 放在消息列表最上面（而不是浮在顶栏下方），避免和滚动内容抢位置。
+ */
+@Composable
+private fun BranchHeader(parentTitle: String?, onClick: () -> Unit) {
+    val colors = ChatTheme.colors
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 2.dp),
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(999.dp))
+                .background(colors.chipBackground)
+                .clickable(onClick = onClick)
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_branch),
+                contentDescription = null,
+                tint = scheme.onSurfaceVariant,
+                modifier = Modifier.size(14.dp),
+            )
+            Text(
+                text = "分支自「${parentTitle ?: "原会话"}」",
+                style = MaterialTheme.typography.labelSmall,
+                color = scheme.onSurfaceVariant,
+            )
+        }
+    }
 }
 
 @Composable

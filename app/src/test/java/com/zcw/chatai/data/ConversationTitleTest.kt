@@ -61,4 +61,28 @@ class ConversationTitleTest {
         assertEquals(81, preview.length)
         assertEquals("x".repeat(80) + "…", preview)
     }
+
+    @Test
+    fun branchedAppendsSuffix() {
+        assertEquals("方案对比 · 分支", ConversationTitle.branched("方案对比"))
+    }
+
+    /** 超长时先截源标题：后缀是「这是分支」的唯一线索，必须完整（总长仍 ≤ 24）。 */
+    @Test
+    fun branchedTruncatesSourceTitleButKeepsSuffix() {
+        val title = ConversationTitle.branched("x".repeat(40))
+        assertEquals("x".repeat(19) + " · 分支", title)
+        assertEquals(24, title.length)
+    }
+
+    @Test
+    fun branchedFallsBackWhenSourceTitleIsBlank() {
+        assertEquals("新对话 · 分支", ConversationTitle.branched("   "))
+        assertEquals("新对话 · 分支", ConversationTitle.branched(""))
+    }
+
+    @Test
+    fun branchedCollapsesWhitespaceLikeTitles() {
+        assertEquals("a b · 分支", ConversationTitle.branched("a\n\t b  "))
+    }
 }

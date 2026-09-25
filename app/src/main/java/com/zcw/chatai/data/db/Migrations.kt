@@ -84,3 +84,17 @@ val MIGRATION_5_6 = object : Migration(5, 6) {
         db.execSQL("UPDATE conversations SET persona_id = ''")
     }
 }
+
+/**
+ * v6 → v7：会话支持分支（从某条 AI 回复签出一个自包含的新会话）。
+ *
+ * - `conversations.parent_conversation_id`：分支的来源会话 id；空串 = 普通会话。
+ *   不需要 `UPDATE` 回填——`''` 本身就是「非分支」的合法取值，与 `provider_id` 不同
+ *   （那个必须回填是因为旧版本的语义是「全局唯一配置」，写死某个 id 会导致误判）。
+ * - 只做父子指针，不加 `branch_from_message_id`：树形展示只需要父指针。
+ */
+val MIGRATION_6_7 = object : Migration(6, 7) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE conversations ADD COLUMN parent_conversation_id TEXT NOT NULL DEFAULT ''")
+    }
+}

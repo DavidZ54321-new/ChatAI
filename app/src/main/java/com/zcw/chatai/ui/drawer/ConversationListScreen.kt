@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -21,6 +22,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -87,6 +89,11 @@ private const val DEFAULT_WINDOW_WIDTH_PX = 1080f
 fun ConversationListScreen(
     visible: Boolean,
     conversations: List<Conversation>,
+    /**
+     * 每条会话的下辖分支数。由调用方按**未过滤**的全量会话算好传进来：
+     * 用这里已经过滤过的 `conversations` 算，搜索时会让长按菜单里的「下辖分支」凭空消失。
+     */
+    branchCounts: Map<String, Int>,
     selectedId: String?,
     searchQuery: String,
     onSearchQueryChange: (String) -> Unit,
@@ -94,6 +101,8 @@ fun ConversationListScreen(
     onNew: () -> Unit,
     onRename: (String, String) -> Unit,
     onDelete: (String) -> Unit,
+    /** 打开某条会话的分支页（长按菜单里的「下辖分支」）。 */
+    onOpenBranches: (String) -> Unit,
     onOpenSettings: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
@@ -216,6 +225,8 @@ fun ConversationListScreen(
                 modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 16.dp, bottom = 6.dp),
             )
 
+            // 平铺：不再按父子缩进（层级交给分支页逐层查看），但保留「分支」标签，
+            // 并且父会话被删的孤儿分支也不会因此失去挂载点。
             LazyColumn(
                 modifier = Modifier.weight(1f),
                 // 底部留出「新对话」胶囊的高度，最后一条不会被盖住。
@@ -258,6 +269,16 @@ fun ConversationListScreen(
     val target = actionTarget
     if (target != null) {
         DarkSheet(onDismiss = { actionTarget = null }) {
+            // 只有真的有分支时才出现：没分支的会话点进去也是空页，不如不给入口。
+            branchCounts[target.id]?.takeIf { it > 0 }?.let { count ->
+                SheetAction(
+                    label = "下辖分支（$count）",
+                    onClick = {
+                        actionTarget = null
+                        onOpenBranches(target.id)
+                    },
+                )
+            }
             SheetAction(
                 label = "重命名",
                 onClick = {
@@ -355,6 +376,7 @@ private fun ConversationRow(
 ) {
     val colors = ChatTheme.colors
     val scheme = MaterialTheme.colorScheme
+    val isBranch = conversation.parentConversationId.isNotBlank()
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -375,6 +397,18 @@ private fun ConversationRow(
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (isBranch) {
+                    Text(
+                        text = ConversationTitle.BRANCH_SUFFIX,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(colors.chipBackground)
+                            .padding(horizontal = 6.dp, vertical = 1.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                }
                 Text(
                     text = conversation.title.ifBlank { ConversationTitle.FALLBACK },
                     style = MaterialTheme.typography.titleMedium,

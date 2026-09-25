@@ -18,6 +18,7 @@ fun ConversationEntity.toModel(): Conversation = Conversation(
     webSearchEnabled = webSearchEnabled,
     providerId = providerId,
     personaId = personaId,
+    parentConversationId = parentConversationId,
 )
 
 fun Conversation.toEntity(): ConversationEntity = ConversationEntity(
@@ -33,6 +34,7 @@ fun Conversation.toEntity(): ConversationEntity = ConversationEntity(
     webSearchEnabled = webSearchEnabled,
     providerId = providerId,
     personaId = personaId,
+    parentConversationId = parentConversationId,
 )
 
 fun MessageEntity.toModel(): Message = Message(

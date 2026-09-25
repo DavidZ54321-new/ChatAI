@@ -6,16 +6,19 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import com.zcw.chatai.data.BranchResult
 import com.zcw.chatai.data.ChatRepository
 import com.zcw.chatai.data.ConversationBinding
 import com.zcw.chatai.data.SendResult
 import com.zcw.chatai.data.StreamingMessage
+import com.zcw.chatai.data.backup.DataBackup
 import com.zcw.chatai.data.doc.DocumentLabel
 import com.zcw.chatai.data.media.AttachmentLimits
 import com.zcw.chatai.data.media.AttachmentStore
 import com.zcw.chatai.data.model.Attachment
 import com.zcw.chatai.data.model.AttachmentKind
 import com.zcw.chatai.data.model.Conversation
+import com.zcw.chatai.data.model.ConversationTitle
 import com.zcw.chatai.data.model.Message
 import com.zcw.chatai.data.model.MessageStatus
 import com.zcw.chatai.data.model.Role
@@ -50,6 +53,8 @@ class ChatViewModel(
     private val searchProviders: Map<String, WebSearchProvider> = emptyMap(),
     /** 按供应商 id 选图搜后端（可用性提示用）。 */
     private val imageProviders: Map<String, ImageSearchProvider> = emptyMap(),
+    /** 只有一件事用得上：覆盖式还原之后把选中的会话退回新对话（见 `init`）。 */
+    private val dataBackup: DataBackup,
 ) : ViewModel() {
 
     private val input = MutableStateFlow("")
@@ -154,7 +159,7 @@ class ChatViewModel(
         TurnSnapshot(streaming = streaming, busy = busy, videoUploads = uploads)
     }
 
-    val state: StateFlow<ChatUiState> = combine(
+    private val baseState: StateFlow<ChatUiState> = combine(
         conversationId,
         conversationFlow,
         messagesFlow,
@@ -162,6 +167,24 @@ class ChatViewModel(
         composerFlow,
     ) { id, conversation, messages, turn, composer ->
         buildState(id, conversation, messages, turn, composer)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatUiState())
+
+    /**
+     * 在 [baseState] 上叠加「这是谁的分支」：会话列表里既能读到当前会话的父指针，
+     * 也能顺带拿到父会话标题（顶部横幅要显示「分支自「X」」）。
+     * 单独再 combine 一路而不是塞进上面那 5 路，是为了不动已有的结构。
+     */
+    val state: StateFlow<ChatUiState> = combine(baseState, conversations) { base, all ->
+        // 只在父会话**仍然存在**时才给横幅：父被删之后留一个点进去是空壳的链接，不如不显示
+        //（那条分支在会话列表里仍带「分支」标签，来源信息不会丢）。
+        val parent = all.firstOrNull { it.id == base.conversationId }
+            ?.parentConversationId
+            ?.takeIf { it.isNotBlank() }
+            ?.let { parentId -> all.firstOrNull { it.id == parentId } }
+        base.copy(
+            branchParentId = parent?.id,
+            branchParentTitle = parent?.title?.ifBlank { ConversationTitle.FALLBACK },
+        )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatUiState())
 
     init {
@@ -175,6 +198,23 @@ class ChatViewModel(
                     }
                     repository.consumeError()
                 }
+            }
+        }
+        // 覆盖式还原可能把当前选中的会话换掉（新手机迁移时它必然不在还原结果里），
+        // 留着这个空壳的话用户一发言只会得到「会话不存在」。只有真的不在结果里才退回新对话，
+        // 同一台手机还原旧备份时选中项通常会保住，不该把用户踢走。
+        viewModelScope.launch {
+            dataBackup.imports.collect { completion ->
+                if (completion == null) return@collect
+                val current = conversationId.value ?: return@collect
+                if (current in completion.conversationIds) return@collect
+                // 待发附件与编辑草稿都挂在那个已经不存在的会话目录下，一起丢掉。
+                discardPending()
+                discardEditDraft()
+                pendingBinding.value = null
+                conversationId.value = null
+                // 待发附件是被无声删掉的，说一句，免得用户以为丢东西了。
+                notice.value = "原会话已不存在（数据已还原），已切换到新对话"
             }
         }
     }
@@ -344,6 +384,26 @@ class ChatViewModel(
     }
 
     fun deleteMessage(messageId: String) = repository.deleteMessage(messageId)
+
+    // ---------- 分支 ----------
+
+    /**
+     * 从某条 AI 回复签出分支：把该条及之前的消息复制到一个新会话，然后**切过去**继续对话
+     * （「签出」的语义；原会话一行不动，分支在列表里挂在它下面）。
+     */
+    fun branchConversation(messageId: String) {
+        val source = conversationId.value ?: return
+        viewModelScope.launch {
+            when (val result = repository.branchConversation(source, messageId)) {
+                is BranchResult.Created -> {
+                    selectConversation(result.conversationId)
+                    notice.value = "已从该回复签出分支"
+                }
+
+                is BranchResult.Rejected -> notice.value = result.reason
+            }
+        }
+    }
 
     // ---------- 编辑用户消息 ----------
 
@@ -861,11 +921,19 @@ class ChatViewModel(
             repository: ChatRepository,
             attachmentStore: AttachmentStore,
             settingsRepository: SettingsRepository,
+            dataBackup: DataBackup,
             searchProviders: Map<String, WebSearchProvider> = emptyMap(),
             imageProviders: Map<String, ImageSearchProvider> = emptyMap(),
         ): ViewModelProvider.Factory = viewModelFactory {
             initializer {
-                ChatViewModel(repository, attachmentStore, settingsRepository, searchProviders, imageProviders)
+                ChatViewModel(
+                    repository,
+                    attachmentStore,
+                    settingsRepository,
+                    searchProviders,
+                    imageProviders,
+                    dataBackup,
+                )
             }
         }
     }

@@ -94,6 +94,8 @@ fun AssistantTurnItem(
     onCopy: (ChatMessageItem) -> Unit,
     onRegenerate: (ChatMessageItem) -> Unit,
     onDelete: (ChatMessageItem) -> Unit,
+    /** 从这一条 AI 回复签出分支（复制该条及之前的消息到一个新会话）。 */
+    onBranch: (ChatMessageItem) -> Unit,
     onContinue: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
@@ -124,6 +126,7 @@ fun AssistantTurnItem(
                 MessageActions(
                     onCopy = { onCopy(lastAssistant) },
                     onRegenerate = { onRegenerate(lastAssistant) },
+                    onBranch = { onBranch(lastAssistant) },
                     onDelete = { onDelete(lastAssistant) },
                     meta = meta,
                 )
@@ -185,6 +188,7 @@ private fun AssistantStep(
 private fun MessageActions(
     onCopy: () -> Unit,
     onRegenerate: () -> Unit,
+    onBranch: () -> Unit,
     onDelete: () -> Unit,
     meta: String?,
     modifier: Modifier = Modifier,
@@ -194,6 +198,11 @@ private fun MessageActions(
             contentDescription = "复制",
             onClick = onCopy,
             painter = painterResource(R.drawable.ic_copy),
+        )
+        IconActionButton(
+            contentDescription = "创建分支",
+            onClick = onBranch,
+            painter = painterResource(R.drawable.ic_branch),
         )
         IconActionButton(
             contentDescription = "重新生成",

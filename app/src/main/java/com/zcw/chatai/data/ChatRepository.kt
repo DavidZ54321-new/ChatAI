@@ -4,6 +4,7 @@ import androidx.room.withTransaction
 import com.zcw.chatai.data.ai.AgentLoop
 import com.zcw.chatai.data.ai.AttachmentPrompt
 import com.zcw.chatai.data.ai.AttachmentRetention
+import com.zcw.chatai.data.ai.BranchCopy
 import com.zcw.chatai.data.ai.ContextBuilder
 import com.zcw.chatai.data.ai.DsmlStrip
 import com.zcw.chatai.data.ai.EnvNote
@@ -100,6 +101,13 @@ sealed interface SendResult {
     data object Busy : SendResult
 
     data class Rejected(val reason: String) : SendResult
+}
+
+/** 从某条 AI 回复签出分支的结果。 */
+sealed interface BranchResult {
+    data class Created(val conversationId: String) : BranchResult
+
+    data class Rejected(val reason: String) : BranchResult
 }
 
 /** 后台失败：带会话 id，UI 只显示给对应会话，不跨会话打扰。 */
@@ -326,6 +334,122 @@ class ChatRepository(
             }.onFailure { reportError(conversationId, it, "删除消息失败") }
         }
     }
+
+    // ---------- 分支 ----------
+
+    /**
+     * 从某条 AI 回复签出一个分支：把**该条及之前**的消息连同附件文件复制到一个新会话。
+     *
+     * - 新会话自包含（附件是复制出来的独立文件），所以删/清空原会话不会影响分支；
+     * - 新会话挂在原会话下方（`parent_conversation_id`），只在会话列表里做缩进展示，
+     *   没有级联删除语义——原会话被删时分支提升为根；
+     * - 复制规则（工具配对、过滤空行、seq 重排）见 [BranchCopy]。
+     */
+    suspend fun branchConversation(sourceConversationId: String, messageId: String): BranchResult {
+        // 防御：正常路径下按钮在这一回合生成期间不显示（见 `MessageAssistantTurnItem` 的门控）。
+        if (turns.busy.value.contains(sourceConversationId)) {
+            return BranchResult.Rejected("正在生成回答，请稍后再试")
+        }
+        // 整个流程都在 try 里：事务前的几次读也可能抛，不能让异常逃出调用方的
+        // `viewModelScope`（会变成未捕获异常）——用户动作一律给可读结果。
+        var branchId: String? = null
+        try {
+            val source = db.conversationDao().getById(sourceConversationId)
+                ?: return BranchResult.Rejected("会话不存在")
+            val message = db.messageDao().getById(messageId)?.toModel()
+                ?: return BranchResult.Rejected("消息不存在")
+            if (message.conversationId != sourceConversationId) {
+                return BranchResult.Rejected("这条消息不属于当前会话")
+            }
+            if (message.role != Role.ASSISTANT) {
+                return BranchResult.Rejected("只能从 AI 回复创建分支")
+            }
+            val prefix = BranchCopy.prefix(
+                db.messageDao().getByConversation(sourceConversationId).map { it.toModel() },
+                message.seq,
+            )
+            if (prefix.isEmpty()) return BranchResult.Rejected("这条回复之前没有可复制的消息")
+
+            val newBranchId = newId()
+            branchId = newBranchId
+            // 附件先落盘：分支要有自己的文件，共享原路径会让「删原会话」把分支的图一起带走。
+            val copied = attachmentStore.copyToConversation(
+                newBranchId,
+                prefix.flatMap { it.attachments },
+            )
+            val timestamp = nowMs()
+            db.withTransaction {
+                db.conversationDao().upsert(
+                    ConversationEntity(
+                        id = newBranchId,
+                        title = ConversationTitle.branched(source.title),
+                        model = source.model,
+                        // system_prompt 是死列（v6 起不再读取），分支同样不写。
+                        systemPrompt = null,
+                        createdAt = timestamp,
+                        updatedAt = timestamp,
+                        lastMessagePreview = "",
+                        messageCount = 0,
+                        // 分支不继承置顶：它是新会话，不该顶掉原来的位置。
+                        isPinned = false,
+                        webSearchEnabled = source.webSearchEnabled,
+                        providerId = source.providerId,
+                        personaId = source.personaId,
+                        parentConversationId = sourceConversationId,
+                    ),
+                )
+                db.messageDao().insertAll(prefix.map { item -> item.toBranchEntity(newBranchId, copied) })
+            }
+        } catch (cancelled: CancellationException) {
+            // 取消不是失败：清掉刚复制的文件（用 NonCancellable，已取消的协程里才能跑完），
+            // 再把取消原样抛出去，别让调用方以为分支建好了。
+            rollbackBranch(branchId)
+            throw cancelled
+        } catch (t: Throwable) {
+            rollbackBranch(branchId)
+            Log.e(TAG, "创建分支失败", t)
+            return BranchResult.Rejected(t.message?.takeIf { it.isNotBlank() } ?: "创建分支失败")
+        }
+        val created = branchId ?: return BranchResult.Rejected("创建分支失败")
+        // 摘要/条数/updatedAt 是派生数据：刷新失败不该把已经落库的分支判成失败。
+        runCatching { refreshSummary(created) }
+            .onFailure { Log.w(TAG, "分支摘要刷新失败", it) }
+        return BranchResult.Created(created)
+    }
+
+    /** 分支没落库时清掉刚复制出来的附件目录（漏了也会被冷启动的孤儿清理兜底）。 */
+    private suspend fun rollbackBranch(branchId: String?) {
+        if (branchId == null) return
+        withContext(NonCancellable) { attachmentStore.deleteConversation(branchId) }
+    }
+
+    /** 复制一条消息到分支会话：换 id、指向新会话、附件换成复制好的那一份。 */
+    private fun Message.toBranchEntity(
+        conversationId: String,
+        copied: Map<String, Attachment>,
+    ): MessageEntity = MessageEntity(
+        id = newId(),
+        conversationId = conversationId,
+        role = role.name,
+        content = content,
+        status = status.name,
+        errorMessage = errorMessage,
+        reasoningContent = reasoningContent,
+        seq = seq,
+        model = model,
+        promptTokens = promptTokens,
+        completionTokens = completionTokens,
+        reasoningTokens = reasoningTokens,
+        cachedTokens = cachedTokens,
+        reasoningMs = reasoningMs,
+        // 文件缺失的附件直接丢掉（与备份导入同一套口径：宁可少一条，不留永久「不可用」）。
+        attachments = AttachmentCodec.encode(attachments.mapNotNull { copied[it.id] }),
+        toolCalls = ToolCallCodec.encodeCalls(toolCalls),
+        toolCallId = toolCallId,
+        toolResult = ToolCallCodec.encodeResult(toolResult),
+        createdAt = createdAt,
+        updatedAt = updatedAt,
+    )
 
     // ---------- 发送 / 重新生成 ----------
 

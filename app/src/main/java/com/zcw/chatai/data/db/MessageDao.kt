@@ -94,4 +94,15 @@ interface MessageDao {
     /** 所有附件元数据（JSON），用于孤儿文件清理。 */
     @Query("SELECT attachments FROM messages WHERE attachments IS NOT NULL")
     suspend fun getAllAttachmentJson(): List<String>
+
+    // ---------- 备份 / 还原 ----------
+
+    @Query("SELECT * FROM messages")
+    suspend fun getAll(): List<MessageEntity>
+
+    @Query("DELETE FROM messages")
+    suspend fun deleteAll()
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(messages: List<MessageEntity>)
 }

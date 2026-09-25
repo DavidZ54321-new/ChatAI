@@ -118,6 +118,15 @@ object RemoteImages {
     internal fun memoryCacheBytes(maxMemoryBytes: Long): Int =
         (maxMemoryBytes / 8).coerceIn(8L * 1024 * 1024, 64L * 1024 * 1024).toInt()
 
+    /**
+     * 备份还原之后调用：附件路径可能被复用（同 id 换成另一张图、同 URL 换了内容），
+     * 内存位图与磁盘响应缓存都必须丢掉，否则界面还显示还原前的图。
+     */
+    fun clear() {
+        cache.evictAll()
+        runCatching { client.cache?.evictAll() }
+    }
+
     fun peek(url: String, maxEdge: Int): Bitmap? = cache.get(key(url, maxEdge))
 
     suspend fun load(url: String, maxEdge: Int): Bitmap? = withContext(Dispatchers.IO) {

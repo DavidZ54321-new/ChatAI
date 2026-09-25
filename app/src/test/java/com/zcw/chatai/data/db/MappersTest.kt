@@ -240,4 +240,12 @@ class MappersTest {
         assertEquals(bound, bound.toEntity().toModel())
         assertEquals("", conversation.toEntity().personaId)
     }
+
+    @Test
+    fun roundTripsBranchParentConversation() {
+        val branch = conversation.copy(parentConversationId = "c0")
+        assertEquals(branch, branch.toEntity().toModel())
+        // 普通会话默认空串（不是 null）：`parent_conversation_id` 是 NOT NULL DEFAULT ''。
+        assertEquals("", conversation.toEntity().parentConversationId)
+    }
 }

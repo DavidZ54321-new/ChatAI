@@ -44,4 +44,10 @@ data class ConversationEntity(
      */
     @ColumnInfo(name = "persona_id", defaultValue = "")
     val personaId: String = "",
+    /**
+     * 分支的来源会话 id；空串 = 普通会话（见 `MIGRATION_6_7`）。
+     * 只用于列表里的父子嵌套，没有级联语义：父会话被删时分支提升为根，不会跟着消失。
+     */
+    @ColumnInfo(name = "parent_conversation_id", defaultValue = "")
+    val parentConversationId: String = "",
 )

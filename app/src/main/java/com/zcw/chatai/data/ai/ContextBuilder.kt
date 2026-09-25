@@ -34,19 +34,27 @@ object ContextBuilder {
     const val TOOL_EMPTY = "[工具无返回内容]"
 
     /**
-     * 出站上下文里**模型真正能看到**的消息窗口。
+     * 「有效消息」的过滤谓词（不含窗口截断）：丢掉 SYSTEM 行、STREAMING 空壳与空行。
      *
-     * 图片编号/来源标注与 `find_similar_images` 的 `image_index` 必须基于同一份窗口
-     * （`ToolImageInventory` 的唯一真相源），否则长会话截断后编号会错位。
+     * 单独暴露是因为**对话分支**复制前缀时要用同一套规则——不然会把正在生成中的
+     * STREAMING 空壳、或已经被删空的占位行复制进新会话。
      */
-    fun usableHistory(history: List<Message>): List<Message> = history
+    fun usable(messages: List<Message>): List<Message> = messages
         .filter { it.role == Role.USER || it.role == Role.ASSISTANT || it.role == Role.TOOL }
         .filter { it.status != MessageStatus.STREAMING }
         .filter {
             it.content.isNotBlank() || it.attachments.isNotEmpty() ||
                 it.toolCalls.isNotEmpty() || it.toolCallId != null
         }
-        .takeLast(MAX_MESSAGES)
+
+    /**
+     * 出站上下文里**模型真正能看到**的消息窗口（[usable] + 最近 [MAX_MESSAGES] 条）。
+     *
+     * 图片编号/来源标注与 `find_similar_images` 的 `image_index` 必须基于同一份窗口
+     * （`ToolImageInventory` 的唯一真相源），否则长会话截断后编号会错位。
+     */
+    fun usableHistory(history: List<Message>): List<Message> =
+        usable(history).takeLast(MAX_MESSAGES)
 
     fun build(
         history: List<Message>,

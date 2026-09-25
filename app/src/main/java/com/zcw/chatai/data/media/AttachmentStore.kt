@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Log
+import com.zcw.chatai.data.backup.FileSwap
 import com.zcw.chatai.data.doc.DocumentException
 import com.zcw.chatai.data.doc.DocumentKind
 import com.zcw.chatai.data.doc.DocumentParser
@@ -397,6 +398,73 @@ class AttachmentStore(private val context: Context) {
 
     fun deleteConversation(conversationId: String) {
         runCatching { File(root, conversationId).deleteRecursively() }
+    }
+
+    /** 附件目录根：备份导出要整棵树遍历，不是逐个附件走元数据。 */
+    fun rootDir(): File = root
+
+    /**
+     * 把一批附件复制到目标会话目录（主文件 + 缩略图 + 文档 sidecar 一起搬），
+     * 返回 `源附件 id → 新附件`（路径已重写）；源文件不存在的条目直接跳过。
+     *
+     * 用于「对话分支」：分支会话必须自包含——共享原路径的话，
+     * 删父会话（`deleteConversation` 递归删目录）会把分支的文件一起带走。
+     */
+    suspend fun copyToConversation(
+        targetConversationId: String,
+        attachments: List<Attachment>,
+    ): Map<String, Attachment> = withContext(Dispatchers.IO) {
+        val copied = LinkedHashMap<String, Attachment>()
+        for (attachment in attachments) {
+            val source = fileOf(attachment)
+            if (!source.isFile) continue
+            val targetRelative = "$DIR/$targetConversationId/${source.name}"
+            val target = File(context.filesDir, targetRelative)
+            try {
+                target.parentFile?.mkdirs()
+                source.copyTo(target, overwrite = true)
+                val sourceThumb = thumbnailOf(attachment)
+                if (sourceThumb.isFile) {
+                    File(context.filesDir, ImageCodec.thumbRelativePath(targetRelative))
+                        .writeBytes(sourceThumb.readBytes())
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "附件复制失败：${attachment.relativePath}", t)
+                target.delete()
+                continue
+            }
+            val targetExtracted = attachment.extractedPath?.let { path ->
+                val sourceSidecar = File(context.filesDir, path)
+                if (!sourceSidecar.isFile) {
+                    null
+                } else {
+                    val relative = "$DIR/$targetConversationId/${sourceSidecar.name}"
+                    runCatching {
+                        File(context.filesDir, relative).writeBytes(sourceSidecar.readBytes())
+                    }.getOrNull()?.let { relative }
+                }
+            }
+            copied[attachment.id] = attachment.copy(
+                relativePath = targetRelative,
+                extractedPath = targetExtracted,
+            )
+        }
+        copied
+    }
+
+    /**
+     * 覆盖式还原：把 [stagingRoot] 下的 `attachments/`（备份解压的落地目录）
+     * 顶替当前的附件根目录。真正的顶替规则在 `FileSwap`——它保证任何一步失败都不会
+     * 让旧目录先被删掉（导入是脱离界面生命周期跑的，被杀在这个窗口里会丢光附件）。
+     */
+    suspend fun swapIn(stagingRoot: File): Boolean = withContext(Dispatchers.IO) {
+        FileSwap.swapIn(root, File(stagingRoot, DIR))
+    }
+
+    /** 清空全部附件：覆盖式还原遇到「备份不含附件」时，用它清掉本机旧文件。 */
+    suspend fun clearAll() = withContext(Dispatchers.IO) {
+        runCatching { root.deleteRecursively() }
+        Unit
     }
 
     /**

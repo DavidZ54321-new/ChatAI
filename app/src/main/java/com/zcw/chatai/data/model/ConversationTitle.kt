@@ -49,4 +49,18 @@ object ConversationTitle {
             collapsed
         }
     }
+
+    /** 分支标题的后缀：列表里一眼看出这是从哪儿签出来的分支。 */
+    const val BRANCH_SUFFIX = "分支"
+
+    /**
+     * 分支会话的标题：源标题 + 「· 分支」后缀。超长时先截源标题——后缀是识别分支的唯一线索，
+     * 必须完整（总长仍不超过 [MAX_LENGTH]）。
+     */
+    fun branched(source: String): String {
+        val base = collapse(source).ifEmpty { FALLBACK }
+        val suffix = " · $BRANCH_SUFFIX"
+        val room = (MAX_LENGTH - suffix.length).coerceAtLeast(1)
+        return (if (base.length > room) base.take(room) else base) + suffix
+    }
 }

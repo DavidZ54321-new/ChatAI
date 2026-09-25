@@ -5,6 +5,7 @@ import android.content.ComponentCallbacks2
 import android.content.pm.ApplicationInfo
 import android.content.res.Configuration
 import com.zcw.chatai.data.ChatRepository
+import com.zcw.chatai.data.backup.DataBackup
 import com.zcw.chatai.data.db.AppDatabase
 import com.zcw.chatai.data.media.AttachmentStore
 import com.zcw.chatai.data.media.VideoUploadCoordinator
@@ -83,6 +84,20 @@ class ChatAiApp : Application() {
         )
     }
 
+    /** 数据备份/还原（zip）。跑在自己的 scope 上，导出/导入过程中退到后台也不中断。 */
+    val dataBackup: DataBackup by lazy {
+        DataBackup(
+            context = this,
+            db = database,
+            settingsRepository = settingsRepository,
+            attachmentStore = attachmentStore,
+            // 有回合在跑时拒绝导入：正在写的消息行会被覆盖。
+            busy = { chatRepository.busyConversations.value.isNotEmpty() },
+            // 附件路径可能被复用（同 id 换成另一张图），还原后必须丢掉旧位图缓存。
+            onImported = { RemoteImages.clear() },
+        )
+    }
+
     override fun onCreate() {
         super.onCreate()
         RemoteImages.install(this)
@@ -110,6 +125,8 @@ class ChatAiApp : Application() {
         )
         appScope.launch {
             runCatching { chatRepository.sweepOrphanAttachments() }
+            // 上次导入中途被杀会留下解压目录；它不在 attachments/ 下，上面那次清理扫不到。
+            runCatching { dataBackup.clearStaleStaging() }
         }
     }
 }

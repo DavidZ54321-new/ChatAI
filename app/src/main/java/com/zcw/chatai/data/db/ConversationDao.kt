@@ -58,4 +58,15 @@ interface ConversationDao {
 
     @Query("DELETE FROM conversations WHERE id = :id")
     suspend fun delete(id: String)
+
+    // ---------- 备份 / 还原 ----------
+
+    @Query("SELECT * FROM conversations")
+    suspend fun getAll(): List<ConversationEntity>
+
+    @Query("DELETE FROM conversations")
+    suspend fun deleteAll()
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(conversations: List<ConversationEntity>)
 }
