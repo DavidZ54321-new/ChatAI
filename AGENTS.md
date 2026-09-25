@@ -484,19 +484,33 @@ session caches（已在 `.gitignore` 里补上 `.kotlin/`）。`app/build/`, `bu
 ## Pushing to GitHub（凭据管理器弹窗的教训，2026-09-24）
 
 远程是 `origin` → `https://github.com/DavidZ54321-new/ChatAI.git`（HTTPS）。
-Windows 凭据管理器里**已存** `DavidZ54321-new` 的 github.com / gitcode.com 条目
-（`git credential fill` 可静默取到 username + 40 位 PAT，API 实测有效）。
+Windows 凭据管理器里有多条 github.com 条目、账号都是 `DavidZ54321-new`——但**能不能推要看是哪一条**。
 
 - **不要裸 `git push`**：`credential.helper=manager`（GCM）在 push 时会弹交互式
   OAuth 登录窗口，而且**每失败/重试一次就再弹一次**——实测把用户点到手酸。
   Agent 里推送一律走零弹窗配方（见下）；也别指望 `GCM_INTERACTIVE=never git push`
   单独就够——没取到凭据时它直接 `fatal: Cannot prompt` 退出，必须自己喂凭据。
-- **零弹窗配方**（已验证可推）：`git credential fill` 读出 PAT → 写一次性
+- **零弹窗配方**（已验证可推）：`git credential fill` 读出凭据 → 写一次性
   `GIT_ASKPASS` 脚本（按 prompt 回显 username/password，用完 `rm`）→
   `GIT_ASKPASS=… GCM_INTERACTIVE=never GIT_TERMINAL_PROMPT=0 git -c credential.helper= push -u origin master`。
   `-c credential.helper=` 是关键：把 GCM 从本次命令里摘掉，它就没有弹窗的机会。
-- **环境里的 `GITHUB_TOKEN` 是别的账号**（`OrganCanvasGlass`，对本仓库只有 pull），
-  推送/建仓别用它；要操作 `DavidZ54321-new` 就用凭据管理器里那条 PAT
-  （`curl -u "DavidZ54321-new:$PAT"` 建仓/调 API 均可，PAT 不落文件、不打日志）。
-- `git credential fill` 的输出**含明文 PAT**：管道给 `grep`/`sed` 只取
+- **哪条凭据能推（2026-09-25 更正：之前「`git credential fill` 取到的 40 位 PAT 即可推」已过时）**：
+  - 只给 `protocol/host` 问 `git credential fill`，拿到的是**只读**的 `github_pat_…`
+    （93 位 fine-grained）：认证没问题（`GET /user` = `DavidZ54321-new`），但推送必然
+    `403 Permission to <owner>/<repo>.git denied to <owner>.`——那是**权限不足**，不是认证失败。
+  - 能推的是 `gho_…`（40 位 **OAuth**，scopes `gist repo workflow`）。它不在默认匹配结果里：
+    在 `git credential fill` 的请求里**带上 `username=<另一个名字>`**（如 `OrganCanvasGlass`）
+    就能把非默认条目翻出来（管理器按 username 匹配不上时会回落到另一条），
+    之后照上面的配方喂给 `GIT_ASKPASS` 即可——实测 `df89e72..cacb430` 推成功。
+  - 判断「手上这条能不能推」的只读探针：`GET /repos/<o>/<r>/collaborators` 或
+    `GET /repos/<o>/<r>/branches/<b>/protection` 返回 **403** 就是没有写/admin 权限（换一条）。
+    **别**用 `GET /repos/<o>/<r>` 里的 `permissions.push` 判断：它反映的是**账号**对该仓库的权限，
+    令牌只读时照样是 `true`。
+  - `gh auth status` 里 `DavidZ54321-new` 那条显示的也是那个只读 fine-grained 令牌
+    （与凭据管理器那条指纹相同），所以「先切 gh 账号再推」没用。
+- **环境里的 `GITHUB_TOKEN` 是别的账号**（`OrganCanvasGlass`，2026-09-25 复测
+  `permissions = {push:false, pull:true}`），推送/建仓别用它；要操作 `DavidZ54321-new`
+  就用凭据管理器里那条可推的 OAuth 令牌（`curl -u "DavidZ54321-new:$TOKEN"` 建仓/调 API 均可，
+  令牌不落文件、不打日志）。
+- `git credential fill` 的输出**含明文令牌**：管道给 `grep`/`sed` 只取
   username/长度，绝不整段回显到日志里。
