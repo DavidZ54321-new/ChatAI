@@ -57,4 +57,12 @@ class ChatListScrollTest {
         assertFalse(canFollowScroll(lastVisibleIndex = null, totalItems = 5, canScrollForward = true))
         assertFalse(canFollowScroll(lastVisibleIndex = 0, totalItems = 0, canScrollForward = true))
     }
+
+    @Test
+    fun anchorJumpOnlyWhenLastItemIsNotYetVisible() {
+        assertTrue(needsScrollToLastItem(lastVisibleIndex = null, totalItems = 5))
+        assertTrue(needsScrollToLastItem(lastVisibleIndex = 2, totalItems = 5))
+        assertFalse(needsScrollToLastItem(lastVisibleIndex = 4, totalItems = 5))
+        assertFalse(needsScrollToLastItem(lastVisibleIndex = null, totalItems = 0))
+    }
 }

@@ -2,6 +2,8 @@ package com.zcw.chatai.ui.chat
 
 import com.zcw.chatai.data.model.Attachment
 import com.zcw.chatai.data.model.AttachmentKind
+import com.zcw.chatai.data.model.Conversation
+import com.zcw.chatai.data.model.ConversationTitle
 import com.zcw.chatai.data.model.MessageStatus
 import com.zcw.chatai.data.model.Role
 import com.zcw.chatai.data.model.ToolResult
@@ -130,10 +132,26 @@ data class ChatUiState(
     val audioInputAvailable: Boolean = false,
     /** 视频上传/解析中的一行提示；null 表示没有进行中的视频处理。 */
     val videoUploadNotice: String? = null,
-    /** 当前会话是分支时，它的来源会话 id 与标题（用于顶部的「分支自…」横幅）；非分支为 null。 */
-    val branchParentId: String? = null,
-    val branchParentTitle: String? = null,
 ) {
     val canSend: Boolean
         get() = (input.isNotBlank() || pending.isNotEmpty()) && !isTurnActive
+}
+
+/**
+ * 分支横幅要的那一个事实：来源会话还在，以及它的标题。
+ * 和 [ChatUiState] 分开，是为了会话列表更新时不要拿整份消息正文做判等。
+ */
+data class BranchParent(val id: String, val title: String)
+
+/**
+ * 当前会话的父指针能在会话列表里对上一条仍存在的会话时，才给出横幅。
+ * 父被删之后不留一个点进去是空壳的链接（列表里的「分支」标签仍在）。
+ */
+fun resolveBranchParent(conversation: Conversation?, all: List<Conversation>): BranchParent? {
+    val parentId = conversation?.parentConversationId?.takeIf { it.isNotBlank() } ?: return null
+    val parent = all.firstOrNull { it.id == parentId } ?: return null
+    return BranchParent(
+        id = parent.id,
+        title = parent.title.ifBlank { ConversationTitle.FALLBACK },
+    )
 }

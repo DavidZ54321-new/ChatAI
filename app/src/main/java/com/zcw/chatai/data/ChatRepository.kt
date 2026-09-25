@@ -68,6 +68,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -216,7 +218,11 @@ class ChatRepository(
         db.conversationDao().observeById(id).map { it?.toModel() }
 
     fun observeMessages(conversationId: String): Flow<List<Message>> =
-        db.messageDao().observeByConversation(conversationId).map { list -> list.map { it.toModel() } }
+        db.messageDao().observeByConversation(conversationId)
+            .conflate()
+            // 附件 / 工具结果的 JSON 解码按整表走。放在主线程上时，打开一条复制来的长分支会堵住界面。
+            .map { list -> list.map { it.toModel() } }
+            .flowOn(Dispatchers.Default)
 
     // ---------- 会话 ----------
 

@@ -18,7 +18,6 @@ import com.zcw.chatai.data.media.AttachmentStore
 import com.zcw.chatai.data.model.Attachment
 import com.zcw.chatai.data.model.AttachmentKind
 import com.zcw.chatai.data.model.Conversation
-import com.zcw.chatai.data.model.ConversationTitle
 import com.zcw.chatai.data.model.Message
 import com.zcw.chatai.data.model.MessageStatus
 import com.zcw.chatai.data.model.Role
@@ -159,7 +158,7 @@ class ChatViewModel(
         TurnSnapshot(streaming = streaming, busy = busy, videoUploads = uploads)
     }
 
-    private val baseState: StateFlow<ChatUiState> = combine(
+    val state: StateFlow<ChatUiState> = combine(
         conversationId,
         conversationFlow,
         messagesFlow,
@@ -170,22 +169,12 @@ class ChatViewModel(
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatUiState())
 
     /**
-     * 在 [baseState] 上叠加「这是谁的分支」：会话列表里既能读到当前会话的父指针，
-     * 也能顺带拿到父会话标题（顶部横幅要显示「分支自「X」」）。
-     * 单独再 combine 一路而不是塞进上面那 5 路，是为了不动已有的结构。
+     * 分支横幅单独一条流，值只有「父 id + 标题」或 null。
+     * 不并进 [state]：会话列表里任何一条的预览/时间变化都不该拿当前消息正文做判等。
      */
-    val state: StateFlow<ChatUiState> = combine(baseState, conversations) { base, all ->
-        // 只在父会话**仍然存在**时才给横幅：父被删之后留一个点进去是空壳的链接，不如不显示
-        //（那条分支在会话列表里仍带「分支」标签，来源信息不会丢）。
-        val parent = all.firstOrNull { it.id == base.conversationId }
-            ?.parentConversationId
-            ?.takeIf { it.isNotBlank() }
-            ?.let { parentId -> all.firstOrNull { it.id == parentId } }
-        base.copy(
-            branchParentId = parent?.id,
-            branchParentTitle = parent?.title?.ifBlank { ConversationTitle.FALLBACK },
-        )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatUiState())
+    val branchParent: StateFlow<BranchParent?> = combine(conversationFlow, conversations) { conversation, all ->
+        resolveBranchParent(conversation, all)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     init {
         viewModelScope.launch {

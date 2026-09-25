@@ -54,31 +54,44 @@ private const val COMPOSE_SETTLE_MS = 64L
 private const val FOLLOW_CATCHUP_PX = 1 shl 24
 
 /**
+ * 末项还没进视口时才需要 `scrollToItem`。已经看见末项就只补溢出：
+ * 再钉一次会把末项顶到视口顶，长 Markdown 跟着整段重测。
+ */
+fun needsScrollToLastItem(lastVisibleIndex: Int?, totalItems: Int): Boolean {
+    if (totalItems <= 0) return false
+    return lastVisibleIndex == null || lastVisibleIndex < totalItems - 1
+}
+
+/**
  * **跳**到末尾：切会话 / 刚发出用户消息 / 点「回到底部」用——都是用户显式动作。
  *
- * `scrollToItem(末项)` 把列表钳到 maxScroll（真末尾），随后补一次可见末项的正向溢出，
- * 再等一拍让下一屏 Markdown 量完高（估高偏短会假到底，下一拍重试）。
+ * 末项还不可见时才 `scrollToItem`；已经看见末项就只补溢出。
+ * 估高偏矮时下一拍重试，直到到底或满 40 次。Markdown 解析是异步的，
+ * 两拍高度相同不等于已经量完，不能提前停。
  * 用户上滑松钉后 [stillPinned] 立刻停。
  *
- * 返回值 = 是否真的到达底部：定位门用它判断「这次定位算不算完成」，但**不在到底时也要露出列表**。
+ * 返回值 = 是否真的到达底部：定位门用它判断「这次定位算不算完成」，但没到底也要露出列表。
  */
 suspend fun LazyListState.jumpToEnd(stillPinned: () -> Boolean = { true }): Boolean {
     repeat(40) {
         if (!stillPinned()) return false
-        val lastIndex = layoutInfo.totalItemsCount - 1
+        val before = layoutInfo
+        val lastIndex = before.totalItemsCount - 1
         if (lastIndex < 0) {
             delay(COMPOSE_SETTLE_MS)
             return@repeat
         }
-        scrollToItem(lastIndex)
-        val last = layoutInfo.visibleItemsInfo.lastOrNull()
-        if (last != null) {
-            val overflow = bottomOverflow(last.offset, last.size, layoutInfo.viewportEndOffset)
+        val visibleLast = before.visibleItemsInfo.lastOrNull()
+        if (needsScrollToLastItem(visibleLast?.index, before.totalItemsCount)) {
+            scrollToItem(lastIndex)
+        } else if (visibleLast != null) {
+            val overflow = bottomOverflow(visibleLast.offset, visibleLast.size, before.viewportEndOffset)
             if (overflow > 0) scrollBy(overflow.toFloat())
         }
         delay(COMPOSE_SETTLE_MS)
-        val still = layoutInfo.visibleItemsInfo.lastOrNull()
-        if (isChatListAtBottom(still?.index, layoutInfo.totalItemsCount, canScrollForward)) return true
+        val after = layoutInfo
+        val last = after.visibleItemsInfo.lastOrNull()
+        if (isChatListAtBottom(last?.index, after.totalItemsCount, canScrollForward)) return true
     }
     val last = layoutInfo.visibleItemsInfo.lastOrNull()
     return isChatListAtBottom(last?.index, layoutInfo.totalItemsCount, canScrollForward)

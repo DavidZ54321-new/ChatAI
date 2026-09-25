@@ -118,6 +118,8 @@ fun ChatScreen(
     autoFocusComposer: Boolean,
     onAutoFocusComposerConsumed: () -> Unit,
     composerFocusAllowed: Boolean,
+    /** 来源会话还在时非空；横幅单独传，不进 [ChatUiState]，避免会话列表更新牵动消息列表。 */
+    branchParent: BranchParent?,
     modifier: Modifier = Modifier,
 ) {
     val colors = ChatTheme.colors
@@ -209,6 +211,7 @@ fun ChatScreen(
     val bottomBand = ChatMetrics.bottomDissolve(windowHeight, composerDp + bottomInset + 10.dp)
 
     val messages = state.messages
+    val groups = remember(messages) { MessageGroups.of(messages) }
 
     val follow = rememberChatListFollow(
         listState = listState,
@@ -303,6 +306,36 @@ fun ChatScreen(
         captureUriText = null
     }
 
+    val retryAction = rememberUpdatedState<(String) -> Unit> { retryKeepingAlive(it) }
+    val regenerateAction = rememberUpdatedState<(String) -> Unit> { regenerateKeepingAlive(it) }
+    val continueAction = rememberUpdatedState { continueKeepingAlive() }
+    val deleteAction = rememberUpdatedState<(String) -> Unit> { onDeleteMessage(it) }
+    val editBegin = rememberUpdatedState<(String) -> Unit> { editActions.onBegin(it) }
+    // 回调带上消息本身，身份在这次组合里固定。用户气泡和助手回合都接同一批引用。
+    val onItemLongPress = remember { { message: ChatMessageItem -> actionTarget = message } }
+    val onItemClick = remember { { message: ChatMessageItem -> editBegin.value(message.id) } }
+    val onItemOpenImage = remember { { message: ChatMessageItem, tapped: MessageImage ->
+        if (tapped.kind == AttachmentKind.DOCUMENT) {
+            documentTarget = tapped
+        } else {
+            val index = AttachmentPreview.indexOf(message.images, tapped.id)
+            if (index >= 0) {
+                previewTarget = AttachmentPreviewTarget(
+                    images = AttachmentPreview.previewable(message.images),
+                    index = index,
+                )
+            }
+        }
+    } }
+    val onItemRetry = remember { { message: ChatMessageItem -> retryAction.value(message.id) } }
+    val onItemCopy = remember { { message: ChatMessageItem -> clipboard.copy(message.content) } }
+    val onItemRegenerate = remember { { message: ChatMessageItem -> regenerateAction.value(message.id) } }
+    val onItemDelete = remember { { message: ChatMessageItem -> deleteAction.value(message.id) } }
+    val onItemBranch = remember { { message: ChatMessageItem -> branchTarget = message } }
+    val onItemContinue = remember { { continueAction.value() } }
+    val lastAssistant = remember(messages) { messages.lastOrNull { it.role == Role.ASSISTANT } }
+    val lastAssistantMeta = lastAssistant?.let { metaOf(it) }
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -345,13 +378,12 @@ fun ChatScreen(
                     ),
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
-                    val groups = MessageGroups.of(messages)
                     // 分支会话的说明条：列表最上面一行，点一下回到来源会话。
-                    state.branchParentId?.let { parentId ->
+                    branchParent?.let { parent ->
                         item(key = "branch-header") {
                             BranchHeader(
-                                parentTitle = state.branchParentTitle,
-                                onClick = { onSwitchConversation(parentId) },
+                                parentTitle = parent.title,
+                                onClick = { onSwitchConversation(parent.id) },
                             )
                         }
                     }
@@ -366,23 +398,10 @@ fun ChatScreen(
                             when (group) {
                                 is MessageGroup.User -> UserMessageItem(
                                     message = group.items.single(),
-                                    onLongPress = { actionTarget = group.items.single() },
+                                    onLongPress = onItemLongPress,
                                     // 点气泡进编辑弹层；能不能编辑（生成中/非用户消息）由 VM 判。
-                                    onClick = { editActions.onBegin(group.items.single().id) },
-                                    onOpenImage = { tapped ->
-                                        if (tapped.kind == com.zcw.chatai.data.model.AttachmentKind.DOCUMENT) {
-                                            documentTarget = tapped
-                                        } else {
-                                            val images = group.items.single().images
-                                            val index = AttachmentPreview.indexOf(images, tapped.id)
-                                            if (index >= 0) {
-                                                previewTarget = AttachmentPreviewTarget(
-                                                    images = AttachmentPreview.previewable(images),
-                                                    index = index,
-                                                )
-                                            }
-                                        }
-                                    },
+                                    onClick = onItemClick,
+                                    onOpenImage = onItemOpenImage,
                                 )
 
                                 is MessageGroup.Assistant -> AssistantTurnItem(
@@ -390,16 +409,16 @@ fun ChatScreen(
                                     streamingMessageId = state.streamingMessageId,
                                     isCurrentTurn = state.isTurnActive && index == groups.lastIndex,
                                     onUserExpand = follow.unpin,
-                                    meta = state.messages.lastOrNull { it.role == Role.ASSISTANT }
+                                    meta = lastAssistant
                                         ?.takeIf { last -> group.items.any { it.id == last.id } }
-                                        ?.let { metaOf(it) },
-                                    onLongPress = { actionTarget = it },
-                                    onRetry = { retryKeepingAlive(it.id) },
-                                    onCopy = { clipboard.copy(it.content) },
-                                    onRegenerate = { regenerateKeepingAlive(it.id) },
-                                    onDelete = { onDeleteMessage(it.id) },
-                                    onBranch = { branchTarget = it },
-                                    onContinue = { continueKeepingAlive() },
+                                        ?.let { lastAssistantMeta },
+                                    onLongPress = onItemLongPress,
+                                    onRetry = onItemRetry,
+                                    onCopy = onItemCopy,
+                                    onRegenerate = onItemRegenerate,
+                                    onDelete = onItemDelete,
+                                    onBranch = onItemBranch,
+                                    onContinue = onItemContinue,
                                 )
                             }
                         }
@@ -448,14 +467,12 @@ fun ChatScreen(
             onOverflow = { overflowOpen = true },
             modifier = Modifier.align(Alignment.TopCenter),
         )
-        if (messages.isNotEmpty() && (!follow.following || !follow.atBottom)) {
-            ScrollToBottomButton(
-                onClick = follow.jumpToBottom,
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 16.dp, bottom = 170.dp),
-            )
-        }
+        ChatScrollToBottomButton(
+            follow = follow,
+            listState = listState,
+            enabled = messages.isNotEmpty(),
+            modifier = Modifier.align(Alignment.BottomEnd),
+        )
         Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)

@@ -40,6 +40,7 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
         ),
     )
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val branchParent by viewModel.branchParent.collectAsStateWithLifecycle()
     val conversations by viewModel.searchResults.collectAsStateWithLifecycle()
     // 分支页与「下辖分支（N）」都要用**未过滤**的全量会话：带搜索过滤的列表会让父子关系缺失
     //（树不完整，长按菜单里的入口也会凭空消失）。
@@ -116,6 +117,7 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
                 autoFocusComposer = autoFocusComposer,
                 onAutoFocusComposerConsumed = viewModel::consumeAutoFocusComposer,
                 composerFocusAllowed = chatSurfaceActive,
+                branchParent = branchParent,
             )
             if (showModelPicker) {
                 ModelPickerSheet(

@@ -1,7 +1,6 @@
 package com.zcw.chatai.ui.chat
 
 import androidx.compose.animation.animateContentSize
-import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -32,6 +31,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.zcw.chatai.R
+import com.zcw.chatai.data.ai.REASONING_PREVIEW_CHARS
 import com.zcw.chatai.data.ai.collapseReasoningWhitespace
 import com.zcw.chatai.data.ai.formatReasoningDuration
 import com.zcw.chatai.data.ai.reasoningTickerText
@@ -43,8 +43,8 @@ import com.zcw.chatai.data.ai.reasoningTickerText
  * 时长来自消息里的 `reasoningMs`：流式时它就是当前值（同一个测量），冷启动从库里读回来，
  * 所以重开 App 秒数还在。null 或不足 1 秒时不显示数字。
  *
- * 刚发出去默认收成一行；摘要超出宽度时横向滚（生成中跟到最新，结束后跑马灯），
- * 不自动展开整段思维链。
+ * 刚发出去默认收成一行。生成中摘要跟到最新；结束后单行省略，
+ * 不再给每一条历史思维链挂无限跑马灯。不自动展开整段思维链。
  */
 @Composable
 fun ReasoningBlock(
@@ -59,8 +59,13 @@ fun ReasoningBlock(
     if (reasoning.isBlank() && !isStreaming) return
     val scheme = MaterialTheme.colorScheme
     var expandedByUser by rememberSaveable { mutableStateOf(false) }
-    val preview = collapseReasoningWhitespace(reasoning)
     val followEnd = isStreaming && !answerStarted
+    // 生成中要句尾，得扫整段；历史行只要开头一段。
+    val preview = if (followEnd) {
+        collapseReasoningWhitespace(reasoning)
+    } else {
+        collapseReasoningWhitespace(reasoning, maxChars = REASONING_PREVIEW_CHARS)
+    }
     val duration = formatReasoningDuration(reasoningMs)
 
     Column(modifier = modifier.fillMaxWidth().animateContentSize()) {
@@ -131,14 +136,25 @@ private fun ReasoningTicker(
     modifier: Modifier = Modifier,
 ) {
     val scheme = MaterialTheme.colorScheme
+    if (!followEnd) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelMedium,
+            color = scheme.onSurfaceVariant.copy(alpha = 0.7f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = modifier,
+        )
+        return
+    }
     val scroll = rememberScrollState()
-    LaunchedEffect(text, followEnd, scroll.maxValue) {
-        if (followEnd) scroll.scrollTo(scroll.maxValue)
+    LaunchedEffect(text, scroll.maxValue) {
+        scroll.scrollTo(scroll.maxValue)
     }
     Box(
         modifier = modifier
             .clipToBounds()
-            .then(if (followEnd) Modifier.horizontalScroll(scroll, enabled = false) else Modifier),
+            .horizontalScroll(scroll, enabled = false),
     ) {
         Text(
             text = text,
@@ -147,7 +163,6 @@ private fun ReasoningTicker(
             maxLines = 1,
             softWrap = false,
             overflow = TextOverflow.Visible,
-            modifier = if (followEnd) Modifier else Modifier.basicMarquee(),
         )
     }
 }

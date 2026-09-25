@@ -1,8 +1,10 @@
 package com.zcw.chatai.ui.chat
 
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -10,19 +12,19 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import com.zcw.chatai.data.model.Role
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
-/** 聊天列表的跟随状态与动作。 */
-class ChatListFollow(
-    /** 视口是否真的停在列表末尾。 */
-    val atBottom: Boolean,
-    /** 是否处于「跟随」状态（用户上滑、触摸或展开详情会松钉）。 */
-    val following: Boolean,
+/** 聊天列表的跟随状态与动作。贴底状态不在这里，由 [ChatScrollToBottomButton] 自己订阅。 */
+class ChatListFollow internal constructor(
     /** 当前会话是否已完成首次定位（切会话后先藏起来定位，避免看到顶部再瞬移）。 */
     val located: Boolean,
     val nestedScrollConnection: NestedScrollConnection,
@@ -30,6 +32,8 @@ class ChatListFollow(
     val jumpToBottom: () -> Unit,
     /** 停止跟随：用户触摸列表 / 展开工具、思考详情时调用。 */
     val unpin: () -> Unit,
+    /** 是否仍钉在底部。只有 [ChatScrollToBottomButton] 读它。 */
+    internal val pinned: State<Boolean>,
 )
 
 /**
@@ -39,10 +43,10 @@ class ChatListFollow(
  * - 切会话（消息就绪后）→ 先**跳**到底并标记已定位（定位门）；
  * - 列表**长出**新的用户消息（刚发出/继续）→ **跳**到底；
  *   流式幽灵消失等造成的列表回缩**不算**——那是竞态帧，跳过去就是「瞬移到用户气泡」；
- * - **手指一碰就松钉**（不再跟随）；上滑第一下 [atBottom] 往往还是 true，
- *   所以钉住和 [atBottom] 必须分开；
- * - 回到底部**不自动重钉**：只有用户自己滚回到底（[userScrolled]）或走 [jumpToBottom]
- *   才恢复跟随，避免生成结束时高度突变把 [atBottom] 闪成 true 就把人拽回底部。
+ * - **手指一碰就松钉**（不再跟随）；上滑第一下视口往往还贴着底，
+ *   所以钉住和贴底必须分开；
+ * - 回到底部**不自动重钉**：只有用户自己滚回到底或走 [jumpToBottom]
+ *   才恢复跟随，避免生成结束时高度突变把贴底闪成 true 就把人拽回底部。
  *
  * 定位任务用 [locatingTarget] 标记：**follow 不会取消它**，否则会出现「进去空白、划一下才出来」。
  */
@@ -62,17 +66,6 @@ fun rememberChatListFollow(
     // 用户手指刚滚过列表：只有这种情况「滚回到底」才恢复跟随。
     val userScrolled = remember { mutableStateOf(false) }
     val lastMessage = messages.lastOrNull()
-
-    val atBottom by remember {
-        derivedStateOf {
-            val info = listState.layoutInfo
-            isChatListAtBottom(
-                lastVisibleIndex = info.visibleItemsInfo.lastOrNull()?.index,
-                totalItems = info.totalItemsCount,
-                canScrollForward = listState.canScrollForward,
-            )
-        }
-    }
 
     fun cancel() {
         job.value?.cancel()
@@ -134,22 +127,26 @@ fun rememberChatListFollow(
         }
     }
 
-    var previouslyAtBottom by remember { mutableStateOf(true) }
-    LaunchedEffect(atBottom) {
-        when {
-            !atBottom -> {
-                // 离开底部就把「用户滚过」的记号清掉：此后哪怕高度突变把 atBottom 闪回 true，
-                // 也不再自动重钉（那是生成结束拽回底部的元凶）。
-                userScrolled.value = false
-            }
+    // 贴底变化走 snapshotFlow，不在组合期订阅 layoutInfo。
+    // 否则每一拍高度回填都会重组 ChatScreen，可见消息的 Markdown 跟着重排。
+    LaunchedEffect(listState) {
+        var previouslyAtBottom = true
+        snapshotFlow { listState.isAtBottom() }.distinctUntilChanged().collect { atBottom ->
+            when {
+                !atBottom -> {
+                    // 离开底部就把「用户滚过」的记号清掉：此后哪怕高度突变把 atBottom 闪回 true，
+                    // 也不再自动重钉（那是生成结束拽回底部的元凶）。
+                    userScrolled.value = false
+                }
 
-            !previouslyAtBottom && userScrolled.value -> {
-                // 用户自己滚回到底 → 恢复跟随。
-                userScrolled.value = false
-                pinned.value = true
+                !previouslyAtBottom && userScrolled.value -> {
+                    // 用户自己滚回到底 → 恢复跟随。
+                    userScrolled.value = false
+                    pinned.value = true
+                }
             }
+            previouslyAtBottom = atBottom
         }
-        previouslyAtBottom = atBottom
     }
 
     var lastSeenConversation by remember { mutableStateOf(conversationId) }
@@ -188,11 +185,40 @@ fun rememberChatListFollow(
 
     val located = conversationId == null || locatedConversation.value == conversationId
     return ChatListFollow(
-        atBottom = atBottom,
-        following = pinned.value,
         located = located,
         nestedScrollConnection = nestedScrollConnection,
         jumpToBottom = { conversationId?.let { launchJump(it) } },
         unpin = stopFollowing,
+        pinned = pinned,
+    )
+}
+
+/**
+ * 「回到底部」单独订阅贴底和跟随。
+ * 放在消息列表的组合里读的话，长列表高度回填时每一拍都会把可见消息重排一遍。
+ */
+@Composable
+fun ChatScrollToBottomButton(
+    follow: ChatListFollow,
+    listState: LazyListState,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val atBottom by remember(listState) { derivedStateOf { listState.isAtBottom() } }
+    val following by follow.pinned
+    if (enabled && (!following || !atBottom)) {
+        ScrollToBottomButton(
+            onClick = follow.jumpToBottom,
+            modifier = modifier.padding(end = 16.dp, bottom = 170.dp),
+        )
+    }
+}
+
+private fun LazyListState.isAtBottom(): Boolean {
+    val info = layoutInfo
+    return isChatListAtBottom(
+        lastVisibleIndex = info.visibleItemsInfo.lastOrNull()?.index,
+        totalItems = info.totalItemsCount,
+        canScrollForward = canScrollForward,
     )
 }
