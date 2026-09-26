@@ -50,7 +50,8 @@ fun ModelPickerSheet(
     onSelectPersona: (String) -> Unit,
     onOpenSettings: () -> Unit,
 ) {
-    DarkSheet(onDismiss = onDismiss) {
+    // 撑满并滚动：键盘把视口压矮时，不滚动的 Column 会把最底下的输入框挤成一条缝。
+    DarkSheet(onDismiss = onDismiss, scroll = true, fullHeight = true) {
         ModelPickerContent(
             currentModel = currentModel,
             providerId = providerId,
@@ -110,8 +111,6 @@ internal fun ModelPickerContent(
     val personaName = personaId?.let { personas[it]?.name?.takeIf { name -> name.isNotBlank() } } ?: "默认"
     val manual = query.trim()
 
-    // 候选列表是独立的 Popup 浮层，弹层本身按内容自适应即可——不能固定高度，
-    // 否则键盘弹起把弹层压矮时，输入框会被挤到只剩一条缝。
     Text(
         text = "模型与供应商",
         style = MaterialTheme.typography.titleMedium,

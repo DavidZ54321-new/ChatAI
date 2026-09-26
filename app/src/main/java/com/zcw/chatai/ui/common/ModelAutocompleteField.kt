@@ -115,6 +115,7 @@ fun ModelAutocompleteField(
     }
 
     // 下拉的可用高度：扣掉输入法占的高度；下方塞不下就翻到输入框上方。
+    // WindowInsets.ime 读的就是窗口根上的键盘高度，祖先的 imePadding 不会把它清成 0。
     val windowHeightPx = LocalWindowInfo.current.containerSize.height
     val imeBottomPx = WindowInsets.ime.getBottom(density)
     val gapPx = with(density) { 8.dp.toPx() }

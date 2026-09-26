@@ -514,7 +514,12 @@ fun ChatScreen(
                     onAttachClick = { attachOpen = true },
                     onRemoveAttachment = onRemoveAttachment,
                     onOpenAttachment = { item -> openPendingAttachment(item, state.pending) },
-                    onModelClick = onModelClick,
+                    onModelClick = {
+                        // 菜单是浮层：先收掉聊天框的键盘，否则输入法仍属于 Composer，
+                        // 整条输入栏会被 imePadding 抬起来盖住菜单。
+                        hideKeyboardForNavigation()
+                        onModelClick()
+                    },
                     webSearchEnabled = state.webSearchEnabled,
                     webSearchAvailable = state.webSearchAvailable,
                     onToggleWebSearch = onToggleWebSearch,
