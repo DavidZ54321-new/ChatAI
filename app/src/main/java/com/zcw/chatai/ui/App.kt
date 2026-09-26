@@ -17,6 +17,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.zcw.chatai.ChatAiApp
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import com.zcw.chatai.ui.branch.BranchScreen
 import com.zcw.chatai.ui.chat.ChatScreen
 import com.zcw.chatai.ui.chat.ChatViewModel
@@ -49,6 +51,10 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val editDraft by viewModel.editDraft.collectAsStateWithLifecycle()
     val autoFocusComposer by viewModel.autoFocusComposer.collectAsStateWithLifecycle()
+    val streamHaptic by app.settingsRepository.settings
+        .map { it.streamHaptic }
+        .distinctUntilChanged()
+        .collectAsStateWithLifecycle(initialValue = true)
     var showSettings by remember { mutableStateOf(false) }
     var showConversations by remember { mutableStateOf(false) }
     var showModelPicker by remember { mutableStateOf(false) }
@@ -118,6 +124,7 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
                 onAutoFocusComposerConsumed = viewModel::consumeAutoFocusComposer,
                 composerFocusAllowed = chatSurfaceActive,
                 branchParent = branchParent,
+                streamHapticsEnabled = streamHaptic && chatSurfaceActive,
             )
             if (showModelPicker) {
                 ModelPickerSheet(

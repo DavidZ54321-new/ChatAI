@@ -120,6 +120,8 @@ fun ChatScreen(
     composerFocusAllowed: Boolean,
     /** 来源会话还在时非空；横幅单独传，不进 [ChatUiState]，避免会话列表更新牵动消息列表。 */
     branchParent: BranchParent?,
+    /** 设置开着，且聊天主界面露出来（列表/模型选择/编辑弹层盖住时为 false）。前后台由 [StreamHaptics] 自己看。 */
+    streamHapticsEnabled: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val colors = ChatTheme.colors
@@ -212,6 +214,15 @@ fun ChatScreen(
 
     val messages = state.messages
     val groups = remember(messages) { MessageGroups.of(messages) }
+    StreamHaptics(
+        armed = streamHapticsEnabled,
+        messageId = if (state.isStreaming) state.streamingMessageId else null,
+        content = if (state.isStreaming) {
+            messages.firstOrNull { it.id == state.streamingMessageId }?.content.orEmpty()
+        } else {
+            ""
+        },
+    )
 
     val follow = rememberChatListFollow(
         listState = listState,

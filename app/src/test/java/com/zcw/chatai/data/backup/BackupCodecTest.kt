@@ -92,6 +92,7 @@ class BackupCodecTest {
         imageDetail = ImageDetail.LOW,
         includeUsage = false,
         includeEnvTime = false,
+        streamHaptic = false,
         historyImageTurns = 3,
         imageSearchModelsRaw = "qwen3.8-27b,qwen3.8-max",
         themeMode = ThemeMode.DARK,
@@ -223,6 +224,8 @@ class BackupCodecTest {
         assertEquals(ChatSettings.Default.providers.keys, restored.providers.keys)
         assertEquals(ChatSettings.Default.personas.keys, restored.personas.keys)
         assertEquals(restored.providers.keys.first(), restored.activeProviderId)
+        // 旧备份没有这个字段：缺省开，不把震动关掉。
+        assertEquals(true, restored.streamHaptic)
     }
 
     @Test
@@ -267,6 +270,7 @@ class BackupCodecTest {
         assertTrue("translator" in merged.personas)
         // 全局标量保持本机不变。
         assertEquals(ThemeMode.LIGHT, merged.themeMode)
+        assertEquals(true, merged.streamHaptic)
         assertEquals(ChatSettings.Default.activeProviderId, merged.activeProviderId)
     }
 

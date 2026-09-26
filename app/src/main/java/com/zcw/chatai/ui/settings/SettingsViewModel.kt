@@ -46,6 +46,7 @@ class SettingsViewModel(
         val imageDetail: ImageDetail = ImageDetail.FOLLOW_DEFAULT,
         val includeUsage: Boolean = true,
         val includeEnvTime: Boolean = true,
+        val streamHaptic: Boolean = true,
         val historyImageTurns: Int = ChatSettings.DEFAULT_HISTORY_IMAGE_TURNS,
         /** 图搜模型链（逗号分隔的原始输入）；空 = 用内置默认。 */
         val imageSearchModels: String = "",
@@ -103,6 +104,7 @@ class SettingsViewModel(
                 imageDetail = settings.imageDetail,
                 includeUsage = settings.includeUsage,
                 includeEnvTime = settings.includeEnvTime,
+                streamHaptic = settings.streamHaptic,
                 historyImageTurns = settings.historyImageTurns,
                 imageSearchModels = settings.imageSearchModelsRaw,
                 themeMode = settings.themeMode,
@@ -154,6 +156,12 @@ class SettingsViewModel(
     fun setThemeFamily(family: ThemeFamily) {
         form.value = form.value.copy(themeFamily = family)
         viewModelScope.launch { settingsRepository.updateThemeFamily(family) }
+    }
+
+    /** 立刻落盘，不跟「保存」走：关掉震动不该还要再存一遍供应商表。 */
+    fun setStreamHaptic(enabled: Boolean) {
+        form.value = form.value.copy(streamHaptic = enabled)
+        viewModelScope.launch { settingsRepository.updateStreamHaptic(enabled) }
     }
 
     fun save() {

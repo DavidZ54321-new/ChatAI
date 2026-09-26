@@ -321,6 +321,16 @@ fun SettingsScreen(
             )
 
             SectionTitle("外观")
+            SwitchRow(
+                label = "流式输出时震动",
+                checked = state.streamHaptic,
+                onCheckedChange = viewModel::setStreamHaptic,
+            )
+            Text(
+                text = "回答往外吐字时轻震一下；思考过程不震。关闭后立即生效。",
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.onSurfaceVariant,
+            )
             ChoiceRow(
                 label = "明暗",
                 hint = null,

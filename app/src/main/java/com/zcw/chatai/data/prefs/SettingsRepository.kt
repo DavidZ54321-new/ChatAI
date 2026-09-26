@@ -63,6 +63,8 @@ data class ChatSettings(
     val includeUsage: Boolean,
     /** 上下文末尾是否追加当前时间尾条（默认开；取值失败时不追加，主流程不受影响）。 */
     val includeEnvTime: Boolean,
+    /** 流式正文吐字时轻震（默认开）。只影响界面，不进请求。 */
+    val streamHaptic: Boolean = true,
     /** 历史图片重发轮次：-1 全部、0 只发当前轮、N = 当前轮 + 最近 N 轮。 */
     val historyImageTurns: Int,
     /** 图搜模型链（原始输入，逗号分隔）；空 = 用 Qwen 预设的默认链。 */
@@ -119,6 +121,7 @@ data class ChatSettings(
             imageDetail = ImageDetail.FOLLOW_DEFAULT,
             includeUsage = true,
             includeEnvTime = true,
+            streamHaptic = true,
             historyImageTurns = DEFAULT_HISTORY_IMAGE_TURNS,
             imageSearchModelsRaw = "",
             themeMode = ThemeMode.SYSTEM,
@@ -238,6 +241,7 @@ class SettingsRepository(context: Context) {
             prefs[KEY_IMAGE_DETAIL] = settings.imageDetail.name
             prefs[KEY_INCLUDE_USAGE] = settings.includeUsage
             prefs[KEY_INCLUDE_ENV_TIME] = settings.includeEnvTime
+            prefs[KEY_STREAM_HAPTIC] = settings.streamHaptic
             prefs[KEY_HISTORY_IMAGE_TURNS] = settings.historyImageTurns
             if (settings.imageSearchModelsRaw.isBlank()) {
                 prefs.remove(KEY_IMAGE_SEARCH_MODELS)
@@ -269,6 +273,13 @@ class SettingsRepository(context: Context) {
     suspend fun updateThemeFamily(family: ThemeFamily) {
         store.edit { prefs ->
             prefs[KEY_THEME_FAMILY] = family.name
+        }
+    }
+
+    /** 流式轻震开关：单独落盘，不跟供应商表的「保存」绑在一起。 */
+    suspend fun updateStreamHaptic(enabled: Boolean) {
+        store.edit { prefs ->
+            prefs[KEY_STREAM_HAPTIC] = enabled
         }
     }
 
@@ -308,6 +319,7 @@ class SettingsRepository(context: Context) {
             imageDetail = this[KEY_IMAGE_DETAIL].toEnum(ImageDetail.FOLLOW_DEFAULT),
             includeUsage = this[KEY_INCLUDE_USAGE] ?: true,
             includeEnvTime = this[KEY_INCLUDE_ENV_TIME] ?: true,
+            streamHaptic = this[KEY_STREAM_HAPTIC] ?: true,
             // 轮次单位是 v6 引入的；旧 key（消息条数）按约定统一归一到默认 1 轮。
             historyImageTurns = this[KEY_HISTORY_IMAGE_TURNS] ?: ChatSettings.DEFAULT_HISTORY_IMAGE_TURNS,
             imageSearchModelsRaw = this[KEY_IMAGE_SEARCH_MODELS].orEmpty(),
@@ -334,6 +346,8 @@ class SettingsRepository(context: Context) {
         val KEY_INCLUDE_USAGE = booleanPreferencesKey("include_usage")
         /** 上下文末尾追加当前时间（默认开；老版本无此 key 时回落 true）。 */
         val KEY_INCLUDE_ENV_TIME = booleanPreferencesKey("include_env_time")
+        /** 流式正文轻震（默认开；老版本无此 key 时回落 true）。 */
+        val KEY_STREAM_HAPTIC = booleanPreferencesKey("stream_haptic")
         /** 轮次单位（v6）：历史图片重发轮次。旧 key `history_image_limit` 已废弃。 */
         val KEY_HISTORY_IMAGE_TURNS = intPreferencesKey("history_image_turns")
         /** 图搜模型链覆盖（空 = 用 Qwen 预设默认）。 */
