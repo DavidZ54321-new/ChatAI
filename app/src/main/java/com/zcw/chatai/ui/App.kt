@@ -28,9 +28,12 @@ import com.zcw.chatai.ui.chat.ModelPickerSheet
 import com.zcw.chatai.ui.drawer.ConversationListPage
 import com.zcw.chatai.ui.drawer.ConversationListScreen
 import com.zcw.chatai.ui.drawer.ConversationTree
+import com.zcw.chatai.ui.drawer.WorkspaceMode
 import com.zcw.chatai.ui.image.ImageStudioScreen
 import com.zcw.chatai.ui.image.ImageViewModel
 import com.zcw.chatai.ui.settings.SettingsScreen
+import com.zcw.chatai.ui.video.VideoStudioScreen
+import com.zcw.chatai.ui.video.VideoViewModel
 
 @Composable
 fun ChatAiRoot(modifier: Modifier = Modifier) {
@@ -55,6 +58,15 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
     )
     val imageState by imageViewModel.state.collectAsStateWithLifecycle()
     val imageConversations by imageViewModel.conversations.collectAsStateWithLifecycle()
+    val videoViewModel: VideoViewModel = viewModel(
+        factory = VideoViewModel.factory(
+            repository = app.videoRepository,
+            attachmentStore = app.attachmentStore,
+            settingsRepository = app.settingsRepository,
+        ),
+    )
+    val videoState by videoViewModel.state.collectAsStateWithLifecycle()
+    val videoConversations by videoViewModel.conversations.collectAsStateWithLifecycle()
     val lamps by app.conversationLamps.current.collectAsStateWithLifecycle()
     val branchParent by viewModel.branchParent.collectAsStateWithLifecycle()
     val conversations by viewModel.searchResults.collectAsStateWithLifecycle()
@@ -72,8 +84,8 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
     var showSettings by remember { mutableStateOf(false) }
     var showConversations by remember { mutableStateOf(false) }
     var showModelPicker by remember { mutableStateOf(false) }
-    /** 生图模式：主界面换成生图页，会话列表也只显示生图会话。 */
-    var imageMode by remember { mutableStateOf(false) }
+    /** 当前工作区：主界面在对话 / 生图 / 视频之间切换，会话列表只显示对应种类的会话。 */
+    var mode by remember { mutableStateOf(WorkspaceMode.CHAT) }
     /** 非空时叠在最上面显示分支页（起点为这条会话）。 */
     var branchRootId by remember { mutableStateOf<String?>(null) }
 
@@ -93,20 +105,23 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
         )
     }
 
-    // 只有聊天主界面（无设置/会话列表/模型选择/编辑弹层/分支页/生图页）才允许自动唤键盘；任何其他界面都不唤醒。
-    val chatSurfaceActive = !showSettings && !imageMode && !showConversations && !showModelPicker &&
-        editDraft == null && branchRootId == null
+    // 只有聊天主界面（无设置/会话列表/模型选择/编辑弹层/分支页/生图页/视频页）才允许自动唤键盘；任何其他界面都不唤醒。
+    val chatSurfaceActive = mode == WorkspaceMode.CHAT && !showSettings && !showConversations &&
+        !showModelPicker && editDraft == null && branchRootId == null
 
     BackHandler(enabled = showSettings && !showConversations) { showSettings = false }
     BackHandler(enabled = showConversations) { showConversations = false }
-    BackHandler(enabled = imageMode && !showConversations && !showSettings) { imageMode = false }
+    BackHandler(enabled = mode != WorkspaceMode.CHAT && !showConversations && !showSettings) {
+        mode = WorkspaceMode.CHAT
+    }
     // 分支页自己注册返回（先逐层退回、再关页面），见 BranchScreen；这里不重复注册。
 
-    // 状态灯的「人在不在看」以屏幕为准。对话页和生图页互斥，设置盖住两边时都算没在看。
+    // 状态灯的「人在不在看」以屏幕为准。三个工作区互斥，设置盖住时都算没在看。
     // 会话列表盖在当前页上仍算在看——人已经进过这条会话。
     val watchingId = when {
         showSettings -> null
-        imageMode -> imageState.conversationId
+        mode == WorkspaceMode.IMAGE -> imageState.conversationId
+        mode == WorkspaceMode.VIDEO -> videoState.conversationId
         else -> state.conversationId
     }
     LaunchedEffect(watchingId) {
@@ -119,8 +134,8 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
         viewModel.setSearchQuery("")
     }
 
-    val listPage = if (imageMode) {
-        ConversationListPage(
+    val listPage = when (mode) {
+        WorkspaceMode.IMAGE -> ConversationListPage(
             conversations = imageConversations,
             branchCounts = emptyMap(),
             selectedId = imageState.conversationId,
@@ -137,8 +152,26 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
             onRename = imageViewModel::renameConversation,
             onDelete = imageViewModel::deleteConversation,
         )
-    } else {
-        ConversationListPage(
+
+        WorkspaceMode.VIDEO -> ConversationListPage(
+            conversations = videoConversations,
+            branchCounts = emptyMap(),
+            selectedId = videoState.conversationId,
+            searchQuery = "",
+            onSearchQueryChange = {},
+            onSelect = { id ->
+                videoViewModel.selectConversation(id)
+                closeConversations()
+            },
+            onNew = {
+                videoViewModel.newConversation()
+                closeConversations()
+            },
+            onRename = videoViewModel::renameConversation,
+            onDelete = videoViewModel::deleteConversation,
+        )
+
+        WorkspaceMode.CHAT -> ConversationListPage(
             conversations = conversations,
             branchCounts = branchCounts,
             selectedId = state.conversationId,
@@ -160,7 +193,7 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
     Box(modifier = modifier.fillMaxSize()) {
         if (showSettings) {
             SettingsScreen(onBack = { showSettings = false })
-        } else if (imageMode) {
+        } else if (mode == WorkspaceMode.IMAGE) {
             ImageStudioScreen(
                 state = imageState,
                 onInputChange = imageViewModel::setInput,
@@ -175,6 +208,28 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
                 onRegenerate = imageViewModel::regenerate,
                 onDeleteMessage = imageViewModel::deleteMessage,
                 onNoticeShown = imageViewModel::consumeNotice,
+            )
+        } else if (mode == WorkspaceMode.VIDEO) {
+            VideoStudioScreen(
+                state = videoState,
+                onInputChange = videoViewModel::setInput,
+                onSend = videoViewModel::send,
+                onStop = videoViewModel::stop,
+                onAddImage = videoViewModel::addImage,
+                onRemoveAttachment = videoViewModel::removeAttachment,
+                onOptimize = videoViewModel::optimizePrompt,
+                onInsertShot = videoViewModel::insertShotTemplate,
+                onSetMode = videoViewModel::setMode,
+                onSetResolution = videoViewModel::setResolution,
+                onSetRatio = videoViewModel::setRatio,
+                onSetDuration = videoViewModel::setDuration,
+                onSetAudio = videoViewModel::setAudio,
+                onOpenConversations = { showConversations = true },
+                onNewConversation = videoViewModel::newConversation,
+                onSelectModel = videoViewModel::setModel,
+                onRegenerate = videoViewModel::regenerate,
+                onDeleteMessage = videoViewModel::deleteMessage,
+                onNoticeShown = videoViewModel::consumeNotice,
             )
         } else {
             ChatScreen(
@@ -250,14 +305,18 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
                     closeConversations()
                     showSettings = true
                 },
-                imageMode = imageMode,
-                onOpenImageStudio = {
-                    closeConversations()
-                    imageMode = true
-                },
+                mode = mode,
                 onOpenChat = {
                     closeConversations()
-                    imageMode = false
+                    mode = WorkspaceMode.CHAT
+                },
+                onOpenImageStudio = {
+                    closeConversations()
+                    mode = WorkspaceMode.IMAGE
+                },
+                onOpenVideoStudio = {
+                    closeConversations()
+                    mode = WorkspaceMode.VIDEO
                 },
                 onClose = closeConversations,
             )

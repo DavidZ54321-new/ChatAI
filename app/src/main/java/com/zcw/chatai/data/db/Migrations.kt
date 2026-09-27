@@ -111,3 +111,40 @@ val MIGRATION_7_8 = object : Migration(7, 8) {
         db.execSQL("ALTER TABLE conversations ADD COLUMN kind TEXT NOT NULL DEFAULT 'CHAT'")
     }
 }
+
+/**
+ * v8 → v9：视频生成任务表。
+ *
+ * - `video_tasks`：一条 DashScope 异步视频任务。异步任务跨进程存活，所以任务状态必须落库
+ *   （远端 `task_id`、状态、请求参数），进程被杀后 WorkManager 从本表恢复轮询/下载。
+ * - 与助手消息行解耦：任务行单独存在，删会话时靠外键级联清掉。
+ * - `conversations.kind` 已能表达 'VIDEO'（v7→v8 加的是字符串列，无需再迁移）。
+ */
+val MIGRATION_8_9 = object : Migration(8, 9) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `video_tasks` (" +
+                "`id` TEXT NOT NULL, " +
+                "`conversation_id` TEXT NOT NULL, " +
+                "`message_id` TEXT NOT NULL, " +
+                "`remote_task_id` TEXT, " +
+                "`model` TEXT NOT NULL, " +
+                "`mode` TEXT NOT NULL, " +
+                "`request_json` TEXT NOT NULL, " +
+                "`status` TEXT NOT NULL, " +
+                "`error_message` TEXT, " +
+                "`created_at` INTEGER NOT NULL, " +
+                "`updated_at` INTEGER NOT NULL, " +
+                "PRIMARY KEY(`id`), " +
+                "FOREIGN KEY(`conversation_id`) REFERENCES `conversations`(`id`) " +
+                "ON UPDATE NO ACTION ON DELETE CASCADE)",
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_video_tasks_conversation_id` " +
+                "ON `video_tasks`(`conversation_id`)",
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_video_tasks_status` ON `video_tasks`(`status`)",
+        )
+    }
+}

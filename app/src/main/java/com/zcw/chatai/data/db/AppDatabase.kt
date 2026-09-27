@@ -6,8 +6,8 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 
 @Database(
-    entities = [ConversationEntity::class, MessageEntity::class],
-    version = 8,
+    entities = [ConversationEntity::class, MessageEntity::class, VideoTaskEntity::class],
+    version = 9,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -15,6 +15,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun conversationDao(): ConversationDao
 
     abstract fun messageDao(): MessageDao
+
+    abstract fun videoTaskDao(): VideoTaskDao
 
     companion object {
         const val NAME = "chatai.db"
@@ -29,6 +31,7 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_5_6,
                     MIGRATION_6_7,
                     MIGRATION_7_8,
+                    MIGRATION_8_9,
                 )
                 .build()
     }

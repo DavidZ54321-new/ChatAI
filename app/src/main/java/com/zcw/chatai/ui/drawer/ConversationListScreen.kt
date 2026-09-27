@@ -86,6 +86,9 @@ private const val DRAG_ANIM_MS = 220
 /** 视窗宽度拿不到时（理论上不会）的兜底像素宽度。 */
 private const val DEFAULT_WINDOW_WIDTH_PX = 1080f
 
+/** 三个工作区：对话 / 生图 / 视频。列表页与底部按钮按它切换入口与文案。 */
+enum class WorkspaceMode { CHAT, IMAGE, VIDEO }
+
 /**
  * 列表这一页要展示的会话，以及只作用于这些会话的操作。
  * 对话页和生图页各备一份，壳层选中后再交给列表，避免每个字段各写一次模式分支。
@@ -122,10 +125,11 @@ fun ConversationListScreen(
     /** 打开某条会话的分支页（长按菜单里的「下辖分支」）。 */
     onOpenBranches: (String) -> Unit,
     onOpenSettings: () -> Unit,
-    /** 当前是否在生图模式（决定菜单行是「生图」还是「对话」，以及底部「新对话/新图像」）。 */
-    imageMode: Boolean,
-    onOpenImageStudio: () -> Unit,
+    /** 当前工作区：决定菜单块里显示「另两个」入口，以及底部按钮文案。 */
+    mode: WorkspaceMode,
     onOpenChat: () -> Unit,
+    onOpenImageStudio: () -> Unit,
+    onOpenVideoStudio: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -201,21 +205,30 @@ fun ConversationListScreen(
                     label = "设置",
                     onClick = onOpenSettings,
                 )
-                if (imageMode) {
+                // 显示「另两个」工作区入口：对话页给出生图/视频，生图页给出对话/视频，以此类推。
+                if (mode != WorkspaceMode.CHAT) {
                     MenuRow(
                         icon = Icons.AutoMirrored.Filled.ArrowBack,
                         label = "对话",
                         onClick = onOpenChat,
                     )
-                } else {
+                }
+                if (mode != WorkspaceMode.IMAGE) {
                     MenuRow(
                         painter = painterResource(R.drawable.ic_image),
                         label = "生图",
                         onClick = onOpenImageStudio,
                     )
                 }
-                // 生图模式没有搜索（生图会话不参与对话搜索），隐藏这一行。
-                if (!imageMode) {
+                if (mode != WorkspaceMode.VIDEO) {
+                    MenuRow(
+                        painter = painterResource(R.drawable.ic_video),
+                        label = "视频",
+                        onClick = onOpenVideoStudio,
+                    )
+                }
+                // 只有对话工作区有搜索（生图/视频会话不参与对话搜索）。
+                if (mode == WorkspaceMode.CHAT) {
                     MenuRow(
                         icon = Icons.Filled.Search,
                         label = "搜索",
@@ -310,7 +323,14 @@ fun ConversationListScreen(
                 .align(Alignment.BottomEnd)
                 .padding(end = 24.dp, bottom = 24.dp),
         ) {
-            NewChatButton(label = if (imageMode) "新图像" else "新对话", onClick = onNew)
+            NewChatButton(
+                label = when (mode) {
+                    WorkspaceMode.IMAGE -> "新图像"
+                    WorkspaceMode.VIDEO -> "新视频"
+                    WorkspaceMode.CHAT -> "新对话"
+                },
+                onClick = onNew,
+            )
         }
     }
 
@@ -430,7 +450,7 @@ private fun NewChatButton(label: String, onClick: () -> Unit) {
             modifier = Modifier.size(20.dp),
         )
         Text(
-            text = "新对话",
+            text = label,
             style = MaterialTheme.typography.titleMedium,
             color = scheme.inverseOnSurface,
         )

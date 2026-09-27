@@ -237,6 +237,23 @@ class EndpointUrlTest {
     }
 
     @Test
+    fun derivesDashScopeVideoSynthesisAndTaskEndpointsFromOrigin() {
+        assertEquals(
+            "https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis",
+            EndpointUrl.dashScopeVideoSynthesis("https://dashscope.aliyuncs.com/compatible-mode/v1"),
+        )
+        assertEquals(
+            "https://ws-xxx.cn-beijing.maas.aliyuncs.com/api/v1/tasks/abc-123",
+            EndpointUrl.dashScopeTask("https://ws-xxx.cn-beijing.maas.aliyuncs.com/compatible-mode/v1", "abc-123"),
+        )
+        // 任务 id 为空/只有空白时不拼出半截 URL。
+        assertNull(EndpointUrl.dashScopeTask("https://dashscope.aliyuncs.com/v1", "  "))
+        assertNull(EndpointUrl.dashScopeVideoSynthesis(""))
+        assertNull(EndpointUrl.dashScopeVideoSynthesis("not a url"))
+        assertNull(EndpointUrl.dashScopeTask("", "abc"))
+    }
+
+    @Test
     fun originOfExtractsSchemeHostAndPort() {
         assertEquals("https://a.example", EndpointUrl.originOf("https://a.example/v1"))
         assertEquals("https://a.example", EndpointUrl.originOf("https://a.example"))

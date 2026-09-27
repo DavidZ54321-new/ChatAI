@@ -102,4 +102,21 @@ class ChatMetricsTest {
         assertEquals(411f * 0.94f, ChatMetrics.generatedImageWidth(411.dp).value, 0.001f)
         assertEquals(1.dp, ChatMetrics.generatedImageWidth(0.dp))
     }
+
+    @Test
+    fun generatedVideoFitsNinetyFourPercentWidthByHalfViewportHeight() {
+        // 竖屏 9:16：400×800 视窗 → 宽被高度上限压到 225，高 400（一屏内看得见）。
+        val portrait = ChatMetrics.generatedVideoSize(9f / 16f, 400.dp, 800.dp)
+        assertEquals(400f, portrait.height.value, 0.001f)
+        assertEquals(225f, portrait.width.value, 0.001f)
+
+        // 横屏 16:9：宽度先到上限 376，高随比例。
+        val landscape = ChatMetrics.generatedVideoSize(16f / 9f, 400.dp, 800.dp)
+        assertEquals(400f * 0.94f, landscape.width.value, 0.001f)
+        assertEquals(376f / (16f / 9f), landscape.height.value, 0.001f)
+
+        // 比例未知按 16:9 处理，不炸。
+        val unknown = ChatMetrics.generatedVideoSize(0f, 400.dp, 800.dp)
+        assertTrue(unknown.width.value > 0f && unknown.height.value > 0f)
+    }
 }

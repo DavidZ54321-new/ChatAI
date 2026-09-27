@@ -20,6 +20,16 @@ object ChatMetrics {
      */
     const val GENERATED_IMAGE_WIDTH_FRACTION = 0.94f
 
+    /** 视频生成结果的宽度上限 = 视窗宽度的 94%（居中）。 */
+    const val GENERATED_VIDEO_WIDTH_FRACTION = 0.94f
+
+    /**
+     * 视频生成结果的高度上限 = 视窗高度的 50%。
+     * 竖屏（9:16）视频若只按宽度撑开，会比屏幕还高——这里同时封顶高度，
+     * 让整段视频一屏内看得见（与 markdown 单图同一套「装进框」思路）。
+     */
+    const val GENERATED_VIDEO_MAX_HEIGHT_FRACTION = 0.5f
+
     /**
      * 顶栏按钮行本身完全不透明，消散只发生在按钮下沿之后。
      * 尾巴高度 = 视窗高 4%。
@@ -60,6 +70,21 @@ object ChatMetrics {
 
     fun generatedImageWidth(windowWidth: Dp): Dp =
         (windowWidth * GENERATED_IMAGE_WIDTH_FRACTION).coerceAtLeast(1.dp)
+
+    /**
+     * 生成视频的显示尺寸：保持 [aspect]（宽/高），装进「视窗宽 94% × 视窗高 50%」的框。
+     * 视窗高未知时只按宽度封顶。
+     */
+    fun generatedVideoSize(aspect: Float, windowWidth: Dp, windowHeight: Dp): DpSize {
+        val safeAspect = if (aspect > 0f) aspect else 16f / 9f
+        val maxWidth = (windowWidth * GENERATED_VIDEO_WIDTH_FRACTION).coerceAtLeast(1.dp)
+        if (!windowHeight.isSpecified || windowHeight.value <= 0f) {
+            return DpSize(maxWidth, (maxWidth.value / safeAspect).dp)
+        }
+        val maxHeight = (windowHeight * GENERATED_VIDEO_MAX_HEIGHT_FRACTION).coerceAtLeast(1.dp)
+        val width = minOf(maxWidth.value, maxHeight.value * safeAspect).coerceAtLeast(1f)
+        return DpSize(width.dp, (width / safeAspect).dp)
+    }
 
     fun markdownImageHeight(windowWidth: Dp): Dp =
         (windowWidth * MARKDOWN_IMAGE_HEIGHT_FRACTION).coerceAtLeast(1.dp)

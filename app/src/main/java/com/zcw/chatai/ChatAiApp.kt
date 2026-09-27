@@ -14,10 +14,13 @@ import com.zcw.chatai.data.media.VideoUploadCoordinator
 import com.zcw.chatai.data.net.ChatApi
 import com.zcw.chatai.data.net.DashScopeImageClient
 import com.zcw.chatai.data.net.DashScopeUpload
+import com.zcw.chatai.data.net.DashScopeVideoClient
 import com.zcw.chatai.data.net.FailoverChatApi
 import com.zcw.chatai.data.net.OpenAiCompatibleChatApi
 import com.zcw.chatai.data.prefs.SettingsRepository
 import com.zcw.chatai.data.provider.ProviderCatalog
+import com.zcw.chatai.data.video.VideoRepository
+import com.zcw.chatai.data.video.WorkManagerVideoScheduler
 import com.zcw.chatai.data.web.deepseek.DeepSeekNativeSearchProvider
 import com.zcw.chatai.data.web.HttpWebFetcher
 import com.zcw.chatai.data.web.ImageSearchProvider
@@ -110,6 +113,25 @@ class ChatAiApp : Application() {
         )
     }
 
+    /** DashScope 视频生成（异步）客户端：提交/查询/下载三步协议。 */
+    val dashScopeVideoClient: DashScopeVideoClient by lazy { DashScopeVideoClient() }
+
+    /**
+     * 视频生成任务的唯一业务入口。异步任务交给 WorkManager 承载，进程被杀后由它续跑，
+     * 冷启动再 `resumePending` 对账补齐。
+     */
+    val videoRepository: VideoRepository by lazy {
+        VideoRepository(
+            db = database,
+            settingsRepository = settingsRepository,
+            client = dashScopeVideoClient,
+            attachmentStore = attachmentStore,
+            chatApi = chatApi,
+            scheduler = WorkManagerVideoScheduler(this),
+            lamps = conversationLamps,
+        )
+    }
+
     /** 数据备份/还原（zip）。跑在自己的 scope 上，导出/导入过程中退到后台也不中断。 */
     val dataBackup: DataBackup by lazy {
         DataBackup(
@@ -120,7 +142,8 @@ class ChatAiApp : Application() {
             // 有回合在跑时拒绝导入：正在写的消息行会被覆盖。
             busy = {
                 chatRepository.busyConversations.value.isNotEmpty() ||
-                    imageRepository.busyConversations.value.isNotEmpty()
+                    imageRepository.busyConversations.value.isNotEmpty() ||
+                    videoRepository.busyConversations.value.isNotEmpty()
             },
             // 附件路径可能被复用（同 id 换成另一张图），还原后必须丢掉旧位图缓存。
             onImported = { RemoteImages.clear() },
@@ -156,6 +179,8 @@ class ChatAiApp : Application() {
             runCatching { chatRepository.sweepOrphanAttachments() }
             // 上次导入中途被杀会留下解压目录；它不在 attachments/ 下，上面那次清理扫不到。
             runCatching { dataBackup.clearStaleStaging() }
+            // 视频任务是异步的：进程被杀后 WorkManager 可能已丢，冷启动把未终态任务重新入队。
+            runCatching { videoRepository.resumePending() }
         }
     }
 }

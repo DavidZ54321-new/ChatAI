@@ -130,6 +130,100 @@ class AttachmentStore(private val context: Context) {
         )
     }
 
+    /** 生成视频的临时下载落点（cacheDir，导入后被移走/删除）。 */
+    fun tempVideoFile(id: String): File =
+        File(File(context.cacheDir, TEMP_VIDEO_DIR).apply { mkdirs() }, "$id.mp4")
+
+    /**
+     * 把**已下载到本地文件**的生成视频收进附件目录：优先 rename（同分区零拷贝），
+     * 否则流式拷贝；用完删除 [source]。随后读时长并抽首帧做缩略图。
+     * 视频全程走文件、不进堆（几十/上百 MB 的视频 readBytes 会 OOM）。
+     */
+    suspend fun importGeneratedVideoFile(
+        conversationId: String,
+        source: File,
+        mime: String = MIME_MP4,
+        id: String = UUID.randomUUID().toString(),
+    ): Attachment = withContext(Dispatchers.IO) {
+        if (!source.isFile || source.length() <= 0L) {
+            source.delete()
+            throw AttachmentException("生成视频为空，请重试")
+        }
+        val relativePath = "$DIR/$conversationId/$id.mp4"
+        val target = File(context.filesDir, relativePath)
+        target.parentFile?.mkdirs()
+        try {
+            if (!source.renameTo(target)) {
+                try {
+                    source.inputStream().use { input ->
+                        target.outputStream().use { output -> input.copyTo(output) }
+                    }
+                } finally {
+                    source.delete()
+                }
+            }
+        } catch (t: Throwable) {
+            target.delete()
+            source.delete()
+            throw AttachmentException("生成视频保存失败，请重试", t)
+        }
+        if (target.length() <= 0L) {
+            target.delete()
+            throw AttachmentException("生成视频保存失败，请重试")
+        }
+        buildGeneratedVideo(relativePath, mime, id, target)
+    }
+
+    /** 读时长 + 抽首帧缩略图，组装 [Attachment]（视频已就位）。 */
+    private fun buildGeneratedVideo(
+        relativePath: String,
+        mime: String,
+        id: String,
+        target: File,
+    ): Attachment {
+        val info = VideoMetadata.read(target)
+        val frame = VideoMetadata.firstFrame(target)
+        val frameWidth = frame?.width ?: info?.width ?: 0
+        val frameHeight = frame?.height ?: info?.height ?: 0
+        if (frame != null) {
+            val thumbSize = ImageCodec.computeTargetSize(frame.width, frame.height, ImageCodec.THUMB_EDGE)
+            val thumb = Bitmap.createScaledBitmap(frame, thumbSize.width, thumbSize.height, true)
+            try {
+                ImageCompressor.write(thumb, ImageCodec.MIME_JPEG, thumbnailOf(relativePath))
+            } finally {
+                if (thumb !== frame) thumb.recycle()
+                frame.recycle()
+            }
+        }
+        return Attachment(
+            id = id,
+            kind = AttachmentKind.VIDEO,
+            relativePath = relativePath,
+            mimeType = mime,
+            width = frameWidth,
+            height = frameHeight,
+            sizeBytes = target.length(),
+            durationMs = info?.durationMs,
+        )
+    }
+
+    /**
+     * 按相对路径内联成 data URL（视频生成的图输入：首帧/尾帧/参考图走 base64，无需上传）。
+     * 调用方保证在 IO 线程上。文件不存在/读失败返回 null。
+     */
+    fun dataUrlFor(relativePath: String, mimeType: String): String? {
+        val file = File(context.filesDir, relativePath)
+        if (!file.isFile) return null
+        val bytes = try {
+            file.readBytes()
+        } catch (t: Exception) {
+            return null
+        }
+        if (bytes.isEmpty()) return null
+        val mime = ImageCodec.sniffMime(bytes) ?: mimeType
+        return ImageCodec.toDataUrl(mime, bytes)
+    }
+
     /**
      * 导入视频：原样复制 mp4（不转码），用 `MediaMetadataRetriever` 读时长并抽首帧做缩略图。
      * 只收 mp4（Qwen 视频输入的格式要求），超限/不可读给出可读错误。
@@ -547,6 +641,9 @@ class AttachmentStore(private val context: Context) {
     companion object {
         const val DIR = "attachments"
         const val MIME_MP4 = "video/mp4"
+
+        /** 生成视频的临时下载目录（cacheDir 下）。 */
+        private const val TEMP_VIDEO_DIR = "video-gen"
         private const val TAG = "AttachmentStore"
     }
 }

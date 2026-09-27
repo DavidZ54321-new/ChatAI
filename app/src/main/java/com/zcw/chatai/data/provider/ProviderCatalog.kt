@@ -10,6 +10,8 @@ data class ProviderCaps(
     val imageSearch: Boolean = false,
     /** 音频理解（附件面板门禁与发送前预检共用；MiMo 首发）。 */
     val audio: Boolean = false,
+    /** 视频**生成**（DashScope 异步任务；与 [video]「视频输入理解」是两回事）。目前仅通义千问。 */
+    val videoGen: Boolean = false,
 )
 
 /**
@@ -98,7 +100,7 @@ object ProviderCatalog {
             displayName = "通义千问",
             defaultBaseUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1",
             defaultModel = "qwen3.8-max",
-            caps = ProviderCaps(video = true, textSearch = true, imageSearch = true),
+            caps = ProviderCaps(video = true, textSearch = true, imageSearch = true, videoGen = true),
             // 图搜借道 Qwen 时优先 27b，空结果/报错再退 max（实测 flash 对部分图返回空）。
             toolModels = listOf("qwen3.8-27b", "qwen3.8-max"),
             anthropicBaseLayout = AnthropicBaseLayout.ORIGIN_APPS_ANTHROPIC,
@@ -154,6 +156,9 @@ object ProviderCatalog {
 
     /** 该供应商是否支持音频输入（附件面板门禁与发送前预检共用同一条判定）。 */
     fun supportsAudio(id: String): Boolean = byId(id)?.caps?.audio == true
+
+    /** 该供应商是否支持视频**生成**（视频页入口与发送前预检共用同一条判定）。 */
+    fun supportsVideoGen(id: String): Boolean = byId(id)?.caps?.videoGen == true
 
     /** 视频内联字节上限；未配置的供应商回落到全局默认（5MiB）。 */
     fun videoInlineMaxBytesFor(id: String): Long =

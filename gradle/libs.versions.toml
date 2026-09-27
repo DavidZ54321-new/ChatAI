@@ -13,6 +13,7 @@ room = "2.8.5"
 datastore = "1.2.1"
 lifecycle = "2.11.0"
 okhttp = "5.5.0"
+work = "2.10.1"
 kotlinxSerialization = "1.11.0"
 kotlinxCoroutines = "1.11.0"
 markdownRenderer = "0.45.0"
@@ -43,6 +44,8 @@ androidx-room-runtime = { group = "androidx.room", name = "room-runtime", versio
 androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
 androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
+# 视频生成是异步任务（提交→轮询→下载），跑 WorkManager：进程被杀后由系统恢复。
+androidx-work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "work" }
 androidx-lifecycle-viewmodel-compose = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-compose", version.ref = "lifecycle" }
 androidx-lifecycle-runtime-compose = { group = "androidx.lifecycle", name = "lifecycle-runtime-compose", version.ref = "lifecycle" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "kotlinxCoroutines" }

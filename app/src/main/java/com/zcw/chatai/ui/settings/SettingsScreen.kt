@@ -42,6 +42,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.platform.LocalContext
 import com.zcw.chatai.ChatAiApp
 import com.zcw.chatai.data.image.ImageModels
+import com.zcw.chatai.data.video.VideoModels
 import com.zcw.chatai.data.prefs.ImageDetail
 import com.zcw.chatai.data.prefs.ThemeMode
 import com.zcw.chatai.data.provider.ProviderCatalog
@@ -342,6 +343,27 @@ fun SettingsScreen(
             )
             ImageGenStatus(providers = state.providers)
 
+            SectionTitle("视频生成")
+            Field(
+                label = "视频模型",
+                value = state.videoGenModel,
+                onValueChange = { value -> viewModel.update { it.copy(videoGenModel = value) } },
+                placeholder = VideoModels.DEFAULT,
+                singleLine = true,
+            )
+            SwitchRow(
+                label = "提示词智能改写 (prompt_extend)",
+                checked = state.videoPromptExtend,
+                onCheckedChange = { value -> viewModel.update { it.copy(videoPromptExtend = value) } },
+            )
+            Text(
+                text = "文生 / 图生（首帧、首尾帧）/ 参考生视频走通义千问的异步接口；" +
+                    "需先在「服务商」里配好通义千问的 API Key。任务在后台跑，切走或杀掉 App 也不会中断。",
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.onSurfaceVariant,
+            )
+            VideoGenStatus(providers = state.providers)
+
             SectionTitle("外观")
             SwitchRow(
                 label = "流式输出时震动",
@@ -462,6 +484,20 @@ private fun ImageGenStatus(providers: Map<String, ProviderEntry>) {
             "生图 / 改图：通义千问（已配置）"
         } else {
             "生图 / 改图：未配置通义千问的 API Key，暂不可用（去「服务商」填写）"
+        },
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+    )
+}
+
+@Composable
+private fun VideoGenStatus(providers: Map<String, ProviderEntry>) {
+    val qwenConfigured = providers[ProviderCatalog.QWEN]?.apiKey?.isNotBlank() == true
+    Text(
+        text = if (qwenConfigured) {
+            "视频生成：通义千问（已配置）"
+        } else {
+            "视频生成：未配置通义千问的 API Key，暂不可用（去「服务商」填写）"
         },
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),

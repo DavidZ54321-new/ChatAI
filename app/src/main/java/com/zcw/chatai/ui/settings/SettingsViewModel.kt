@@ -54,6 +54,10 @@ class SettingsViewModel(
         val imageGenModel: String = "",
         /** 生图提示词智能改写（Qwen prompt_extend）。 */
         val imagePromptExtend: Boolean = true,
+        /** 视频生成模型；空 = 用内置默认（wan3.0-video）。 */
+        val videoGenModel: String = "",
+        /** 视频提示词智能改写（DashScope prompt_extend）。 */
+        val videoPromptExtend: Boolean = true,
         val themeMode: ThemeMode = ThemeMode.SYSTEM,
         val themeFamily: ThemeFamily = ThemeFamily.CLAUDE,
         val loaded: Boolean = false,
@@ -113,6 +117,8 @@ class SettingsViewModel(
                 imageSearchModels = settings.imageSearchModelsRaw,
                 imageGenModel = settings.imageGenModelRaw,
                 imagePromptExtend = settings.imagePromptExtend,
+                videoGenModel = settings.videoGenModelRaw,
+                videoPromptExtend = settings.videoPromptExtend,
                 themeMode = settings.themeMode,
                 themeFamily = settings.themeFamily,
                 loaded = true,
@@ -192,6 +198,8 @@ class SettingsViewModel(
                 imageSearchModelsRaw = current.imageSearchModels.trim(),
                 imageGenModelRaw = current.imageGenModel.trim(),
                 imagePromptExtend = current.imagePromptExtend,
+                videoGenModelRaw = current.videoGenModel.trim(),
+                videoPromptExtend = current.videoPromptExtend,
             )
             form.value = form.value.copy(providers = providers, status = "已保存")
         }

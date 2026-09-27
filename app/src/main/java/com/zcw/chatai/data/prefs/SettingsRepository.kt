@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.zcw.chatai.data.image.ImageModels
+import com.zcw.chatai.data.video.VideoModels
 import com.zcw.chatai.data.model.ChatConfig
 import com.zcw.chatai.data.net.EndpointUrl
 import com.zcw.chatai.data.persona.PersonaConfigCodec
@@ -74,6 +75,10 @@ data class ChatSettings(
     val imageGenModelRaw: String = "",
     /** 是否让服务端做提示词智能改写（Qwen `prompt_extend`，默认开）。 */
     val imagePromptExtend: Boolean = true,
+    /** 视频生成模型覆盖；空 = 用内置默认（`VideoModels.DEFAULT`）。 */
+    val videoGenModelRaw: String = "",
+    /** 视频提示词智能改写（DashScope `prompt_extend`，默认开）。 */
+    val videoPromptExtend: Boolean = true,
     val themeMode: ThemeMode,
     /** 品牌配色族（与 [themeMode] 正交：Claude / ChatGPT …）。 */
     val themeFamily: ThemeFamily,
@@ -88,6 +93,10 @@ data class ChatSettings(
     /** 生效的生图模型：用户覆盖优先，空则内置默认。 */
     val imageGenModel: String
         get() = ImageModels.resolve(imageGenModelRaw)
+
+    /** 生效的视频生成模型：用户覆盖优先，空则内置默认。 */
+    val videoGenModel: String
+        get() = VideoModels.resolve(videoGenModelRaw)
 
     /** 激活供应商；表意外为空时给一个安全空条目（请求层会给出可读报错）。 */
     val activeProvider: ProviderEntry
@@ -135,6 +144,8 @@ data class ChatSettings(
             imageSearchModelsRaw = "",
             imageGenModelRaw = "",
             imagePromptExtend = true,
+            videoGenModelRaw = "",
+            videoPromptExtend = true,
             themeMode = ThemeMode.SYSTEM,
             themeFamily = ThemeFamily.CLAUDE,
         )
@@ -212,6 +223,8 @@ class SettingsRepository(context: Context) {
         imageSearchModelsRaw: String,
         imageGenModelRaw: String,
         imagePromptExtend: Boolean,
+        videoGenModelRaw: String,
+        videoPromptExtend: Boolean,
     ) {
         store.edit { prefs ->
             prefs[KEY_PROVIDERS] = ProviderConfigCodec.encode(providers)
@@ -226,6 +239,8 @@ class SettingsRepository(context: Context) {
             if (imageSearchModelsRaw.isBlank()) prefs.remove(KEY_IMAGE_SEARCH_MODELS) else prefs[KEY_IMAGE_SEARCH_MODELS] = imageSearchModelsRaw
             if (imageGenModelRaw.isBlank()) prefs.remove(KEY_IMAGE_GEN_MODEL) else prefs[KEY_IMAGE_GEN_MODEL] = imageGenModelRaw
             prefs[KEY_IMAGE_PROMPT_EXTEND] = imagePromptExtend
+            if (videoGenModelRaw.isBlank()) prefs.remove(KEY_VIDEO_GEN_MODEL) else prefs[KEY_VIDEO_GEN_MODEL] = videoGenModelRaw
+            prefs[KEY_VIDEO_PROMPT_EXTEND] = videoPromptExtend
         }
     }
 
@@ -269,6 +284,12 @@ class SettingsRepository(context: Context) {
                 prefs[KEY_IMAGE_GEN_MODEL] = settings.imageGenModelRaw
             }
             prefs[KEY_IMAGE_PROMPT_EXTEND] = settings.imagePromptExtend
+            if (settings.videoGenModelRaw.isBlank()) {
+                prefs.remove(KEY_VIDEO_GEN_MODEL)
+            } else {
+                prefs[KEY_VIDEO_GEN_MODEL] = settings.videoGenModelRaw
+            }
+            prefs[KEY_VIDEO_PROMPT_EXTEND] = settings.videoPromptExtend
             prefs[KEY_THEME_MODE] = settings.themeMode.name
             prefs[KEY_THEME_FAMILY] = settings.themeFamily.name
         }
@@ -346,6 +367,8 @@ class SettingsRepository(context: Context) {
             imageSearchModelsRaw = this[KEY_IMAGE_SEARCH_MODELS].orEmpty(),
             imageGenModelRaw = this[KEY_IMAGE_GEN_MODEL].orEmpty(),
             imagePromptExtend = this[KEY_IMAGE_PROMPT_EXTEND] ?: true,
+            videoGenModelRaw = this[KEY_VIDEO_GEN_MODEL].orEmpty(),
+            videoPromptExtend = this[KEY_VIDEO_PROMPT_EXTEND] ?: true,
             themeMode = this[KEY_THEME_MODE].toEnum(ThemeMode.SYSTEM),
             themeFamily = this[KEY_THEME_FAMILY].toEnum(ThemeFamily.CLAUDE),
         )
@@ -379,6 +402,10 @@ class SettingsRepository(context: Context) {
         val KEY_IMAGE_GEN_MODEL = stringPreferencesKey("image_gen_model")
         /** 生图提示词智能改写（Qwen prompt_extend，默认开）。 */
         val KEY_IMAGE_PROMPT_EXTEND = booleanPreferencesKey("image_prompt_extend")
+        /** 视频生成模型覆盖（空 = 内置默认 wan3.0-video）。 */
+        val KEY_VIDEO_GEN_MODEL = stringPreferencesKey("video_gen_model")
+        /** 视频提示词智能改写（DashScope prompt_extend，默认开）。 */
+        val KEY_VIDEO_PROMPT_EXTEND = booleanPreferencesKey("video_prompt_extend")
         val KEY_EXTRA_PARAMS = stringPreferencesKey("extra_params")
         val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
         val KEY_THEME_FAMILY = stringPreferencesKey("theme_family")

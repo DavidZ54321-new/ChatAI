@@ -165,10 +165,19 @@ class ApiErrorMapperTest {
         assertTrue(ApiErrorMapper.dashScope("Arrearage", null).contains("余额"))
         assertTrue(ApiErrorMapper.dashScope("Throttling", null).contains("稍后重试"))
         assertTrue(ApiErrorMapper.dashScope("DataInspectionFailed", null).contains("安全审核"))
-        assertTrue(ApiErrorMapper.dashScope("ModelNotFound", null).contains("图像模型"))
+        assertTrue(ApiErrorMapper.dashScope("ModelNotFound", null).contains("生图模型"))
         // 未知码回落服务端 message。
         assertEquals("some detail", ApiErrorMapper.dashScope("WeirdCode", "some detail"))
         // 码与 message 都没有 → 兜底文案。
         assertTrue(ApiErrorMapper.dashScope(null, null).contains("生图请求失败"))
+    }
+
+    /** 同一套码表也服务视频生成：文案里的主体（生图/视频生成）要跟着换。 */
+    @Test
+    fun dashScopeSubjectRewordsImageSpecificText() {
+        assertTrue(ApiErrorMapper.dashScope("ModelNotFound", null, "视频生成").contains("视频生成模型"))
+        assertTrue(ApiErrorMapper.dashScope(null, null, "视频生成").contains("视频生成请求失败"))
+        // 与主体无关的码保持不变。
+        assertTrue(ApiErrorMapper.dashScope("InvalidApiKey", null, "视频生成").contains("API Key"))
     }
 }

@@ -47,6 +47,24 @@ object EndpointUrl {
         return root + "/api/v1/services/aigc/multimodal-generation/generation"
     }
 
+    /**
+     * DashScope 视频生成（**异步**）提交端点：固定挂在域名根的
+     * `/api/v1/services/aigc/video-generation/video-synthesis`。
+     * 必须带 `X-DashScope-Async: enable`，返回 `output.task_id`。
+     */
+    fun dashScopeVideoSynthesis(baseUrl: String): String? {
+        val root = originOf(baseUrl) ?: return null
+        return root + "/api/v1/services/aigc/video-generation/video-synthesis"
+    }
+
+    /** DashScope 异步任务查询端点：`/api/v1/tasks/{task_id}`。 */
+    fun dashScopeTask(baseUrl: String, taskId: String): String? {
+        val root = originOf(baseUrl) ?: return null
+        val id = taskId.trim()
+        if (id.isEmpty()) return null
+        return "$root/api/v1/tasks/$id"
+    }
+
     /** 从基址里取 scheme://host[:port]，取不到返回 null（用于推导同源的旁路端点）。 */
     fun originOf(baseUrl: String): String? {
         val trimmed = baseUrl.trim().trimEnd('/')

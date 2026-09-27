@@ -12,6 +12,7 @@ import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -63,15 +64,18 @@ object AttachmentPreview {
 }
 
 /**
- * 用户消息附件的全屏预览：左右滑在这条消息的图片/视频/音频之间切换。
+ * 附件全屏预览：左右滑在图片/视频/音频之间切换。
  * 图片可捏合缩放；视频/音频**手点才播**（滑到不自动播）；文档不进预览。
- * 没有「保存到相册」——保存只在远程图预览（文搜图/回答里的图）那一侧。
+ *
+ * [onSave] 非空时在右上角显示「保存到相册」（生成结果的视频/图片从这里保存）；
+ * 普通聊天附件的调用方传 null 即维持原样。
  */
 @Composable
 fun AttachmentPreviewDialog(
     images: List<MessageImage>,
     initialIndex: Int,
     onDismiss: () -> Unit,
+    onSave: ((MessageImage) -> Unit)? = null,
 ) {
     if (images.isEmpty()) return
     val start = initialIndex.coerceIn(0, images.lastIndex)
@@ -136,22 +140,40 @@ fun AttachmentPreviewDialog(
                     .align(Alignment.TopStart)
                     .padding(start = 20.dp, top = 24.dp),
             )
-            Box(
+            Row(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .padding(16.dp)
-                    .size(36.dp)
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(Color.White.copy(alpha = 0.16f))
-                    .clickable(onClick = onDismiss),
-                contentAlignment = Alignment.Center,
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Icon(
-                    imageVector = Icons.Filled.Close,
-                    contentDescription = "关闭",
-                    tint = Color.White,
-                    modifier = Modifier.size(20.dp),
-                )
+                if (onSave != null) {
+                    Text(
+                        text = "保存到相册",
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(Color.White.copy(alpha = 0.16f))
+                            .clickable { onSave(images[pagerState.currentPage]) }
+                            .padding(horizontal = 16.dp, vertical = 9.dp),
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(Color.White.copy(alpha = 0.16f))
+                        .clickable(onClick = onDismiss),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = "关闭",
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
             }
         }
     }
