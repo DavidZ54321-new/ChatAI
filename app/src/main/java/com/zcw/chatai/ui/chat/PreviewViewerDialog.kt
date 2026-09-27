@@ -247,7 +247,7 @@ fun PreviewViewerDialog(
                     WebView(ctx).apply {
                         webViewRef.value = this
                         // 导出回调桥：所有可导出页面共用（HTML 不触发导出，挂着也无害）。
-                        addJavascriptInterface(exportSink, "ExportSink")
+                        installExportBridge(exportSink)
                         when {
                             isMermaid -> {
                                 configureAssetLocked()
@@ -411,6 +411,11 @@ fun PreviewViewerDialog(
 }
 
 /** viewer 页内渲染的完成信号（fire-and-forget，结果已由页面自己展示）。 */
+@SuppressLint("JavascriptInterface")
+private fun WebView.installExportBridge(bridge: ExportBridge) {
+    addJavascriptInterface(bridge, "ExportSink")
+}
+
 private class ViewerBridge(private val onDone: (Boolean, String) -> Unit) {
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
 
@@ -430,7 +435,7 @@ private class ViewerBridge(private val onDone: (Boolean, String) -> Unit) {
  *
  * 所有回调都抛回主线程：顺序由主线程队列保证，也与 state 写入同线程。
  */
-private class ExportBridge(
+internal class ExportBridge(
     private val onPng: (ByteArray?, String) -> Unit,
     private val onGif: (List<String>, String) -> Unit,
     private val onProgress: (Int, Int) -> Unit,

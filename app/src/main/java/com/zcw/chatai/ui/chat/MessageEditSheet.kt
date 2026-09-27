@@ -60,9 +60,9 @@ fun MessageEditSheet(
     val scheme = MaterialTheme.colorScheme
     var modelOpen by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    // 供应商可能在草稿里被换掉，所以能力门禁按**草稿的**供应商判，而不是会话当前的。
-    val videoAvailable = ProviderCatalog.supportsVideo(draft.providerId)
-    val audioAvailable = ProviderCatalog.supportsAudio(draft.providerId)
+    // 供应商可能在草稿里被换掉，所以能力门禁跟草稿走（换供应商时由 ViewModel 重算）。
+    val videoAvailable = draft.videoInputAvailable
+    val audioAvailable = draft.audioInputAvailable
 
     // 一个系统选择器搞定所有附件；MIME 范围随能力扩大（支持音视频就带上），回来的文件按 MIME 归类。
     val mimeTypes = remember(videoAvailable, audioAvailable) {

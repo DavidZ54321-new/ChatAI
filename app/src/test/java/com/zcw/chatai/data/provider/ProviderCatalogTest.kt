@@ -14,7 +14,14 @@ class ProviderCatalogTest {
         assertEquals("通义千问", ProviderCatalog.byId(ProviderCatalog.QWEN)!!.displayName)
         assertEquals("OpenCode Go", ProviderCatalog.byId(ProviderCatalog.OPENCODE_GO)!!.displayName)
         assertEquals("MiMo", ProviderCatalog.byId(ProviderCatalog.MIMO)!!.displayName)
-        assertEquals(5, ProviderCatalog.presets.size)
+        assertEquals("OpenAI", ProviderCatalog.byId(ProviderCatalog.OPENAI)!!.displayName)
+        assertEquals("https://api.openai.com/v1", ProviderCatalog.byId(ProviderCatalog.OPENAI)!!.defaultBaseUrl)
+        assertEquals("gpt-6-astra", ProviderCatalog.byId(ProviderCatalog.OPENAI)!!.defaultModel)
+        assertEquals(ResponsesRequestWire.REASONING_OBJECT, ProviderCatalog.byId(ProviderCatalog.OPENAI)!!.responsesWire)
+        assertTrue(ProviderCatalog.byId(ProviderCatalog.OPENAI)!!.hostedWebSearch)
+        assertTrue(ProviderCatalog.byId(ProviderCatalog.OPENAI)!!.responsesPrimary)
+        assertFalse(ProviderCatalog.byId(ProviderCatalog.DEEPSEEK)!!.hostedWebSearch)
+        assertEquals(6, ProviderCatalog.presets.size)
     }
 
     @Test
@@ -52,10 +59,10 @@ class ProviderCatalogTest {
 
     @Test
     fun capabilityHelpersFollowPresetData() {
-        assertTrue(ProviderCatalog.supportsAudio(ProviderCatalog.MIMO))
-        assertFalse(ProviderCatalog.supportsAudio(ProviderCatalog.DEEPSEEK))
-        assertFalse(ProviderCatalog.supportsAudio(ProviderCatalog.QWEN))
-        assertTrue(ProviderCatalog.supportsVideo(ProviderCatalog.MIMO))
+        assertTrue(ProviderCatalog.supportsAudio(ProviderCatalog.MIMO, null))
+        assertFalse(ProviderCatalog.supportsAudio(ProviderCatalog.DEEPSEEK, null))
+        assertFalse(ProviderCatalog.supportsAudio(ProviderCatalog.QWEN, null))
+        assertTrue(ProviderCatalog.supportsVideo(ProviderCatalog.MIMO, null))
         assertEquals(35L * 1024 * 1024, ProviderCatalog.videoInlineMaxBytesFor(ProviderCatalog.MIMO))
         assertFalse(ProviderCatalog.videoUploadViaDashScope(ProviderCatalog.MIMO))
         assertTrue("Qwen 保留 DashScope 上传路由", ProviderCatalog.videoUploadViaDashScope(ProviderCatalog.QWEN))
@@ -72,6 +79,17 @@ class ProviderCatalogTest {
             ThinkingWire.STANDARD_REASONING_EFFORT,
             ProviderCatalog.thinkingWireFor(ProviderCatalog.DEEPSEEK),
         )
+    }
+
+    @Test
+    fun customCapabilitiesComeFromTheSelectedEntry() {
+        val profile = ProviderEntry("https://proxy/v1", "key", "model", customVideo = true, customAudio = true)
+        assertTrue(ProviderCatalog.isCustom("custom-profile"))
+        assertTrue(ProviderCatalog.supportsVideo("custom-profile", profile))
+        assertTrue(ProviderCatalog.supportsAudio("custom-profile", profile))
+        assertFalse(ProviderCatalog.supportsVideo("custom-profile", null))
+        assertFalse(ProviderCatalog.supportsAudio("custom-profile", null))
+        assertEquals("Proxy", ProviderCatalog.displayName("custom-profile", profile.copy(displayName = "Proxy")))
     }
 
     @Test

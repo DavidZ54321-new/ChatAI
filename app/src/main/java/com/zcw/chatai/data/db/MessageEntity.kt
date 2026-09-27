@@ -57,6 +57,8 @@ data class MessageEntity(
     val toolCallId: String? = null,
     @ColumnInfo(name = "tool_result")
     val toolResult: String? = null,
+    @ColumnInfo(name = "citations")
+    val citations: String? = null,
     @ColumnInfo(name = "created_at")
     val createdAt: Long,
     @ColumnInfo(name = "updated_at")

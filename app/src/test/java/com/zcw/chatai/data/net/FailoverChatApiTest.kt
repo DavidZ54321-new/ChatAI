@@ -59,6 +59,26 @@ class FailoverChatApiTest {
     }
 
     @Test
+    fun openAiUsesResponsesOnlyWithoutChatFailover() = runBlocking {
+        var chatCalled = false
+        val fallback = face(events = listOf(ChatStreamEvent.Delta("responses")))
+        val api = FailoverChatApi(
+            primary = face(onCall = { chatCalled = true }),
+            responsesFallbacks = mapOf(ProviderCatalog.OPENAI to fallback),
+            log = {},
+        )
+        val events = api.stream(
+            config("gpt-6-astra").copy(
+                providerId = ProviderCatalog.OPENAI,
+                responsesPrimary = true,
+            ),
+            emptyList(),
+        ).toList()
+        assertEquals("responses", events.filterIsInstance<ChatStreamEvent.Delta>().single().content)
+        assertTrue(!chatCalled)
+    }
+
+    @Test
     fun deepseekStaysOnChatEvenWhenChatFails() = runBlocking {
         var fallbackCalled = false
         val api = apiOf(

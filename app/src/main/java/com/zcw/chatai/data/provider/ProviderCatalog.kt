@@ -38,6 +38,22 @@ enum class ThinkingWire {
     MIMO_THINKING_OBJECT,
 }
 
+/**
+ * Responses 面怎么带思考与采样参数。
+ *
+ * OpenAI 文档（2026-09，Responses / model guidance）：
+ * - 思考是 `reasoning: { effort }`，不是 chat 面的 `reasoning_effort`；
+ * - effort 不是 `none` 时，`temperature` / `top_p` / `top_logprobs` 不支持，必须去掉；
+ * - effort 为 `none` 或省略思考字段时，`temperature` 仍是合法字段。
+ * GPT-6 Astra 不接受 `none`（400），Sol / Luna 接受；这是模型差异，不在这里改写。
+ *
+ * OpenCode Go 的 Responses 面实测任何 `reasoning` 都 400，所以保持不发。
+ */
+enum class ResponsesRequestWire {
+    OMIT_REASONING,
+    REASONING_OBJECT,
+}
+
 data class ProviderPreset(
     val id: String,
     val displayName: String,
@@ -61,6 +77,18 @@ data class ProviderPreset(
     val videoUploadViaDashScope: Boolean = false,
     /** 思考字段上行风格，决定网络层怎么序列化思考开关。 */
     val thinkingWire: ThinkingWire = ThinkingWire.STANDARD_REASONING_EFFORT,
+    /** Responses 面的思考/温度线型。见 [ResponsesRequestWire]。 */
+    val responsesWire: ResponsesRequestWire = ResponsesRequestWire.OMIT_REASONING,
+    /**
+     * 联网搜索是 Responses 托管工具 `{type:"web_search"}`，不是客户端 function，
+     * 也不另找搜索后端。OpenAI 新接入走这条（文档：Responses + `web_search`）。
+     */
+    val hostedWebSearch: Boolean = false,
+    /**
+     * 主对话只走 Responses，不经 chat/completions。
+     * OpenAI 文档：GPT-6 Astra 的工具调用要求 Responses；Chat Completions 的搜索只留给旧的 search 模型。
+     */
+    val responsesPrimary: Boolean = false,
 )
 
 /** 一套供应商连接配置（DataStore `providers_json` 的持久化单元）。 */
@@ -72,6 +100,9 @@ data class ProviderEntry(
     val anthropicBaseUrl: String = "",
     /** Responses 工具面 Base；空 = 与 Chat 同一个 `/v1` 根。 */
     val responsesBaseUrl: String = "",
+    val displayName: String = "",
+    val customVideo: Boolean = false,
+    val customAudio: Boolean = false,
 )
 
 /**
@@ -84,7 +115,9 @@ object ProviderCatalog {
     const val QWEN = "qwen"
     const val OPENCODE_GO = "opencode-go"
     const val MIMO = "mimo"
+    const val OPENAI = "openai"
     const val CUSTOM = "custom"
+    const val CUSTOM_PREFIX = "custom-"
 
     val presets: List<ProviderPreset> = listOf(
         ProviderPreset(
@@ -132,6 +165,16 @@ object ProviderCatalog {
             thinkingWire = ThinkingWire.MIMO_THINKING_OBJECT,
         ),
         ProviderPreset(
+            id = OPENAI,
+            displayName = "OpenAI",
+            defaultBaseUrl = "https://api.openai.com/v1",
+            defaultModel = "gpt-6-astra",
+            caps = ProviderCaps(image = true),
+            responsesWire = ResponsesRequestWire.REASONING_OBJECT,
+            hostedWebSearch = true,
+            responsesPrimary = true,
+        ),
+        ProviderPreset(
             id = CUSTOM,
             displayName = "自定义",
             defaultBaseUrl = "",
@@ -142,7 +185,16 @@ object ProviderCatalog {
 
     fun byId(id: String): ProviderPreset? = presets.firstOrNull { it.id == id }
 
-    fun displayName(id: String): String = byId(id)?.displayName ?: id
+    fun displayName(id: String, entry: ProviderEntry? = null): String =
+        if (isCustom(id)) entry?.displayName?.takeIf { it.isNotBlank() } ?: "自定义" else byId(id)?.displayName ?: id
+
+    fun isCustom(id: String): Boolean = id == CUSTOM || id.startsWith(CUSTOM_PREFIX)
+
+    fun supportsVideo(id: String, entry: ProviderEntry?): Boolean =
+        if (isCustom(id)) entry?.customVideo == true else byId(id)?.caps?.video == true
+
+    fun supportsAudio(id: String, entry: ProviderEntry?): Boolean =
+        if (isCustom(id)) entry?.customAudio == true else byId(id)?.caps?.audio == true
 
     /**
      * 该供应商实际生效的对话模型：条目里填过的优先，没填则回落到预设默认。
@@ -150,12 +202,6 @@ object ProviderCatalog {
      */
     fun defaultModelFor(providers: Map<String, ProviderEntry>, id: String): String =
         providers[id]?.model?.takeIf { it.isNotBlank() } ?: byId(id)?.defaultModel.orEmpty()
-
-    /** 该供应商是否支持视频输入（附件面板门禁与发送前预检共用同一条判定）。 */
-    fun supportsVideo(id: String): Boolean = byId(id)?.caps?.video == true
-
-    /** 该供应商是否支持音频输入（附件面板门禁与发送前预检共用同一条判定）。 */
-    fun supportsAudio(id: String): Boolean = byId(id)?.caps?.audio == true
 
     /** 该供应商是否支持视频**生成**（视频页入口与发送前预检共用同一条判定）。 */
     fun supportsVideoGen(id: String): Boolean = byId(id)?.caps?.videoGen == true
@@ -180,6 +226,7 @@ object ProviderCatalog {
             lower.contains("dashscope") || lower.contains("aliyuncs.com") -> QWEN
             lower.contains("xiaomimimo.com") -> MIMO
             lower.contains("opencode.ai") -> OPENCODE_GO
+            lower.contains("api.openai.com") -> OPENAI
             else -> CUSTOM
         }
     }

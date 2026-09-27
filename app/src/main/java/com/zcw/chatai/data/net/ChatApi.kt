@@ -1,6 +1,7 @@
 package com.zcw.chatai.data.net
 
 import com.zcw.chatai.data.model.ChatConfig
+import com.zcw.chatai.data.model.MessageCitation
 import com.zcw.chatai.data.model.ToolCall
 import kotlinx.coroutines.flow.Flow
 
@@ -65,6 +66,8 @@ sealed interface ChatStreamEvent {
         val reasoningTokens: Int? = null,
         val cachedTokens: Int? = null,
     ) : ChatStreamEvent
+
+    data class Citations(val values: List<MessageCitation>) : ChatStreamEvent
 
     /** 模型决定调用工具；`arguments` 是逐字符增量，必须按 index 拼接。 */
     data class ToolCallDelta(

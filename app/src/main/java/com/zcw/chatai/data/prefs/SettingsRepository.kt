@@ -18,6 +18,7 @@ import com.zcw.chatai.data.provider.AnthropicBaseLayout
 import com.zcw.chatai.data.provider.ProviderCatalog
 import com.zcw.chatai.data.provider.ProviderConfigCodec
 import com.zcw.chatai.data.provider.ProviderEntry
+import com.zcw.chatai.data.provider.ResponsesRequestWire
 import com.zcw.chatai.data.provider.ToolModels
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -163,6 +164,7 @@ fun ChatSettings.toChatConfig(
     personaId: String? = null,
 ): ChatConfig {
     val entry = providers[providerId] ?: activeProvider
+    val preset = ProviderCatalog.byId(providerId)
     val persona = PersonaConfigCodec.resolveEffective(personas, resolvedActivePersonaId, personaId)
     return ChatConfig(
         baseUrl = entry.baseUrl,
@@ -178,9 +180,14 @@ fun ChatSettings.toChatConfig(
         historyImageTurns = historyImageTurns,
         extraParams = persona.extraParams.ifBlank { null },
         providerId = providerId,
-        sendSessionHeader = ProviderCatalog.byId(providerId)?.sendSessionHeader == true,
+        sendSessionHeader = preset?.sendSessionHeader == true,
         webSearchEnabled = false,
         thinkingWire = ProviderCatalog.thinkingWireFor(providerId),
+        supportsVideo = ProviderCatalog.supportsVideo(providerId, entry),
+        supportsAudio = ProviderCatalog.supportsAudio(providerId, entry),
+        responsesWire = preset?.responsesWire ?: ResponsesRequestWire.OMIT_REASONING,
+        hostedWebSearch = preset?.hostedWebSearch == true,
+        responsesPrimary = preset?.responsesPrimary == true,
         anthropicBaseUrl = EndpointUrl.anthropicBase(
             entry.baseUrl,
             ProviderCatalog.byId(providerId)?.anthropicBaseLayout

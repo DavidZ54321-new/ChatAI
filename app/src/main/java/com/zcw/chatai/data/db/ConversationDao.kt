@@ -35,6 +35,9 @@ interface ConversationDao {
     @Query("SELECT * FROM conversations WHERE id = :id")
     suspend fun getById(id: String): ConversationEntity?
 
+    @Query("SELECT COUNT(*) FROM conversations WHERE provider_id = :providerId")
+    suspend fun countByProviderId(providerId: String): Int
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(conversation: ConversationEntity)
 

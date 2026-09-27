@@ -57,6 +57,7 @@ class BackupCodecTest {
         toolCalls = """[{"id":"call_1","name":"web_search","arguments":"{}"}]""",
         toolCallId = null,
         toolResult = null,
+        citations = """[{"startIndex":0,"endIndex":2,"url":"https://example.org","title":"Example"}]""",
         createdAt = 1_700_000_000_000L,
         updatedAt = 1_700_000_100_000L,
     )
@@ -74,6 +75,8 @@ class BackupCodecTest {
                 model = "qwen3.8-max",
                 anthropicBaseUrl = "https://custom/anthropic",
             ),
+            "custom-a" to ProviderEntry("https://proxy/v1", "key-a", "model-a", displayName = "Proxy A", customVideo = true),
+            "custom-b" to ProviderEntry("https://proxy/v1", "key-b", "model-b", displayName = "Proxy B", customAudio = true),
         ),
         activeProviderId = ProviderCatalog.QWEN,
         searchProviderId = ProviderCatalog.DEEPSEEK,

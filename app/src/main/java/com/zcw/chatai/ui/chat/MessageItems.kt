@@ -30,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
 import com.zcw.chatai.R
 import com.zcw.chatai.data.model.MessageStatus
@@ -176,6 +177,19 @@ private fun AssistantStep(
                     .fillMaxWidth()
                     .combinedClickable(onClick = {}, onLongClick = onLongPress),
             )
+        }
+        if (message.citations.isNotEmpty()) {
+            val uriHandler = LocalUriHandler.current
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                message.citations.distinctBy { it.url }.forEachIndexed { index, citation ->
+                    Text(
+                        text = "${index + 1}. ${citation.title?.takeIf { it.isNotBlank() } ?: citation.url}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.clickable { runCatching { uriHandler.openUri(citation.url) } },
+                    )
+                }
+            }
         }
         when (message.status) {
             MessageStatus.ERROR -> ErrorRow(message.errorMessage, onRetry)

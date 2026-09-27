@@ -6,6 +6,7 @@ import com.zcw.chatai.data.model.Conversation
 import com.zcw.chatai.data.model.ConversationKind
 import com.zcw.chatai.data.model.Message
 import com.zcw.chatai.data.model.MessageStatus
+import com.zcw.chatai.data.model.MessageCitation
 import com.zcw.chatai.data.model.Role
 import com.zcw.chatai.data.model.ToolCall
 import com.zcw.chatai.data.model.ToolResult
@@ -129,6 +130,13 @@ class MappersTest {
         assertEquals(7, restored.cachedTokens)
         assertEquals(9_400L, restored.reasoningMs)
         assertEquals("attachments/conv-1/att-1.jpg", restored.attachments.single().relativePath)
+    }
+
+    @Test
+    fun citationsRoundTripAndOldRowsDefaultToEmpty() {
+        val cited = message.copy(citations = listOf(MessageCitation(0, 5, "https://example.org", "Example")))
+        assertEquals(cited, cited.toEntity().toModel())
+        assertEquals(emptyList<MessageCitation>(), message.toEntity().toModel().citations)
     }
 
     @Test

@@ -122,9 +122,13 @@ class ChatViewModel(
             conversationProviderId = null,
             preferredSearchProviderId = settings.searchProviderId,
         )
-        val textAvailable = backendIds.textProviderIds.any { providerId ->
-            settings.providers[providerId]?.let { providerEntry ->
-                searchProviders[providerId]?.available(providerEntry.baseUrl, providerEntry.apiKey)
+        val providerId = binding?.providerId ?: settings.activeProviderId
+        val providerEntry = settings.providers[providerId] ?: entry
+        val hostedSearchAvailable = ProviderCatalog.byId(providerId)?.hostedWebSearch == true &&
+            providerEntry.apiKey.isNotBlank()
+        val textAvailable = hostedSearchAvailable || backendIds.textProviderIds.any { backendId ->
+            settings.providers[backendId]?.let { backendEntry ->
+                searchProviders[backendId]?.available(backendEntry.baseUrl, backendEntry.apiKey)
             } == true
         }
         val imageAvailable = backendIds.imageProviderId?.let { providerId ->
@@ -141,6 +145,7 @@ class ChatViewModel(
             webSearchAvailable = textAvailable || imageAvailable,
             pendingWebSearch = binding?.webSearchEnabled == true,
             activeProviderId = settings.activeProviderId,
+            providers = settings.providers,
             pendingModel = binding?.model,
             pendingProviderId = binding?.providerId,
             personas = settings.personas,
@@ -418,6 +423,8 @@ class ChatViewModel(
             model = current.model,
             providerId = current.providerId,
             webSearchEnabled = current.webSearchEnabled,
+            videoInputAvailable = current.videoInputAvailable,
+            audioInputAvailable = current.audioInputAvailable,
             laterCount = MessageEdit.laterCount(current.messages, message.id),
         )
     }
@@ -439,7 +446,16 @@ class ChatViewModel(
                 notice.value = "「${ProviderCatalog.displayName(providerId)}」还没配置模型，请先到设置里填写"
                 return@launch
             }
-            updateEditDraft { it.copy(providerId = providerId, model = model, bindingDirty = true) }
+            val entry = settings.providers[providerId]
+            updateEditDraft {
+                it.copy(
+                    providerId = providerId,
+                    model = model,
+                    bindingDirty = true,
+                    videoInputAvailable = ProviderCatalog.supportsVideo(providerId, entry),
+                    audioInputAvailable = ProviderCatalog.supportsAudio(providerId, entry),
+                )
+            }
         }
     }
 
@@ -773,6 +789,7 @@ class ChatViewModel(
                 item.copy(
                     content = overlay.content,
                     reasoning = overlay.reasoning.ifEmpty { null },
+                    citations = overlay.citations,
                     reasoningMs = overlay.reasoningMs,
                     status = MessageStatus.STREAMING,
                 )
@@ -800,6 +817,7 @@ class ChatViewModel(
         val providerId = conversation?.providerId?.takeIf { it.isNotBlank() }
             ?: composer.pendingProviderId?.takeIf { it.isNotBlank() }
             ?: composer.activeProviderId
+        val providerEntry = composer.providers[providerId]
         val model = conversation?.model?.takeIf { it.isNotBlank() }
             ?: composer.pendingModel?.takeIf { it.isNotBlank() }
             ?: composer.defaultModel
@@ -813,6 +831,7 @@ class ChatViewModel(
             title = conversation?.title ?: "新对话",
             model = model,
             providerId = providerId,
+            providerEntry = providerEntry,
             personaId = personaId,
             personaName = composer.personas[personaId]?.name.orEmpty(),
             messages = items,
@@ -827,8 +846,8 @@ class ChatViewModel(
             webSearchEnabled = conversation?.webSearchEnabled == true ||
                 (id == null && composer.pendingWebSearch),
             webSearchAvailable = composer.webSearchAvailable,
-            videoInputAvailable = ProviderCatalog.supportsVideo(providerId),
-            audioInputAvailable = ProviderCatalog.supportsAudio(providerId),
+            videoInputAvailable = ProviderCatalog.supportsVideo(providerId, providerEntry),
+            audioInputAvailable = ProviderCatalog.supportsAudio(providerId, providerEntry),
             videoUploadNotice = id?.let { turn.videoUploads[it] },
         )
     }
@@ -850,6 +869,7 @@ class ChatViewModel(
         /** 还没有会话时用户先开的 🌐；建会话时落库。 */
         val pendingWebSearch: Boolean = false,
         val activeProviderId: String,
+        val providers: Map<String, com.zcw.chatai.data.provider.ProviderEntry>,
         /** 还没有会话时用户先选好的绑定；建会话时落库。 */
         val pendingModel: String? = null,
         val pendingProviderId: String? = null,

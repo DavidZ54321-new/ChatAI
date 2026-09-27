@@ -4,6 +4,7 @@ import com.zcw.chatai.data.model.Conversation
 import com.zcw.chatai.data.model.ConversationKind
 import com.zcw.chatai.data.model.Message
 import com.zcw.chatai.data.model.MessageStatus
+import com.zcw.chatai.data.model.MessageCitation
 import com.zcw.chatai.data.model.Role
 
 fun ConversationEntity.toModel(): Conversation = Conversation(
@@ -59,6 +60,7 @@ fun MessageEntity.toModel(): Message = Message(
     toolCalls = ToolCallCodec.decodeCalls(toolCalls),
     toolCallId = toolCallId,
     toolResult = ToolCallCodec.decodeResult(toolResult),
+    citations = MessageCitationCodec.decode(citations),
     createdAt = createdAt,
     updatedAt = updatedAt,
 )
@@ -82,6 +84,7 @@ fun Message.toEntity(): MessageEntity = MessageEntity(
     toolCalls = ToolCallCodec.encodeCalls(toolCalls),
     toolCallId = toolCallId,
     toolResult = ToolCallCodec.encodeResult(toolResult),
+    citations = MessageCitationCodec.encode(citations),
     createdAt = createdAt,
     updatedAt = updatedAt,
 )

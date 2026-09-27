@@ -77,10 +77,12 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val editDraft by viewModel.editDraft.collectAsStateWithLifecycle()
     val autoFocusComposer by viewModel.autoFocusComposer.collectAsStateWithLifecycle()
-    val streamHaptic by app.settingsRepository.settings
-        .map { it.streamHaptic }
-        .distinctUntilChanged()
-        .collectAsStateWithLifecycle(initialValue = true)
+    val streamHapticFlow = remember(app.settingsRepository) {
+        app.settingsRepository.settings
+            .map { it.streamHaptic }
+            .distinctUntilChanged()
+    }
+    val streamHaptic by streamHapticFlow.collectAsStateWithLifecycle(initialValue = true)
     var showSettings by remember { mutableStateOf(false) }
     var showConversations by remember { mutableStateOf(false) }
     var showModelPicker by remember { mutableStateOf(false) }

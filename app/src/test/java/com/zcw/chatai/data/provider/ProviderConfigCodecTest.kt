@@ -16,6 +16,15 @@ class ProviderConfigCodecTest {
     }
 
     @Test
+    fun roundTripKeepsMultipleNamedCustomProfilesAndCapabilities() {
+        val providers = mapOf(
+            "custom-one" to ProviderEntry("https://proxy/v1", "key-one", "model-a", displayName = "Proxy A", customVideo = true),
+            "custom-two" to ProviderEntry("https://proxy/v1", "key-two", "model-b", displayName = "Proxy B", customAudio = true),
+        )
+        assertEquals(providers, ProviderConfigCodec.decode(ProviderConfigCodec.encode(providers)))
+    }
+
+    @Test
     fun malformedOrMissingJsonDecodesEmpty() {
         assertTrue(ProviderConfigCodec.decode(null).isEmpty())
         assertTrue(ProviderConfigCodec.decode("").isEmpty())

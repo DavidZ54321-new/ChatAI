@@ -1,5 +1,6 @@
 package com.zcw.chatai.data.ai
 
+import com.zcw.chatai.data.model.MessageCitation
 import com.zcw.chatai.data.net.ChatStreamEvent
 
 /**
@@ -26,6 +27,9 @@ class StreamAccumulator(
         private set
 
     var usage: ChatStreamEvent.Usage? = null
+        private set
+
+    var citations: List<MessageCitation> = emptyList()
         private set
 
     /**
@@ -65,6 +69,8 @@ class StreamAccumulator(
             }
 
             is ChatStreamEvent.Usage -> usage = event
+
+            is ChatStreamEvent.Citations -> citations = event.values
 
             is ChatStreamEvent.Finished -> finishReason = event.reason
 

@@ -59,6 +59,9 @@ object ProviderConfigCodec {
         model = model,
         anthropicBaseUrl = anthropicBaseUrl,
         responsesBaseUrl = responsesBaseUrl,
+        displayName = displayName,
+        customVideo = customVideo,
+        customAudio = customAudio,
     )
 
     private fun ProviderEntryDto.toModel() = ProviderEntry(
@@ -67,6 +70,9 @@ object ProviderConfigCodec {
         model = model,
         anthropicBaseUrl = anthropicBaseUrl,
         responsesBaseUrl = responsesBaseUrl,
+        displayName = displayName,
+        customVideo = customVideo,
+        customAudio = customAudio,
     )
 }
 
@@ -77,4 +83,7 @@ private data class ProviderEntryDto(
     val model: String = "",
     val anthropicBaseUrl: String = "",
     val responsesBaseUrl: String = "",
+    val displayName: String = "",
+    val customVideo: Boolean = false,
+    val customAudio: Boolean = false,
 )

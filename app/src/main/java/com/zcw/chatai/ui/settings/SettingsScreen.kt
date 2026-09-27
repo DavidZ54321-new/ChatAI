@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -21,10 +22,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -35,8 +42,10 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.PopupProperties
 import androidx.activity.compose.BackHandler
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.platform.LocalContext
@@ -71,7 +80,7 @@ fun SettingsScreen(
     }
     val app = LocalContext.current.applicationContext as ChatAiApp
     val viewModel: SettingsViewModel = viewModel(
-        factory = SettingsViewModel.factory(app.settingsRepository, app.chatApi),
+        factory = SettingsViewModel.factory(app.settingsRepository, app.chatApi, app.chatRepository),
     )
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
@@ -90,6 +99,7 @@ fun SettingsScreen(
     val colors = ChatTheme.colors
     val scheme = MaterialTheme.colorScheme
     var toolEndpointsExpanded by remember { mutableStateOf(false) }
+    var confirmDeleteProviderId by remember { mutableStateOf<String?>(null) }
 
     Column(
         modifier = modifier
@@ -133,12 +143,51 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             SectionTitle("服务商")
+            val customProviderIds = state.providers.keys.filter(ProviderCatalog::isCustom)
+            val customSelected = ProviderCatalog.isCustom(state.activeProviderId)
             ChipFlow(
-                options = ProviderCatalog.presets.map { it.id to it.displayName },
-                selected = state.activeProviderId,
-                onSelect = viewModel::selectProvider,
+                options = ProviderCatalog.presets.filterNot { it.id == ProviderCatalog.CUSTOM }
+                    .map { it.id to it.displayName } + (ProviderCatalog.CUSTOM to "自定义"),
+                selected = if (customSelected) ProviderCatalog.CUSTOM else state.activeProviderId,
+                onSelect = { id ->
+                    if (id == ProviderCatalog.CUSTOM) viewModel.enterCustomProviders()
+                    else viewModel.selectProvider(id)
+                },
             )
-            ProviderNote(state.activeProviderId)
+            if (customSelected) {
+                CustomProviderSelector(
+                    providerIds = customProviderIds,
+                    providers = state.providers,
+                    selectedId = state.activeProviderId,
+                    onSelect = viewModel::selectProvider,
+                    onAdd = viewModel::addCustomProvider,
+                    onDelete = { id -> confirmDeleteProviderId = id },
+                )
+            }
+            ProviderNote(state.activeProviderId, state.providers[state.activeProviderId])
+            if (ProviderCatalog.isCustom(state.activeProviderId)) {
+                Field(
+                    label = "档案名称",
+                    value = state.displayName,
+                    onValueChange = { value -> viewModel.update { it.copy(displayName = value) } },
+                    error = state.customNameError,
+                )
+                Text(
+                    text = "以下能力是手动声明，仅控制附件入口与发送前检查；不会自动适配供应商的特殊协议。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = scheme.onSurfaceVariant,
+                )
+                SwitchRow(
+                    label = "支持视频理解（标准兼容端点）",
+                    checked = state.customVideo,
+                    onCheckedChange = { value -> viewModel.update { it.copy(customVideo = value) } },
+                )
+                SwitchRow(
+                    label = "支持音频理解（MiMo input_audio 形状）",
+                    checked = state.customAudio,
+                    onCheckedChange = { value -> viewModel.update { it.copy(customAudio = value) } },
+                )
+            }
 
             SectionTitle("接口")
             Field(
@@ -430,6 +479,120 @@ fun SettingsScreen(
             )
         }
     }
+    confirmDeleteProviderId?.let { id ->
+        AlertDialog(
+            onDismissRequest = { confirmDeleteProviderId = null },
+            title = { Text("删除自定义档案？") },
+            text = { Text("删除“${ProviderCatalog.displayName(id, state.providers[id])}”后，其 Base URL、API Key 和模型配置会从本机移除。已绑定会话的档案无法删除。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.deleteCustomProvider(id)
+                    confirmDeleteProviderId = null
+                }) { Text("删除") }
+            },
+            dismissButton = { TextButton(onClick = { confirmDeleteProviderId = null }) { Text("取消") } },
+        )
+    }
+}
+
+@Composable
+private fun CustomProviderSelector(
+    providerIds: List<String>,
+    providers: Map<String, ProviderEntry>,
+    selectedId: String,
+    onSelect: (String) -> Unit,
+    onAdd: () -> Unit,
+    onDelete: (String) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val focusManager = LocalFocusManager.current
+    val selectedEntry = providers[selectedId]
+    val scheme = MaterialTheme.colorScheme
+    // 菜单不抢窗口焦点。focusable 的 Popup 关掉时，系统会按「焦点回到编辑框」把输入法拉起来。
+    fun closeMenu() {
+        expanded = false
+        focusManager.clearFocus()
+    }
+    BackHandler(enabled = expanded) { closeMenu() }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Box {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .clickable(enabled = providerIds.isNotEmpty()) { expanded = true },
+                shape = RoundedCornerShape(14.dp),
+                color = ChatTheme.colors.surfaceCard,
+                border = androidx.compose.foundation.BorderStroke(1.dp, ChatTheme.colors.hairline),
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "自定义配置",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = scheme.onSurfaceVariant,
+                        )
+                        Text(
+                            text = selectedEntry?.let { ProviderCatalog.displayName(selectedId, it) }
+                                ?: "尚无自定义档案",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = scheme.onSurface,
+                        )
+                    }
+                    Icon(
+                        imageVector = Icons.Filled.ArrowDropDown,
+                        contentDescription = "选择自定义档案",
+                        tint = scheme.onSurfaceVariant,
+                    )
+                }
+            }
+            // DropdownMenu 内容列自己会 verticalScroll。再套一层会在 Popup 里拿到无限高度并崩溃。
+            // 高度上限留给它自带的滚动：档案多过 320dp 时在菜单内滚。
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = ::closeMenu,
+                properties = PopupProperties(focusable = false),
+                modifier = Modifier
+                    .fillMaxWidth(0.88f)
+                    .heightIn(max = 320.dp),
+            ) {
+                providerIds.forEach { id ->
+                    val entry = providers.getValue(id)
+                    DropdownMenuItem(
+                        text = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = ProviderCatalog.displayName(id, entry),
+                                    modifier = Modifier.weight(1f),
+                                    maxLines = 1,
+                                )
+                                if (id == selectedId) {
+                                    Text(
+                                        text = "当前",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = scheme.primary,
+                                    )
+                                }
+                            }
+                        },
+                        onClick = {
+                            closeMenu()
+                            onSelect(id)
+                        },
+                    )
+                }
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ActionPill(label = "新增档案", onClick = onAdd)
+            if (ProviderCatalog.isCustom(selectedId)) {
+                ActionPill(label = "删除当前档案", onClick = { onDelete(selectedId) })
+            }
+        }
+    }
 }
 
 private fun ImageDetail.label(): String = when (this) {
@@ -439,7 +602,7 @@ private fun ImageDetail.label(): String = when (this) {
 }
 
 @Composable
-private fun ProviderNote(providerId: String) {
+private fun ProviderNote(providerId: String, entry: ProviderEntry?) {
     val text = when (providerId) {
         ProviderCatalog.QWEN ->
             "通义千问：联网搜索/文搜图/图搜图走 Responses API（搜索 4 元/千次、文搜图 24 元/千次、" +
@@ -452,8 +615,10 @@ private fun ProviderNote(providerId: String) {
         ProviderCatalog.MIMO ->
             "MiMo：联网搜索走 Chat 面 web_search 插件（需在控制台启用插件，约 ¥16/千次 + 输入 token）；" +
                 "支持图片/视频（≤35MiB 内联发送）与音频理解；思考字段为 thinking:{type}。抓取由本机完成。"
+        ProviderCatalog.OPENAI ->
+            "OpenAI 官方：主对话走 Responses API；🌐 使用托管 web_search 并显示来源链接。"
         else ->
-            "自定义端点：使用标准 OpenAI 兼容接口；连接与密钥只存在本机。"
+            "自定义端点「${ProviderCatalog.displayName(providerId, entry)}」：使用标准 OpenAI 兼容接口；连接与密钥只存在本机。"
     }
     Text(
         text = text,

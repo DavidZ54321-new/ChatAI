@@ -33,11 +33,12 @@ interface MessageDao {
         updatedAt: Long,
     )
 
-    @Query("UPDATE messages SET content = :content, reasoning_content = :reasoning, status = :status, error_message = :errorMessage, prompt_tokens = :promptTokens, completion_tokens = :completionTokens, reasoning_tokens = :reasoningTokens, cached_tokens = :cachedTokens, reasoning_ms = :reasoningMs, updated_at = :updatedAt WHERE id = :id")
+    @Query("UPDATE messages SET content = :content, reasoning_content = :reasoning, citations = :citations, status = :status, error_message = :errorMessage, prompt_tokens = :promptTokens, completion_tokens = :completionTokens, reasoning_tokens = :reasoningTokens, cached_tokens = :cachedTokens, reasoning_ms = :reasoningMs, updated_at = :updatedAt WHERE id = :id")
     suspend fun finalize(
         id: String,
         content: String,
         reasoning: String?,
+        citations: String?,
         status: String,
         errorMessage: String?,
         promptTokens: Int?,

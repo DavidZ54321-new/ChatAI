@@ -1,6 +1,7 @@
 package com.zcw.chatai.data.model
 
 import com.zcw.chatai.data.provider.ProviderCatalog
+import com.zcw.chatai.data.provider.ResponsesRequestWire
 import com.zcw.chatai.data.provider.ThinkingWire
 
 /**
@@ -52,4 +53,12 @@ data class ChatConfig(
     val responsesBaseUrl: String = "",
     /** 思考字段上行风格（由供应商预设决定，见 `ProviderPreset.thinkingWire`）。 */
     val thinkingWire: ThinkingWire = ThinkingWire.STANDARD_REASONING_EFFORT,
+    val supportsVideo: Boolean = false,
+    val supportsAudio: Boolean = false,
+    /** Responses 面的思考/温度线型（预设数据，见 [ResponsesRequestWire]）。 */
+    val responsesWire: ResponsesRequestWire = ResponsesRequestWire.OMIT_REASONING,
+    /** 联网搜索走 Responses 托管 `web_search`，不走客户端 function，也不另找搜索后端。 */
+    val hostedWebSearch: Boolean = false,
+    /** 主对话只走 Responses，不经 chat/completions。 */
+    val responsesPrimary: Boolean = false,
 )

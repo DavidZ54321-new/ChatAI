@@ -25,8 +25,9 @@ import kotlinx.coroutines.flow.flow
  */
 class FailoverChatApi(
     private val primary: ChatApi,
-    /** providerId → 该供应商的 Responses 兜底面（目前只有 OpenCode Go）。 */
+    /** providerId → Responses 协议适配器。OpenAI 为主面，OpenCode Go 仍按已知模型兜底。 */
     private val responsesFallbacks: Map<String, ChatApi> = mapOf(
+        ProviderCatalog.OPENAI to ResponsesChatApi(),
         ProviderCatalog.OPENCODE_GO to ResponsesChatApi(),
     ),
     /** 换面日志（默认 logcat；JVM 单测没有 android.util.Log，只能注入）。 */
@@ -35,10 +36,12 @@ class FailoverChatApi(
 
     override fun stream(config: ChatConfig, messages: List<ChatRequestMessage>): Flow<ChatStreamEvent> = flow {
         val fallback = responsesFallbacks[config.providerId]
-        val faces = if (fallback != null && GoDialogueFace.prefersResponses(config.model)) {
-            listOf(fallback to "responses", primary to "chat")
-        } else {
-            listOf(primary to "chat")
+        val faces = when {
+            config.responsesPrimary && fallback != null ->
+                listOf(fallback to "responses")
+            fallback != null && GoDialogueFace.prefersResponses(config.model) ->
+                listOf(fallback to "responses", primary to "chat")
+            else -> listOf(primary to "chat")
         }
         var lastError: Throwable? = null
         faces.forEachIndexed { index, (face, faceName) ->

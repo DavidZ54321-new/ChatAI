@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.zcw.chatai.data.net.ChatApi
+import com.zcw.chatai.data.ChatRepository
 import com.zcw.chatai.data.prefs.ChatSettings
 import com.zcw.chatai.data.prefs.ImageDetail
 import com.zcw.chatai.data.prefs.SettingsRepository
@@ -28,6 +29,7 @@ import kotlinx.serialization.json.JsonObject
 class SettingsViewModel(
     private val settingsRepository: SettingsRepository,
     private val chatApi: ChatApi,
+    private val repository: ChatRepository,
 ) : ViewModel() {
 
     data class FormState(
@@ -41,6 +43,9 @@ class SettingsViewModel(
         /** 空 = 用该供应商规则从 Chat Base 推导。 */
         val anthropicBaseUrl: String = "",
         val responsesBaseUrl: String = "",
+        val displayName: String = "",
+        val customVideo: Boolean = false,
+        val customAudio: Boolean = false,
         /** 提示词与生成参数已搬进角色表（角色管理页维护），这里只读激活角色名做提示。 */
         val activePersonaName: String = "",
         val imageDetail: ImageDetail = ImageDetail.FOLLOW_DEFAULT,
@@ -69,9 +74,19 @@ class SettingsViewModel(
         val imageSearchModelsError: String?
             get() = ToolModels.validate(imageSearchModels)
 
+        val customNameError: String?
+            get() = if (!ProviderCatalog.isCustom(activeProviderId)) null else {
+                val name = displayName.trim()
+                when {
+                    name.isBlank() -> "请输入档案名称"
+                    providers.any { (id, entry) -> id != activeProviderId && ProviderCatalog.isCustom(id) && entry.displayName.equals(name, ignoreCase = true) } -> "档案名称不能重复"
+                    else -> null
+                }
+            }
+
         val canSave: Boolean
             get() = baseUrl.isNotBlank() && model.isNotBlank() &&
-                imageSearchModelsError == null
+                imageSearchModelsError == null && customNameError == null
 
         val displayedAnthropicBase: String
             get() = anthropicBaseUrl.ifBlank { derivedAnthropicBase(activeProviderId, baseUrl) }
@@ -87,6 +102,9 @@ class SettingsViewModel(
                 model = model.trim(),
                 anthropicBaseUrl = storedOverride(anthropicBaseUrl, derivedAnthropicBase(activeProviderId, chat)),
                 responsesBaseUrl = storedOverride(responsesBaseUrl, derivedResponsesBase(chat)),
+                displayName = displayName.trim(),
+                customVideo = customVideo,
+                customAudio = customAudio,
             )
         }
     }
@@ -108,6 +126,11 @@ class SettingsViewModel(
                 model = entry.model,
                 anthropicBaseUrl = entry.anthropicBaseUrl,
                 responsesBaseUrl = entry.responsesBaseUrl,
+                displayName = entry.displayName.ifBlank {
+                    if (ProviderCatalog.isCustom(settings.activeProviderId)) "自定义" else ""
+                },
+                customVideo = entry.customVideo,
+                customAudio = entry.customAudio,
                 activePersonaName = settings.activePersona.name,
                 imageDetail = settings.imageDetail,
                 includeUsage = settings.includeUsage,
@@ -154,10 +177,70 @@ class SettingsViewModel(
             model = target.model,
             anthropicBaseUrl = target.anthropicBaseUrl,
             responsesBaseUrl = target.responsesBaseUrl,
+            displayName = target.displayName,
+            customVideo = target.customVideo,
+            customAudio = target.customAudio,
             models = emptyList(),
             status = null,
             error = null,
         )
+    }
+
+    fun enterCustomProviders() {
+        val current = form.value
+        if (ProviderCatalog.isCustom(current.activeProviderId)) return
+        val existing = current.providers.keys.firstOrNull(ProviderCatalog::isCustom)
+        if (existing != null) {
+            selectProvider(existing)
+        } else {
+            addCustomProvider()
+        }
+    }
+
+    fun addCustomProvider() {
+        val current = form.value
+        val providers = current.providers + (current.activeProviderId to current.toEntry())
+        val id = ProviderCatalog.CUSTOM_PREFIX + java.util.UUID.randomUUID().toString()
+        val entry = ProviderEntry(baseUrl = "", apiKey = "", model = "", displayName = "自定义 ${providers.keys.count(ProviderCatalog::isCustom) + 1}")
+        form.value = current.copy(providers = providers + (id to entry))
+        selectProvider(id)
+    }
+
+    fun deleteCustomProvider(id: String) {
+        val current = form.value
+        if (!ProviderCatalog.isCustom(id)) return
+        viewModelScope.launch {
+            val count = repository.countConversationsUsingProvider(id)
+            if (count > 0) {
+                form.value = form.value.copy(error = "该档案仍绑定 $count 个会话，请先在会话中改绑后再删除")
+                return@launch
+            }
+            val latest = form.value
+            val stashed = latest.providers + (latest.activeProviderId to latest.toEntry())
+            val providersWithoutDeleted = stashed - id
+            val activeId = if (latest.activeProviderId == id) {
+                ProviderCatalog.DEEPSEEK.takeIf { it in providersWithoutDeleted }
+                    ?: providersWithoutDeleted.keys.firstOrNull()
+                    ?: return@launch
+            } else latest.activeProviderId
+            val providers = providersWithoutDeleted
+            persist(latest, providers, activeId)
+            val target = providers.getValue(activeId)
+            form.value = latest.copy(
+                providers = providers,
+                activeProviderId = activeId,
+                baseUrl = target.baseUrl,
+                apiKey = target.apiKey,
+                model = target.model,
+                anthropicBaseUrl = target.anthropicBaseUrl,
+                responsesBaseUrl = target.responsesBaseUrl,
+                displayName = target.displayName,
+                customVideo = target.customVideo,
+                customAudio = target.customAudio,
+                models = emptyList(),
+                status = "已删除自定义档案",
+            )
+        }
     }
 
     fun setThemeMode(mode: ThemeMode) {
@@ -181,28 +264,36 @@ class SettingsViewModel(
         if (!current.canSave) return
         val entry = current.toEntry()
         // 整表落盘：把当前编辑值写回表里，其它供应商保留（含切走时暂存的未保存修改）。
-        // 角色表不在此保存（角色管理页整表落盘），这里只透传当前快照避免覆盖。
         val providers = current.providers + (current.activeProviderId to entry)
         viewModelScope.launch {
-            val snapshot = settingsRepository.settings.first()
-            settingsRepository.updateConfig(
-                providers = providers,
-                activeProviderId = current.activeProviderId,
-                searchProviderId = current.searchProviderId,
-                personas = snapshot.personas,
-                activePersonaId = snapshot.resolvedActivePersonaId,
-                imageDetail = current.imageDetail,
-                includeUsage = current.includeUsage,
-                includeEnvTime = current.includeEnvTime,
-                historyImageTurns = current.historyImageTurns,
-                imageSearchModelsRaw = current.imageSearchModels.trim(),
-                imageGenModelRaw = current.imageGenModel.trim(),
-                imagePromptExtend = current.imagePromptExtend,
-                videoGenModelRaw = current.videoGenModel.trim(),
-                videoPromptExtend = current.videoPromptExtend,
-            )
+            persist(current, providers, current.activeProviderId)
             form.value = form.value.copy(providers = providers, status = "已保存")
         }
+    }
+
+    /** 角色表不在此保存（角色管理页整表落盘），这里只透传当前快照避免覆盖。 */
+    private suspend fun persist(
+        state: FormState,
+        providers: Map<String, ProviderEntry>,
+        activeProviderId: String,
+    ) {
+        val snapshot = settingsRepository.settings.first()
+        settingsRepository.updateConfig(
+            providers = providers,
+            activeProviderId = activeProviderId,
+            searchProviderId = state.searchProviderId,
+            personas = snapshot.personas,
+            activePersonaId = snapshot.resolvedActivePersonaId,
+            imageDetail = state.imageDetail,
+            includeUsage = state.includeUsage,
+            includeEnvTime = state.includeEnvTime,
+            historyImageTurns = state.historyImageTurns,
+            imageSearchModelsRaw = state.imageSearchModels.trim(),
+            imageGenModelRaw = state.imageGenModel.trim(),
+            imagePromptExtend = state.imagePromptExtend,
+            videoGenModelRaw = state.videoGenModel.trim(),
+            videoPromptExtend = state.videoPromptExtend,
+        )
     }
 
     /** 测试连接 = GET /models（免费，同时能拉回模型列表）。 */
@@ -244,8 +335,9 @@ class SettingsViewModel(
         fun factory(
             settingsRepository: SettingsRepository,
             chatApi: ChatApi,
+            repository: ChatRepository,
         ): ViewModelProvider.Factory = viewModelFactory {
-            initializer { SettingsViewModel(settingsRepository, chatApi) }
+            initializer { SettingsViewModel(settingsRepository, chatApi, repository) }
         }
 
         /** 温度：空串合法（表示服务端默认）；角色编辑器与设置页共用同一条校验。 */

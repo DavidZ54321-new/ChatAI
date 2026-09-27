@@ -33,6 +33,7 @@ import com.zcw.chatai.data.model.ConversationKind
 import com.zcw.chatai.data.model.ConversationTitle
 import com.zcw.chatai.data.model.Message
 import com.zcw.chatai.data.model.MessageStatus
+import com.zcw.chatai.data.model.MessageCitation
 import com.zcw.chatai.data.model.Role
 import com.zcw.chatai.data.model.ToolCall
 import com.zcw.chatai.data.model.ToolKind
@@ -93,6 +94,7 @@ data class StreamingMessage(
     val messageId: String,
     val content: String,
     val reasoning: String,
+    val citations: List<MessageCitation> = emptyList(),
     /** 思考耗时（毫秒）；null = 还没有思考增量。和落库的值同一个来源。 */
     val reasoningMs: Long? = null,
 )
@@ -212,6 +214,9 @@ class ChatRepository(
 
     fun observeConversations(): Flow<List<Conversation>> =
         db.conversationDao().observeByKind(ConversationKind.CHAT.name).map { list -> list.map { it.toModel() } }
+
+    suspend fun countConversationsUsingProvider(providerId: String): Int =
+        db.conversationDao().countByProviderId(providerId)
 
     /** 标题或消息正文命中关键词的会话（关键词按字面量匹配，见 [LikePattern]）。 */
     fun searchConversations(query: String): Flow<List<Conversation>> =
@@ -804,12 +809,23 @@ class ChatRepository(
      */
     private fun resolveEnabledTools(config: ChatConfig, contexts: ToolBackendContexts): List<String> {
         if (!config.webSearchEnabled) return emptyList()
-        val textAvailable = contexts.text.any { backend ->
-            searchProviders[backend.providerId]?.available(backend.config.baseUrl, backend.config.apiKey) == true
-        }
         val imageAvailable = contexts.image?.let { backend ->
             imageProviders[backend.providerId]?.available(backend.config.baseUrl, backend.config.apiKey) == true
         } == true
+        // 托管 web_search 挂在同一次 Responses 请求上，不依赖另配的搜索后端。
+        if (config.hostedWebSearch) {
+            return buildList {
+                add(WebTools.SEARCH)
+                if (imageAvailable) {
+                    add(WebTools.SEARCH_IMAGES)
+                    add(WebTools.FIND_SIMILAR_IMAGES)
+                }
+                add(WebTools.FETCH)
+            }
+        }
+        val textAvailable = contexts.text.any { backend ->
+            searchProviders[backend.providerId]?.available(backend.config.baseUrl, backend.config.apiKey) == true
+        }
         if (!textAvailable && !imageAvailable) return emptyList()
         return buildList {
             if (textAvailable) add(WebTools.SEARCH)
@@ -846,7 +862,7 @@ class ChatRepository(
         if (videoMessages.isEmpty()) return emptyMap()
         // 能力门禁：会话绑定的供应商不支持视频时，UI 本不该给出视频入口；
         // 这里兜底（例如切换过激活供应商/改过绑定），不发注定 400 的请求。
-        if (!ProviderCatalog.supportsVideo(config.providerId)) {
+        if (!config.supportsVideo) {
             failTurn(
                 conversationId,
                 "当前供应商「${ProviderCatalog.displayName(config.providerId)}」不支持视频输入，请切换供应商或移除视频",
@@ -922,7 +938,7 @@ class ChatRepository(
             }
         }
         if (keptAudioBytes == 0L) return true
-        if (!ProviderCatalog.supportsAudio(config.providerId)) {
+        if (!config.supportsAudio) {
             failTurn(
                 conversationId,
                 "当前供应商「${ProviderCatalog.displayName(config.providerId)}」不支持音频输入，请切换供应商或移除音频",
@@ -1116,6 +1132,7 @@ class ChatRepository(
                             messageId = messageId,
                             content = DsmlStrip.strip(accumulator.content),
                             reasoning = accumulator.reasoning,
+                            citations = accumulator.citations,
                             reasoningMs = accumulator.reasoningMs,
                         ),
                     )
@@ -1538,6 +1555,7 @@ class ChatRepository(
             id = messageId,
             content = content,
             reasoning = accumulator.reasoning.ifEmpty { null },
+            citations = com.zcw.chatai.data.db.MessageCitationCodec.encode(accumulator.citations),
             status = resolvedStatus.name,
             errorMessage = resolvedError,
             promptTokens = accumulator.usage?.promptTokens,

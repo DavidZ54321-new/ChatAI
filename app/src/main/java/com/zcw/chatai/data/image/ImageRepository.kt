@@ -407,6 +407,7 @@ class ImageRepository(
             id = id,
             content = "",
             reasoning = null,
+            citations = null,
             status = status.name,
             errorMessage = errorMessage,
             promptTokens = null,

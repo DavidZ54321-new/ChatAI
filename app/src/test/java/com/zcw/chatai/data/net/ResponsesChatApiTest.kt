@@ -1,6 +1,7 @@
 package com.zcw.chatai.data.net
 
 import com.zcw.chatai.data.model.ChatConfig
+import com.zcw.chatai.data.provider.ResponsesRequestWire
 import com.zcw.chatai.data.web.WebTools
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.flow.toList
@@ -86,6 +87,73 @@ class ResponsesChatApiTest {
         assertTrue(payload, !payload.contains("reasoning"))
         assertTrue(payload, !payload.contains("max_tokens"))
         assertTrue(payload, !payload.contains("stream_options"))
+    }
+
+    @Test
+    fun openAiHostedSearchAndReasoningUseResponsesFields() = runBlocking {
+        server.enqueue(eventStream(TEXT_STREAM))
+        collect(config().copy(
+            temperature = 0.7,
+            webSearchEnabled = true,
+            reasoningEffort = "high",
+            enabledTools = listOf(WebTools.SEARCH, WebTools.FETCH),
+            responsesWire = ResponsesRequestWire.REASONING_OBJECT,
+            hostedWebSearch = true,
+        ))
+        val payload = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS)).body.readUtf8()
+        assertTrue(payload, payload.contains("\"type\":\"web_search\""))
+        assertTrue(payload, payload.contains("\"name\":\"web_fetch\""))
+        assertTrue(payload, !payload.contains("\"name\":\"web_search\""))
+        assertTrue(payload, payload.contains("\"reasoning\":{\"effort\":\"high\"}"))
+        // effort 不是 none 时文档要求去掉 temperature。
+        assertTrue(payload, !payload.contains("\"temperature\""))
+    }
+
+    @Test
+    fun openAiNoneEffortKeepsTemperature() = runBlocking {
+        server.enqueue(eventStream(TEXT_STREAM))
+        collect(config().copy(
+            temperature = 0.7,
+            reasoningEffort = "none",
+            responsesWire = ResponsesRequestWire.REASONING_OBJECT,
+        ))
+        val payload = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS)).body.readUtf8()
+        assertTrue(payload, payload.contains("\"reasoning\":{\"effort\":\"none\"}"))
+        assertTrue(payload, payload.contains("\"temperature\":0.7"))
+    }
+
+    @Test
+    fun parsesAndDeduplicatesStreamedCitationAnnotations() = runBlocking {
+        val citationEvent = """event: response.output_text.annotation.added
+            |data: {"type":"response.output_text.annotation.added","annotation":{"type":"url_citation","start_index":0,"end_index":4,"url":"https://example.org","title":"Example"}}
+            |
+            |""".trimMargin()
+        val completedEvent = """event: response.completed
+            |data: {"type":"response.completed","response":{"status":"completed"}}
+            |
+            |""".trimMargin()
+        server.enqueue(eventStream(citationEvent + citationEvent + completedEvent))
+        val citations = collect(config()).filterIsInstance<ChatStreamEvent.Citations>().last().values
+        assertEquals(1, citations.size)
+        assertEquals("https://example.org", citations.single().url)
+        assertEquals("Example", citations.single().title)
+        assertEquals(0, citations.single().startIndex)
+        assertEquals(4, citations.single().endIndex)
+    }
+
+    @Test
+    fun ignoresNonHttpCitationUrls() = runBlocking {
+        val event = """event: response.output_text.annotation.added
+            |data: {"type":"response.output_text.annotation.added","annotation":{"type":"url_citation","start_index":0,"end_index":4,"url":"javascript:alert(1)","title":"Bad"}}
+            |
+            |""".trimMargin()
+        val completed = """event: response.completed
+            |data: {"type":"response.completed","response":{"status":"completed"}}
+            |
+            |""".trimMargin()
+        server.enqueue(eventStream(event + completed))
+        val events = collect(config())
+        assertTrue(events.filterIsInstance<ChatStreamEvent.Citations>().isEmpty())
     }
 
     @Test

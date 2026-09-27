@@ -70,6 +70,9 @@ data class ProviderDto(
     val model: String = "",
     val anthropicBaseUrl: String = "",
     val responsesBaseUrl: String = "",
+    val displayName: String = "",
+    val customVideo: Boolean = false,
+    val customAudio: Boolean = false,
 ) {
     fun toModel(): ProviderEntry = ProviderEntry(
         baseUrl = baseUrl,
@@ -77,6 +80,9 @@ data class ProviderDto(
         model = model,
         anthropicBaseUrl = anthropicBaseUrl,
         responsesBaseUrl = responsesBaseUrl,
+        displayName = displayName,
+        customVideo = customVideo,
+        customAudio = customAudio,
     )
 
     companion object {
@@ -86,6 +92,9 @@ data class ProviderDto(
             model = entry.model,
             anthropicBaseUrl = entry.anthropicBaseUrl,
             responsesBaseUrl = entry.responsesBaseUrl,
+            displayName = entry.displayName,
+            customVideo = entry.customVideo,
+            customAudio = entry.customAudio,
         )
     }
 }
@@ -260,6 +269,7 @@ data class MessageDto(
     val toolCalls: String? = null,
     val toolCallId: String? = null,
     val toolResult: String? = null,
+    val citations: String? = null,
     val createdAt: Long = 0L,
     val updatedAt: Long = 0L,
 ) {
@@ -283,6 +293,7 @@ data class MessageDto(
         toolCalls = toolCalls,
         toolCallId = toolCallId,
         toolResult = toolResult,
+        citations = citations,
         createdAt = createdAt,
         updatedAt = updatedAt,
     )
@@ -307,6 +318,7 @@ data class MessageDto(
             toolCalls = entity.toolCalls,
             toolCallId = entity.toolCallId,
             toolResult = entity.toolResult,
+            citations = entity.citations,
             createdAt = entity.createdAt,
             updatedAt = entity.updatedAt,
         )
@@ -412,6 +424,9 @@ object BackupCodec {
                 model = mine.model.ifBlank { incoming.model },
                 anthropicBaseUrl = mine.anthropicBaseUrl.ifBlank { incoming.anthropicBaseUrl },
                 responsesBaseUrl = mine.responsesBaseUrl.ifBlank { incoming.responsesBaseUrl },
+                displayName = mine.displayName.ifBlank { incoming.displayName },
+                customVideo = mine.customVideo,
+                customAudio = mine.customAudio,
             )
         },
         personas = imported.personas.filterKeys { it !in local.personas } + local.personas,

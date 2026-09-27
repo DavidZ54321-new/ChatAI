@@ -5,6 +5,7 @@ import com.zcw.chatai.data.model.AttachmentKind
 import com.zcw.chatai.data.model.Conversation
 import com.zcw.chatai.data.model.ConversationTitle
 import com.zcw.chatai.data.model.MessageStatus
+import com.zcw.chatai.data.model.MessageCitation
 import com.zcw.chatai.data.model.Message
 import com.zcw.chatai.data.model.Role
 import com.zcw.chatai.data.model.ToolResult
@@ -75,6 +76,9 @@ data class EditDraft(
     val model: String,
     val providerId: String,
     val webSearchEnabled: Boolean,
+    /** 草稿供应商的音视频入口。换供应商时跟 [providerId] 一起重算，自定义档案看条目开关。 */
+    val videoInputAvailable: Boolean = false,
+    val audioInputAvailable: Boolean = false,
     /** 这条消息之后会被删掉的「轮」数（一轮 = 一个 agent 回合，用于截断确认框文案）。 */
     val laterCount: Int,
     /**
@@ -106,6 +110,7 @@ data class ChatMessageItem(
     val attachments: List<Attachment> = emptyList(),
     /** `role=TOOL` 行的结构化结果；其余行为 null。 */
     val toolResult: ToolResult? = null,
+    val citations: List<MessageCitation> = emptyList(),
 )
 
 data class ChatUiState(
@@ -114,6 +119,7 @@ data class ChatUiState(
     val model: String = "",
     /** 会话绑定的供应商 id（决定模型列表与能力提示）。 */
     val providerId: String = "",
+    val providerEntry: com.zcw.chatai.data.provider.ProviderEntry? = null,
     /** 会话绑定的角色 id（空 = 跟随激活角色）；名称用于顶栏/弹层展示。 */
     val personaId: String = "",
     val personaName: String = "",
@@ -199,4 +205,5 @@ internal fun Message.toChatMessageItem(attachmentStore: AttachmentStore): ChatMe
     },
     attachments = attachments,
     toolResult = toolResult,
+    citations = citations,
 )

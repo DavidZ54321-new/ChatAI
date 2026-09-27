@@ -9,6 +9,13 @@ data class ToolCall(
     val arguments: String,
 )
 
+data class MessageCitation(
+    val startIndex: Int,
+    val endIndex: Int,
+    val url: String,
+    val title: String? = null,
+)
+
 /** 出站请求里的 role 字面量（OpenAI 兼容格式一律小写）。 */
 val Role.wire: String
     get() = name.lowercase()
@@ -34,6 +41,7 @@ data class Message(
     val toolCalls: List<ToolCall> = emptyList(),
     val toolCallId: String? = null,
     val toolResult: ToolResult? = null,
+    val citations: List<MessageCitation> = emptyList(),
     val createdAt: Long,
     val updatedAt: Long,
 )

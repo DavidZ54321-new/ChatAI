@@ -1,6 +1,8 @@
 package com.zcw.chatai.data.net
 
 import com.zcw.chatai.data.model.ChatConfig
+import com.zcw.chatai.data.model.MessageCitation
+import com.zcw.chatai.data.provider.ResponsesRequestWire
 import com.zcw.chatai.data.net.dto.ApiErrorEnvelope
 import com.zcw.chatai.data.net.dto.ModelList
 import com.zcw.chatai.data.net.dto.chatJson
@@ -144,14 +146,29 @@ class ResponsesChatApi(
     }
 
     private fun buildRequest(url: okhttp3.HttpUrl, config: ChatConfig, input: JsonArray): Request {
-        val tools = WebTools.specsFor(config.enabledTools)
+        val useHostedSearch = config.hostedWebSearch &&
+            config.webSearchEnabled && WebTools.SEARCH in config.enabledTools
+        val enabledTools = if (useHostedSearch) {
+            config.enabledTools.filterNot { it == WebTools.SEARCH }
+        } else {
+            config.enabledTools
+        }
+        val tools = WebTools.specsFor(enabledTools)
+        // OpenAI 文档：effort 不是 none 时 temperature 不支持；none 或未设思考时 temperature 照发。
+        // OpenCode Go 的线型是 OMIT_REASONING，temperature 不受这条限制。
+        val effort = config.reasoningEffort?.takeIf {
+            config.responsesWire == ResponsesRequestWire.REASONING_OBJECT
+        }
+        val sendTemperature = effort == null || effort == "none"
         val payload = buildJsonObject {
             put("model", config.model)
             put("input", input)
             put("stream", true)
-            config.temperature?.let { put("temperature", it) }
-            if (tools.isNotEmpty()) {
+            if (sendTemperature) config.temperature?.let { put("temperature", it) }
+            if (effort != null) put("reasoning", buildJsonObject { put("effort", effort) })
+            if (tools.isNotEmpty() || useHostedSearch) {
                 putJsonArray("tools") {
+                    if (useHostedSearch) add(buildJsonObject { put("type", "web_search") })
                     tools.forEach { tool ->
                         add(
                             buildJsonObject {
@@ -208,6 +225,7 @@ class ResponsesChatApi(
         /** 已收到过增量的条目下标：这些以增量为准，`done` 项里的全量不再补。 */
         private val argsFromDelta = HashSet<Int>()
         private val textFromDelta = HashSet<Int>()
+        private val citations = LinkedHashMap<Pair<Int, Int>, MessageCitation>()
 
         override fun onEvent(eventSource: EventSource, id: String?, type: String?, data: String) {
             val payload = try {
@@ -226,6 +244,13 @@ class ResponsesChatApi(
                     payload.string("delta")?.takeIf { it.isNotEmpty() }?.let {
                         scope.trySend(ChatStreamEvent.Delta(reasoning = it))
                     }
+
+                "response.output_text.annotation.added" -> {
+                    ((payload["annotation"] as? JsonObject) ?: payload).toCitation()?.let { citation ->
+                        citations[citation.startIndex to citation.endIndex] = citation
+                        scope.trySend(ChatStreamEvent.Citations(citations.values.toList()))
+                    }
+                }
 
                 "response.output_item.added" -> {
                     val item = payload["item"] as? JsonObject ?: return
@@ -272,13 +297,24 @@ class ResponsesChatApi(
                                 }
                             }
 
-                        "message" ->
+                        "message" -> {
+                            val parts = item["content"] as? JsonArray ?: return
+                            val messageParts = parts.mapNotNull { it as? JsonObject }
                             if (index !in textFromDelta) {
-                                val parts = item["content"] as? JsonArray ?: return
-                                val text = parts.mapNotNull { (it as? JsonObject)?.string("text") }
-                                    .joinToString("")
+                                val text = messageParts.mapNotNull { it.string("text") }.joinToString("")
                                 if (text.isNotEmpty()) scope.trySend(ChatStreamEvent.Delta(content = text))
                             }
+                            messageParts.forEach { part ->
+                                (part["annotations"] as? JsonArray).orEmpty().forEach { raw ->
+                                    (raw as? JsonObject)?.toCitation()?.let { citation ->
+                                        citations[citation.startIndex to citation.endIndex] = citation
+                                    }
+                                }
+                            }
+                            if (citations.isNotEmpty()) {
+                                scope.trySend(ChatStreamEvent.Citations(citations.values.toList()))
+                            }
+                        }
                     }
                 }
 
@@ -333,6 +369,15 @@ class ResponsesChatApi(
                 reasoningTokens = reasoning,
                 cachedTokens = cached,
             )
+        }
+
+        private fun JsonObject.toCitation(): MessageCitation? {
+            if (string("type") != "url_citation") return null
+            val url = string("url")?.takeIf { it.toHttpUrlOrNull() != null } ?: return null
+            val start = intOrNull("start_index") ?: return null
+            val end = intOrNull("end_index") ?: return null
+            if (start < 0 || end < start) return null
+            return MessageCitation(start, end, url, string("title"))
         }
 
         private fun JsonObject.string(key: String): String? =
