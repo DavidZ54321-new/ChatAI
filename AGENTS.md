@@ -494,23 +494,22 @@ Windows 凭据管理器里有多条 github.com 条目、账号都是 `DavidZ5432
   `GIT_ASKPASS` 脚本（按 prompt 回显 username/password，用完 `rm`）→
   `GIT_ASKPASS=… GCM_INTERACTIVE=never GIT_TERMINAL_PROMPT=0 git -c credential.helper= push -u origin master`。
   `-c credential.helper=` 是关键：把 GCM 从本次命令里摘掉，它就没有弹窗的机会。
-- **哪条凭据能推（2026-09-25 更正：之前「`git credential fill` 取到的 40 位 PAT 即可推」已过时）**：
-  - 只给 `protocol/host` 问 `git credential fill`，拿到的是**只读**的 `github_pat_…`
-    （93 位 fine-grained）：认证没问题（`GET /user` = `DavidZ54321-new`），但推送必然
-    `403 Permission to <owner>/<repo>.git denied to <owner>.`——那是**权限不足**，不是认证失败。
-  - 能推的是 `gho_…`（40 位 **OAuth**，scopes `gist repo workflow`）。它不在默认匹配结果里：
-    在 `git credential fill` 的请求里**带上 `username=<另一个名字>`**（如 `OrganCanvasGlass`）
-    就能把非默认条目翻出来（管理器按 username 匹配不上时会回落到另一条），
-    之后照上面的配方喂给 `GIT_ASKPASS` 即可——实测 `df89e72..cacb430` 推成功。
-  - 判断「手上这条能不能推」的只读探针：`GET /repos/<o>/<r>/collaborators` 或
-    `GET /repos/<o>/<r>/branches/<b>/protection` 返回 **403** 就是没有写/admin 权限（换一条）。
+- **哪条凭据能推（2026-09-27 复测结论，取代此前「93 位 PAT 只读」的说法）**：
+  - 只给 `protocol/host` 问 `git credential fill`，拿到的是 `DavidZ54321-new` 的
+    `github_pat_…`（93 位 fine-grained）——**这条就能推**，实测 `78e11be..b18fa7c` 推成功，
+    不必再折腾。
+  - 凭据管理器里**已经没有** `gho_…`（40 位 OAuth）那条了：在 `git credential fill` 里带
+    `username=<别的名字>`（如 `OrganCanvasGlass`）**同样取不到任何东西**，别再浪费时间翻它。
+  - 万一哪天推送回 `403 Permission to <owner>/<repo>.git denied to <owner>.`，那是**权限不足**
+    （不是认证失败）：用 `cmdkey /list` 看 `git:https://…github…` 下的 `User:` 有哪些条目，
+    换一条能写的再试。只读探针（可选）：`GET /repos/<o>/<r>/collaborators` 返回 **403** 即无写权限。
     **别**用 `GET /repos/<o>/<r>` 里的 `permissions.push` 判断：它反映的是**账号**对该仓库的权限，
     令牌只读时照样是 `true`。
-  - `gh auth status` 里 `DavidZ54321-new` 那条显示的也是那个只读 fine-grained 令牌
-    （与凭据管理器那条指纹相同），所以「先切 gh 账号再推」没用。
+  - `gh auth status` 里 `DavidZ54321-new` 那条显示的指纹与凭据管理器那条相同，
+    所以「先切 gh 账号再推」没用。
 - **环境里的 `GITHUB_TOKEN` 是别的账号**（`OrganCanvasGlass`，2026-09-25 复测
   `permissions = {push:false, pull:true}`），推送/建仓别用它；要操作 `DavidZ54321-new`
-  就用凭据管理器里那条可推的 OAuth 令牌（`curl -u "DavidZ54321-new:$TOKEN"` 建仓/调 API 均可，
+  就用凭据管理器里那条可推的 fine-grained PAT（`curl -u "DavidZ54321-new:$TOKEN"` 建仓/调 API 均可，
   令牌不落文件、不打日志）。
 - `git credential fill` 的输出**含明文令牌**：管道给 `grep`/`sed` 只取
   username/长度，绝不整段回显到日志里。

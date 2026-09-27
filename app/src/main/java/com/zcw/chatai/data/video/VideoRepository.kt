@@ -18,6 +18,7 @@ import com.zcw.chatai.data.model.MessageStatus
 import com.zcw.chatai.data.model.Role
 import com.zcw.chatai.data.net.ApiErrorMapper
 import com.zcw.chatai.data.net.ChatApi
+import com.zcw.chatai.data.net.ChatApiException
 import com.zcw.chatai.data.net.ChatStreamEvent
 import com.zcw.chatai.data.net.DashScopeVideoClient
 import com.zcw.chatai.data.net.VideoGenPayload
@@ -385,8 +386,18 @@ class VideoRepository(
             }
 
             is VideoTaskOutcome.Succeeded -> {
-                succeedTask(entity, outcome.url)
-                AdvanceOutcome.DONE
+                try {
+                    succeedTask(entity, outcome.url)
+                    AdvanceOutcome.DONE
+                } catch (t: Throwable) {
+                    // 视频 URL 只保留 24 小时；403/404 基本就是过期/被清除，重试也没用。
+                    if (isExpiredDownload(t)) {
+                        failTask(entity, "视频链接已过期（仅保留 24 小时），请重新生成")
+                        AdvanceOutcome.FAILED
+                    } else {
+                        throw t
+                    }
+                }
             }
 
             is VideoTaskOutcome.Failed -> {
@@ -399,8 +410,21 @@ class VideoRepository(
                 AdvanceOutcome.DONE
             }
 
+            // task_id 超过 24 小时有效期：官方语义就是「查不到了」，如实报错并让用户重生成。
+            VideoTaskOutcome.Expired -> {
+                failTask(entity, "任务已过期（任务 ID 与视频链接仅保留 24 小时），请重新生成")
+                AdvanceOutcome.FAILED
+            }
+
             VideoTaskOutcome.Malformed -> AdvanceOutcome.CONTINUE
         }
+    }
+
+    /** 下载阶段的 403/404：几乎只可能是 OSS 链接过期（24 小时）或被清除。 */
+    private fun isExpiredDownload(t: Throwable): Boolean {
+        if (t !is ChatApiException) return false
+        val message = t.message ?: return false
+        return "HTTP 403" in message || "HTTP 404" in message
     }
 
     /**

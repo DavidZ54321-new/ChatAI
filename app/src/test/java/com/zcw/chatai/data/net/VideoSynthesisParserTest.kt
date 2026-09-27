@@ -70,6 +70,12 @@ class VideoSynthesisParserTest {
         assertEquals(VideoTaskOutcome.Malformed, VideoSynthesisParser.parseTask("nope"))
     }
 
+    /** 官方语义：task_id 超过 24 小时有效期 → UNKNOWN，重试无意义。 */
+    @Test
+    fun unknownTaskStatusIsExpired() {
+        assertEquals(VideoTaskOutcome.Expired, task("UNKNOWN"))
+    }
+
     private fun task(status: String, extra: String = ""): VideoTaskOutcome {
         val tail = if (extra.isBlank()) "" else ",$extra"
         return VideoSynthesisParser.parseTask(

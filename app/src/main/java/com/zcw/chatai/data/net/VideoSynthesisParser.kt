@@ -35,6 +35,12 @@ sealed interface VideoTaskOutcome {
     /** 已取消。 */
     data object Canceled : VideoTaskOutcome
 
+    /**
+     * 任务不存在或已过期：官方 `task_status = "UNKNOWN"`，
+     * 文档明确这是「task_id 超过 24 小时有效期」的表现——重试没有意义。
+     */
+    data object Expired : VideoTaskOutcome
+
     /** 非可识别结构或未知状态。 */
     data object Malformed : VideoTaskOutcome
 }
@@ -85,6 +91,8 @@ object VideoSynthesisParser {
             }
             "FAILED" -> VideoTaskOutcome.Failed(code, message)
             "CANCELED", "CANCELLED" -> VideoTaskOutcome.Canceled
+            // task_id 过期（>24h）或不存在；重试无用，直接判失败。
+            "UNKNOWN" -> VideoTaskOutcome.Expired
             else -> if (code != null) VideoTaskOutcome.Failed(code, message) else VideoTaskOutcome.Malformed
         }
     }
