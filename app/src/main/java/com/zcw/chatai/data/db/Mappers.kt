@@ -1,6 +1,7 @@
 package com.zcw.chatai.data.db
 
 import com.zcw.chatai.data.model.Conversation
+import com.zcw.chatai.data.model.ConversationKind
 import com.zcw.chatai.data.model.Message
 import com.zcw.chatai.data.model.MessageStatus
 import com.zcw.chatai.data.model.Role
@@ -19,6 +20,7 @@ fun ConversationEntity.toModel(): Conversation = Conversation(
     providerId = providerId,
     personaId = personaId,
     parentConversationId = parentConversationId,
+    kind = kindFromString(kind),
 )
 
 fun Conversation.toEntity(): ConversationEntity = ConversationEntity(
@@ -35,6 +37,7 @@ fun Conversation.toEntity(): ConversationEntity = ConversationEntity(
     providerId = providerId,
     personaId = personaId,
     parentConversationId = parentConversationId,
+    kind = kind.name,
 )
 
 fun MessageEntity.toModel(): Message = Message(
@@ -88,3 +91,7 @@ private fun roleFromString(value: String): Role =
 
 private fun statusFromString(value: String): MessageStatus =
     MessageStatus.entries.firstOrNull { it.name == value } ?: MessageStatus.COMPLETE
+
+/** 未知/缺失的 kind 一律回落普通对话：生图会话只会是我们自己写进去的。 */
+private fun kindFromString(value: String): ConversationKind =
+    ConversationKind.entries.firstOrNull { it.name == value } ?: ConversationKind.CHAT

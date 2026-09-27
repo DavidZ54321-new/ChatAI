@@ -15,6 +15,12 @@ object ChatMetrics {
     const val THUMB_FRACTION = 0.2f
 
     /**
+     * 生图页里「生成结果」的宽度 = 视窗宽度的 94%，居中，高度按原图比例撑开。
+     * 与消息里的小缩略图区分开：结果图是主角，要铺满视线。
+     */
+    const val GENERATED_IMAGE_WIDTH_FRACTION = 0.94f
+
+    /**
      * 顶栏按钮行本身完全不透明，消散只发生在按钮下沿之后。
      * 尾巴高度 = 视窗高 4%。
      */
@@ -51,6 +57,9 @@ object ChatMetrics {
 
     fun thumbnailSide(windowWidth: Dp): Dp =
         (windowWidth * THUMB_FRACTION).coerceAtLeast(1.dp)
+
+    fun generatedImageWidth(windowWidth: Dp): Dp =
+        (windowWidth * GENERATED_IMAGE_WIDTH_FRACTION).coerceAtLeast(1.dp)
 
     fun markdownImageHeight(windowWidth: Dp): Dp =
         (windowWidth * MARKDOWN_IMAGE_HEIGHT_FRACTION).coerceAtLeast(1.dp)

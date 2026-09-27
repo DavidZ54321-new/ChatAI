@@ -3,6 +3,7 @@ package com.zcw.chatai.data.db
 import com.zcw.chatai.data.model.Attachment
 import com.zcw.chatai.data.model.AttachmentKind
 import com.zcw.chatai.data.model.Conversation
+import com.zcw.chatai.data.model.ConversationKind
 import com.zcw.chatai.data.model.Message
 import com.zcw.chatai.data.model.MessageStatus
 import com.zcw.chatai.data.model.Role
@@ -247,5 +248,21 @@ class MappersTest {
         assertEquals(branch, branch.toEntity().toModel())
         // 普通会话默认空串（不是 null）：`parent_conversation_id` 是 NOT NULL DEFAULT ''。
         assertEquals("", conversation.toEntity().parentConversationId)
+    }
+
+    @Test
+    fun roundTripsConversationKind() {
+        val image = conversation.copy(kind = ConversationKind.IMAGE)
+        assertEquals(image, image.toEntity().toModel())
+        assertEquals("IMAGE", image.toEntity().kind)
+        // 默认普通对话，且列里存的是枚举名。
+        assertEquals(ConversationKind.CHAT, conversation.kind)
+        assertEquals("CHAT", conversation.toEntity().kind)
+    }
+
+    @Test
+    fun unknownConversationKindFallsBackToChat() {
+        assertEquals(ConversationKind.CHAT, conversation.toEntity().copy(kind = "GIF").toModel().kind)
+        assertEquals(ConversationKind.CHAT, conversation.toEntity().copy(kind = "").toModel().kind)
     }
 }

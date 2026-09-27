@@ -29,6 +29,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
@@ -52,14 +53,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
+import com.zcw.chatai.R
+import com.zcw.chatai.data.ConversationLamp
 import com.zcw.chatai.data.model.Conversation
 import com.zcw.chatai.data.model.ConversationTitle
 import com.zcw.chatai.ui.chat.DarkSheet
@@ -79,6 +87,26 @@ private const val DRAG_ANIM_MS = 220
 private const val DEFAULT_WINDOW_WIDTH_PX = 1080f
 
 /**
+ * 列表这一页要展示的会话，以及只作用于这些会话的操作。
+ * 对话页和生图页各备一份，壳层选中后再交给列表，避免每个字段各写一次模式分支。
+ */
+data class ConversationListPage(
+    val conversations: List<Conversation>,
+    /**
+     * 每条会话的下辖分支数。调用方按**未过滤**的全量会话算：
+     * 用已经过滤过的列表算，搜索时会让长按菜单里的「下辖分支」凭空消失。
+     */
+    val branchCounts: Map<String, Int>,
+    val selectedId: String?,
+    val searchQuery: String,
+    val onSearchQueryChange: (String) -> Unit,
+    val onSelect: (String) -> Unit,
+    val onNew: () -> Unit,
+    val onRename: (String, String) -> Unit,
+    val onDelete: (String) -> Unit,
+)
+
+/**
  * 会话列表：占满全屏的独立页（不再是可右滑拉出的 ModalNavigationDrawer）。
  * 版式参考 Claude 侧栏——衬线大字品牌名 + 菜单块 + 平铺的「最近」列表 + 底部反色「新对话」胶囊。
  *
@@ -88,25 +116,28 @@ private const val DEFAULT_WINDOW_WIDTH_PX = 1080f
 @Composable
 fun ConversationListScreen(
     visible: Boolean,
-    conversations: List<Conversation>,
-    /**
-     * 每条会话的下辖分支数。由调用方按**未过滤**的全量会话算好传进来：
-     * 用这里已经过滤过的 `conversations` 算，搜索时会让长按菜单里的「下辖分支」凭空消失。
-     */
-    branchCounts: Map<String, Int>,
-    selectedId: String?,
-    searchQuery: String,
-    onSearchQueryChange: (String) -> Unit,
-    onSelect: (String) -> Unit,
-    onNew: () -> Unit,
-    onRename: (String, String) -> Unit,
-    onDelete: (String) -> Unit,
+    page: ConversationListPage,
+    /** 正在处理 = 黄，完成未见 = 绿，失败未见 = 红。没有条目时沿用选中/淡灰。 */
+    lamps: Map<String, ConversationLamp>,
     /** 打开某条会话的分支页（长按菜单里的「下辖分支」）。 */
     onOpenBranches: (String) -> Unit,
     onOpenSettings: () -> Unit,
+    /** 当前是否在生图模式（决定菜单行是「生图」还是「对话」，以及底部「新对话/新图像」）。 */
+    imageMode: Boolean,
+    onOpenImageStudio: () -> Unit,
+    onOpenChat: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val conversations = page.conversations
+    val branchCounts = page.branchCounts
+    val selectedId = page.selectedId
+    val searchQuery = page.searchQuery
+    val onSearchQueryChange = page.onSearchQueryChange
+    val onSelect = page.onSelect
+    val onNew = page.onNew
+    val onRename = page.onRename
+    val onDelete = page.onDelete
     val colors = ChatTheme.colors
     val scheme = MaterialTheme.colorScheme
     var actionTarget by remember { mutableStateOf<Conversation?>(null) }
@@ -170,15 +201,31 @@ fun ConversationListScreen(
                     label = "设置",
                     onClick = onOpenSettings,
                 )
-                MenuRow(
-                    icon = Icons.Filled.Search,
-                    label = "搜索",
-                    onClick = {
-                        // 收起搜索时一并清空关键词，避免「搜索框没了但列表还在过滤」。
-                        if (searching) onSearchQueryChange("")
-                        searching = !searching
-                    },
-                )
+                if (imageMode) {
+                    MenuRow(
+                        icon = Icons.AutoMirrored.Filled.ArrowBack,
+                        label = "对话",
+                        onClick = onOpenChat,
+                    )
+                } else {
+                    MenuRow(
+                        painter = painterResource(R.drawable.ic_image),
+                        label = "生图",
+                        onClick = onOpenImageStudio,
+                    )
+                }
+                // 生图模式没有搜索（生图会话不参与对话搜索），隐藏这一行。
+                if (!imageMode) {
+                    MenuRow(
+                        icon = Icons.Filled.Search,
+                        label = "搜索",
+                        onClick = {
+                            // 收起搜索时一并清空关键词，避免「搜索框没了但列表还在过滤」。
+                            if (searching) onSearchQueryChange("")
+                            searching = !searching
+                        },
+                    )
+                }
             }
 
             if (searching) {
@@ -236,6 +283,7 @@ fun ConversationListScreen(
                     ConversationRow(
                         conversation = conversation,
                         selected = conversation.id == selectedId,
+                        lamp = lamps[conversation.id],
                         onClick = { onSelect(conversation.id) },
                         onLongClick = { actionTarget = conversation },
                     )
@@ -262,7 +310,7 @@ fun ConversationListScreen(
                 .align(Alignment.BottomEnd)
                 .padding(end = 24.dp, bottom = 24.dp),
         ) {
-            NewChatButton(onClick = onNew)
+            NewChatButton(label = if (imageMode) "新图像" else "新对话", onClick = onNew)
         }
     }
 
@@ -315,6 +363,34 @@ private fun MenuRow(
     icon: ImageVector,
     label: String,
     onClick: () -> Unit,
+) = MenuRowShell(label = label, onClick = onClick) { tint ->
+    Icon(
+        imageVector = icon,
+        contentDescription = null,
+        tint = tint,
+        modifier = Modifier.size(26.dp),
+    )
+}
+
+@Composable
+private fun MenuRow(
+    painter: Painter,
+    label: String,
+    onClick: () -> Unit,
+) = MenuRowShell(label = label, onClick = onClick) { tint ->
+    Icon(
+        painter = painter,
+        contentDescription = null,
+        tint = tint,
+        modifier = Modifier.size(26.dp),
+    )
+}
+
+@Composable
+private fun MenuRowShell(
+    label: String,
+    onClick: () -> Unit,
+    icon: @Composable (Color) -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
     Row(
@@ -326,12 +402,7 @@ private fun MenuRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = scheme.onSurface,
-            modifier = Modifier.size(26.dp),
-        )
+        icon(scheme.onSurface)
         Text(
             text = label,
             style = MaterialTheme.typography.titleLarge,
@@ -341,7 +412,7 @@ private fun MenuRow(
 }
 
 @Composable
-private fun NewChatButton(onClick: () -> Unit) {
+private fun NewChatButton(label: String, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     Row(
         modifier = Modifier
@@ -371,12 +442,25 @@ private fun NewChatButton(onClick: () -> Unit) {
 private fun ConversationRow(
     conversation: Conversation,
     selected: Boolean,
+    lamp: ConversationLamp?,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
 ) {
     val colors = ChatTheme.colors
     val scheme = MaterialTheme.colorScheme
     val isBranch = conversation.parentConversationId.isNotBlank()
+    val dotColor = when (lamp) {
+        ConversationLamp.RUNNING -> colors.warning
+        ConversationLamp.UNSEEN_DONE -> colors.success
+        ConversationLamp.UNSEEN_FAILED -> scheme.error
+        null -> if (selected) scheme.primary else scheme.onSurfaceVariant.copy(alpha = 0.35f)
+    }
+    val dotLabel = when (lamp) {
+        ConversationLamp.RUNNING -> "正在生成"
+        ConversationLamp.UNSEEN_DONE -> "已完成"
+        ConversationLamp.UNSEEN_FAILED -> "生成失败"
+        null -> null
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -390,7 +474,14 @@ private fun ConversationRow(
             modifier = Modifier
                 .size(8.dp)
                 .clip(CircleShape)
-                .background(if (selected) scheme.primary else scheme.onSurfaceVariant.copy(alpha = 0.35f)),
+                .background(dotColor)
+                .then(
+                    if (dotLabel == null) {
+                        Modifier
+                    } else {
+                        Modifier.semantics { contentDescription = dotLabel }
+                    },
+                ),
         )
         Column(
             modifier = Modifier.weight(1f),

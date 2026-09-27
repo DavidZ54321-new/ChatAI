@@ -36,6 +36,17 @@ object EndpointUrl {
         return root + "/api/v1/uploads"
     }
 
+    /**
+     * DashScope 千问图像生成/编辑（**同步**）端点：固定挂在域名根的
+     * `/api/v1/services/aigc/multimodal-generation/generation`。
+     * 文生图与图像编辑共用这一个端点——由请求体里有没有 `image` 块区分。
+     * 走「现有域名」（`dashscope.aliyuncs.com`），不需要 workspace 专属域名。
+     */
+    fun dashScopeImageGeneration(baseUrl: String): String? {
+        val root = originOf(baseUrl) ?: return null
+        return root + "/api/v1/services/aigc/multimodal-generation/generation"
+    }
+
     /** 从基址里取 scheme://host[:port]，取不到返回 null（用于推导同源的旁路端点）。 */
     fun originOf(baseUrl: String): String? {
         val trimmed = baseUrl.trim().trimEnd('/')

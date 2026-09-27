@@ -2,6 +2,7 @@ package com.zcw.chatai.data.media
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Log
@@ -76,6 +77,57 @@ class AttachmentStore(private val context: Context) {
         } finally {
             bitmap.recycle()
         }
+    }
+
+    /**
+     * 存下一张**生成**出来的图片（生图/改图结果）：服务端只给 URL，下载回的字节原样落盘
+     * （PNG 不再重编码），另生成一张 360 缩略图。返回可落到助手消息上的 [Attachment]。
+     */
+    suspend fun importGeneratedImage(
+        conversationId: String,
+        bytes: ByteArray,
+        mime: String = ImageCodec.MIME_PNG,
+        id: String = UUID.randomUUID().toString(),
+    ): Attachment = withContext(Dispatchers.IO) {
+        if (bytes.isEmpty()) throw AttachmentException("生成图为空，请重试")
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        val width = bounds.outWidth
+        val height = bounds.outHeight
+        if (width <= 0 || height <= 0) throw AttachmentException("生成图无法解码，请重试")
+        val extension = if (mime == ImageCodec.MIME_PNG) "png" else "jpg"
+        val relativePath = "$DIR/$conversationId/$id.$extension"
+        val target = File(context.filesDir, relativePath)
+        target.parentFile?.mkdirs()
+        try {
+            target.writeBytes(bytes)
+        } catch (t: Throwable) {
+            target.delete()
+            throw AttachmentException("生成图保存失败，请重试", t)
+        }
+        // 缩略图与其它图片附件同一套：解一次 → 缩到 360 → JPEG。
+        runCatching {
+            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            if (bitmap != null) {
+                val size = ImageCodec.computeTargetSize(width, height, ImageCodec.THUMB_EDGE)
+                val thumb = Bitmap.createScaledBitmap(bitmap, size.width, size.height, true)
+                try {
+                    ImageCompressor.write(thumb, ImageCodec.MIME_JPEG, thumbnailOf(relativePath))
+                } finally {
+                    if (thumb !== bitmap) thumb.recycle()
+                    bitmap.recycle()
+                }
+            }
+        }.onFailure { Log.w(TAG, "生成图缩略图写入失败", it) }
+        Attachment(
+            id = id,
+            kind = AttachmentKind.IMAGE,
+            relativePath = relativePath,
+            mimeType = mime,
+            width = width,
+            height = height,
+            sizeBytes = bytes.size.toLong(),
+        )
     }
 
     /**

@@ -29,6 +29,7 @@ import com.zcw.chatai.data.model.Attachment
 import com.zcw.chatai.data.model.AttachmentKind
 import com.zcw.chatai.data.model.ChatConfig
 import com.zcw.chatai.data.model.Conversation
+import com.zcw.chatai.data.model.ConversationKind
 import com.zcw.chatai.data.model.ConversationTitle
 import com.zcw.chatai.data.model.Message
 import com.zcw.chatai.data.model.MessageStatus
@@ -147,6 +148,8 @@ class ChatRepository(
     private val videoUploadCoordinator: VideoUploadCoordinator? = null,
     private val webFetcher: WebFetcher = HttpWebFetcher(),
     private val turnForeground: TurnForeground = TurnForeground.NoOp,
+    /** 与生图共用。一轮开始/结束时上报，不在单条消息定稿时写灯。 */
+    private val lamps: ConversationLamps = ConversationLamps(),
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
     private val nowMs: () -> Long = System::currentTimeMillis,
     /** 量时长用的**单调**时钟：墙钟被改 / NTP 跳一下会让时长算出负数或离谱值。 */
@@ -208,11 +211,12 @@ class ChatRepository(
     // ---------- 观察 ----------
 
     fun observeConversations(): Flow<List<Conversation>> =
-        db.conversationDao().observeAll().map { list -> list.map { it.toModel() } }
+        db.conversationDao().observeByKind(ConversationKind.CHAT.name).map { list -> list.map { it.toModel() } }
 
     /** 标题或消息正文命中关键词的会话（关键词按字面量匹配，见 [LikePattern]）。 */
     fun searchConversations(query: String): Flow<List<Conversation>> =
-        db.conversationDao().search(LikePattern.contains(query)).map { list -> list.map { it.toModel() } }
+        db.conversationDao().search(ConversationKind.CHAT.name, LikePattern.contains(query))
+            .map { list -> list.map { it.toModel() } }
 
     fun observeConversation(id: String): Flow<Conversation?> =
         db.conversationDao().observeById(id).map { it?.toModel() }
@@ -495,12 +499,12 @@ class ChatRepository(
         turns.restart(conversationId) {
             launchTurn(conversationId, "重新生成失败") {
                 val entity = db.messageDao().getById(messageId)
-                    ?: return@launchTurn
+                    ?: return@launchTurn null
                 val message = entity.toModel()
                 // 从 TOOL 行触发时，按它所属的 assistant 回合整组截断。
                 val targetSeq = resolveTurnStart(message) ?: run {
                     _errors.value = RepoError(message.conversationId, "只能重新生成回答")
-                    return@launchTurn
+                    return@launchTurn null
                 }
                 val all = db.messageDao().getByConversation(message.conversationId)
                 // 除 [targetSeq] 起的整段外，还要带走「应答落在该点之后」的孤儿 assistant（见 ToolTurnGrouping）。
@@ -543,7 +547,7 @@ class ChatRepository(
                 val entity = db.messageDao().getById(messageId)
                 if (entity == null || entity.role != Role.USER.name) {
                     _errors.value = RepoError(conversationId, "只能编辑用户消息")
-                    return@launchTurn
+                    return@launchTurn null
                 }
                 val message = entity.toModel()
                 val all = db.messageDao().getByConversation(conversationId)
@@ -657,16 +661,26 @@ class ChatRepository(
      * 再把回合丢到仓库 scope。切走之后 freezer 才不会冻进程掐 TCP。
      * 并发回合靠 [ChatTurnForeground] 的代数计数保活，这里不需要单例句柄。
      */
-    private fun launchTurn(conversationId: String, errorFallback: String, block: suspend () -> Unit): Job {
+    private fun launchTurn(
+        conversationId: String,
+        errorFallback: String,
+        block: suspend () -> MessageStatus?,
+    ): Job {
+        // token 在协程启动前取：restart 先取消旧回合再 begin，旧回合的 finish 对不上 token。
+        val token = lamps.begin(conversationId)
         turnForeground.acquire()
         return scope.launch {
+            var status: MessageStatus? = null
             try {
-                block()
+                status = block()
             } catch (cancelled: CancellationException) {
+                status = MessageStatus.CANCELLED
                 throw cancelled
             } catch (t: Throwable) {
+                status = MessageStatus.ERROR
                 reportError(conversationId, t, errorFallback)
             } finally {
+                lamps.finish(conversationId, token, status)
                 turnForeground.release()
             }
         }
@@ -690,11 +704,11 @@ class ChatRepository(
         conversationId: String,
         text: String,
         attachments: List<Attachment>,
-    ) {
+    ): MessageStatus? {
         val conversation = db.conversationDao().getById(conversationId)
         if (conversation == null) {
             _errors.value = RepoError(conversationId, "会话不存在")
-            return
+            return null
         }
         val timestamp = nowMs()
         db.messageDao().upsert(
@@ -723,20 +737,20 @@ class ChatRepository(
             )
         }
         refreshSummary(conversationId)
-        startAssistant(conversationId)
+        return startAssistant(conversationId)
     }
 
-    private suspend fun startAssistant(conversationId: String) {
+    private suspend fun startAssistant(conversationId: String): MessageStatus? {
         val settings = settingsRepository.settings.first()
-        val config = resolveConfig(settings, conversationId) ?: return
+        val config = resolveConfig(settings, conversationId) ?: return null
         // 工具后端与主对话供应商解耦（借道）：搜索/图搜各自的供应商与模型。
         val toolContexts = toolBackendContexts(settings, config)
         // 预检门禁：所有会出站的视频先归位（内联/复用/上传），全部成功才发请求。
-        val resolvedVideos = resolvePendingVideos(conversationId, config) ?: return
+        val resolvedVideos = resolvePendingVideos(conversationId, config) ?: return MessageStatus.ERROR
         // 音频能力门禁：保留轮次内有音频而供应商不支持 → 可读报错，不发注定 400 的请求。
-        if (!audioGateOk(conversationId, config)) return
+        if (!audioGateOk(conversationId, config)) return MessageStatus.ERROR
         try {
-            runAgentTurn(
+            return runAgentTurn(
                 conversationId = conversationId,
                 config = config.copy(enabledTools = resolveEnabledTools(config, toolContexts)),
                 resolvedVideos = resolvedVideos,
@@ -984,6 +998,8 @@ class ChatRepository(
         val finishReason: String?,
         val toolCalls: List<ToolCall>,
         val failed: Boolean,
+        /** 这一步助手消息落库后的状态。回合结束时用最后一步的值写灯，中间步骤不算。 */
+        val status: MessageStatus,
     )
 
     /**
@@ -995,7 +1011,7 @@ class ChatRepository(
         config: ChatConfig,
         resolvedVideos: Map<String, ChatRequestVideo>,
         toolContexts: ToolBackendContexts,
-    ) {
+    ): MessageStatus {
         reconcileUnansweredToolCalls(conversationId)
         var steps = 0
         while (true) {
@@ -1028,7 +1044,7 @@ class ChatRepository(
                 history = history,
                 resolvedVideos = resolvedVideos,
             )
-            if (outcome.failed) return
+            if (outcome.failed) return outcome.status
             val decision = AgentLoop.decide(outcome.finishReason, outcome.toolCalls, steps, config.maxAgentSteps)
             when (decision) {
                 is AgentLoop.Decision.Continue -> {
@@ -1044,13 +1060,13 @@ class ChatRepository(
                     steps++
                 }
 
-                AgentLoop.Decision.Finish -> return
+                AgentLoop.Decision.Finish -> return outcome.status
 
                 // 协议异常已由 finalize 标成可见错误，直接结束本回合（再循环也没东西可执行）。
-                AgentLoop.Decision.Malformed -> return
+                AgentLoop.Decision.Malformed -> return outcome.status
             }
             // 收尾步无论如何都结束，杜绝模型在没有工具时仍回 tool_calls 造成死循环。
-            if (forceFinal) return
+            if (forceFinal) return outcome.status
         }
     }
 
@@ -1085,6 +1101,7 @@ class ChatRepository(
         val accumulator = StreamAccumulator(startedAt = elapsedMs())
         val toolCalls = ToolCallAccumulator()
         var status = MessageStatus.COMPLETE
+        var resolvedStatus = status
         var errorMessage: String? = null
 
         publishStreaming(StreamingMessage(conversationId, messageId, "", ""))
@@ -1125,7 +1142,7 @@ class ChatRepository(
         } finally {
             withContext(NonCancellable) {
                 val assembled = toolCalls.assemble()
-                finalize(
+                resolvedStatus = finalize(
                     conversationId = conversationId,
                     messageId = messageId,
                     accumulator = accumulator,
@@ -1142,6 +1159,7 @@ class ChatRepository(
             finishReason = accumulator.finishReason,
             toolCalls = toolCalls.assemble(),
             failed = status == MessageStatus.ERROR,
+            status = resolvedStatus,
         )
     }
 
@@ -1494,7 +1512,7 @@ class ChatRepository(
         status: MessageStatus,
         errorMessage: String?,
         assembledToolCalls: Int,
-    ) {
+    ): MessageStatus {
         // `tool_calls` 但没有可执行的调用是协议异常：给出可见提示，而不是留一个空白气泡。
         val malformed = accumulator.finishReason == FINISH_TOOL_CALLS && assembledToolCalls == 0
         val finishNote = if (malformed) {
@@ -1531,6 +1549,7 @@ class ChatRepository(
         )
         clearStreaming(messageId)
         refreshSummary(conversationId)
+        return resolvedStatus
     }
 
     private suspend fun refreshSummary(conversationId: String) {

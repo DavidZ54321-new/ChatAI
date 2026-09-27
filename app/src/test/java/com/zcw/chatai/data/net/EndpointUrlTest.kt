@@ -222,6 +222,21 @@ class EndpointUrlTest {
     }
 
     @Test
+    fun derivesDashScopeImageGenerationEndpointFromOrigin() {
+        assertEquals(
+            "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
+            EndpointUrl.dashScopeImageGeneration("https://dashscope.aliyuncs.com/compatible-mode/v1"),
+        )
+        // 与 workspace 专属域名同源推导（现有域名与专属域名都能用）。
+        assertEquals(
+            "https://ws-xxx.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
+            EndpointUrl.dashScopeImageGeneration("https://ws-xxx.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"),
+        )
+        assertNull(EndpointUrl.dashScopeImageGeneration(""))
+        assertNull(EndpointUrl.dashScopeImageGeneration("not a url"))
+    }
+
+    @Test
     fun originOfExtractsSchemeHostAndPort() {
         assertEquals("https://a.example", EndpointUrl.originOf("https://a.example/v1"))
         assertEquals("https://a.example", EndpointUrl.originOf("https://a.example"))

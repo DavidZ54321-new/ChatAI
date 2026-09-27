@@ -1,5 +1,6 @@
 package com.zcw.chatai.data.net
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -155,5 +156,19 @@ class ApiErrorMapperTest {
         assertFalse(message, message.contains("稍后重试"))
         // 普通 503 仍是稍后重试。
         assertTrue(ApiErrorMapper.httpError(503, null).contains("稍后重试"))
+    }
+
+    /** DashScope 原生错误码（顶层 code/message，非 OpenAI 的 error.message）。 */
+    @Test
+    fun mapsDashScopeNativeErrorCodes() {
+        assertTrue(ApiErrorMapper.dashScope("InvalidApiKey", "Invalid API-key provided.").contains("API Key"))
+        assertTrue(ApiErrorMapper.dashScope("Arrearage", null).contains("余额"))
+        assertTrue(ApiErrorMapper.dashScope("Throttling", null).contains("稍后重试"))
+        assertTrue(ApiErrorMapper.dashScope("DataInspectionFailed", null).contains("安全审核"))
+        assertTrue(ApiErrorMapper.dashScope("ModelNotFound", null).contains("图像模型"))
+        // 未知码回落服务端 message。
+        assertEquals("some detail", ApiErrorMapper.dashScope("WeirdCode", "some detail"))
+        // 码与 message 都没有 → 兜底文案。
+        assertTrue(ApiErrorMapper.dashScope(null, null).contains("生图请求失败"))
     }
 }

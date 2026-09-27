@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 
 @Database(
     entities = [ConversationEntity::class, MessageEntity::class],
-    version = 7,
+    version = 8,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -28,6 +28,7 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_4_5,
                     MIGRATION_5_6,
                     MIGRATION_6_7,
+                    MIGRATION_7_8,
                 )
                 .build()
     }

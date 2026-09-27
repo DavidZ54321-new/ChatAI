@@ -30,7 +30,9 @@ class ChatTurnService : Service() {
 
     override fun onTimeout(startId: Int, fgsType: Int) {
         // 系统已摘掉前台身份、无保活可用：全停兜底，避免回合在后台被冻死。
-        (application as ChatAiApp).chatRepository.stopAll()
+        val app = application as ChatAiApp
+        app.chatRepository.stopAll()
+        app.imageRepository.stopAll()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }

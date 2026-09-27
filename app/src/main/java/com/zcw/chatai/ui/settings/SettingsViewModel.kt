@@ -50,6 +50,10 @@ class SettingsViewModel(
         val historyImageTurns: Int = ChatSettings.DEFAULT_HISTORY_IMAGE_TURNS,
         /** 图搜模型链（逗号分隔的原始输入）；空 = 用内置默认。 */
         val imageSearchModels: String = "",
+        /** 生图/改图模型；空 = 用内置默认（qwen-image-3.0-pro）。 */
+        val imageGenModel: String = "",
+        /** 生图提示词智能改写（Qwen prompt_extend）。 */
+        val imagePromptExtend: Boolean = true,
         val themeMode: ThemeMode = ThemeMode.SYSTEM,
         val themeFamily: ThemeFamily = ThemeFamily.CLAUDE,
         val loaded: Boolean = false,
@@ -107,6 +111,8 @@ class SettingsViewModel(
                 streamHaptic = settings.streamHaptic,
                 historyImageTurns = settings.historyImageTurns,
                 imageSearchModels = settings.imageSearchModelsRaw,
+                imageGenModel = settings.imageGenModelRaw,
+                imagePromptExtend = settings.imagePromptExtend,
                 themeMode = settings.themeMode,
                 themeFamily = settings.themeFamily,
                 loaded = true,
@@ -184,6 +190,8 @@ class SettingsViewModel(
                 includeEnvTime = current.includeEnvTime,
                 historyImageTurns = current.historyImageTurns,
                 imageSearchModelsRaw = current.imageSearchModels.trim(),
+                imageGenModelRaw = current.imageGenModel.trim(),
+                imagePromptExtend = current.imagePromptExtend,
             )
             form.value = form.value.copy(providers = providers, status = "已保存")
         }

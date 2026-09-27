@@ -50,4 +50,10 @@ data class ConversationEntity(
      */
     @ColumnInfo(name = "parent_conversation_id", defaultValue = "")
     val parentConversationId: String = "",
+    /**
+     * 会话种类（`ConversationKind` 的名字）；默认 'CHAT'。
+     * 生图会话与普通对话共用本表，列表按此列过滤（见 `MIGRATION_7_8`）。
+     */
+    @ColumnInfo(name = "kind", defaultValue = "CHAT")
+    val kind: String = "CHAT",
 )

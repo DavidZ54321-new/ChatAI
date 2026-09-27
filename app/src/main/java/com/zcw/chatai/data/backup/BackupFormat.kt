@@ -134,6 +134,8 @@ data class SettingsDto(
     val streamHaptic: Boolean = true,
     val historyImageTurns: Int = ChatSettings.DEFAULT_HISTORY_IMAGE_TURNS,
     val imageSearchModelsRaw: String = "",
+    val imageGenModelRaw: String = "",
+    val imagePromptExtend: Boolean = true,
     val themeMode: String = ThemeMode.SYSTEM.name,
     val themeFamily: String = ThemeFamily.CLAUDE.name,
 ) {
@@ -155,6 +157,8 @@ data class SettingsDto(
             streamHaptic = streamHaptic,
             historyImageTurns = historyImageTurns,
             imageSearchModelsRaw = imageSearchModelsRaw,
+            imageGenModelRaw = imageGenModelRaw,
+            imagePromptExtend = imagePromptExtend,
             themeMode = enumOrDefault(themeMode, ThemeMode.SYSTEM),
             themeFamily = enumOrDefault(themeFamily, ThemeFamily.CLAUDE),
         )
@@ -173,6 +177,8 @@ data class SettingsDto(
             streamHaptic = settings.streamHaptic,
             historyImageTurns = settings.historyImageTurns,
             imageSearchModelsRaw = settings.imageSearchModelsRaw,
+            imageGenModelRaw = settings.imageGenModelRaw,
+            imagePromptExtend = settings.imagePromptExtend,
             themeMode = settings.themeMode.name,
             themeFamily = settings.themeFamily.name,
         )
@@ -194,6 +200,8 @@ data class ConversationDto(
     val providerId: String = "",
     val personaId: String = "",
     val parentConversationId: String = "",
+    /** 会话种类（`ConversationKind` 的名字）；旧备份无此字段时默认普通对话。 */
+    val kind: String = "CHAT",
 ) {
     fun toEntity(): ConversationEntity = ConversationEntity(
         id = id,
@@ -209,6 +217,7 @@ data class ConversationDto(
         providerId = providerId,
         personaId = personaId,
         parentConversationId = parentConversationId,
+        kind = kind.ifBlank { "CHAT" },
     )
 
     companion object {
@@ -226,6 +235,7 @@ data class ConversationDto(
             providerId = entity.providerId,
             personaId = entity.personaId,
             parentConversationId = entity.parentConversationId,
+            kind = entity.kind,
         )
     }
 }

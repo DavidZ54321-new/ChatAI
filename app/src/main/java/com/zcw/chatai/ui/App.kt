@@ -8,6 +8,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -24,8 +25,11 @@ import com.zcw.chatai.ui.chat.ChatScreen
 import com.zcw.chatai.ui.chat.ChatViewModel
 import com.zcw.chatai.ui.chat.MessageEditActions
 import com.zcw.chatai.ui.chat.ModelPickerSheet
+import com.zcw.chatai.ui.drawer.ConversationListPage
 import com.zcw.chatai.ui.drawer.ConversationListScreen
 import com.zcw.chatai.ui.drawer.ConversationTree
+import com.zcw.chatai.ui.image.ImageStudioScreen
+import com.zcw.chatai.ui.image.ImageViewModel
 import com.zcw.chatai.ui.settings.SettingsScreen
 
 @Composable
@@ -42,6 +46,16 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
         ),
     )
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val imageViewModel: ImageViewModel = viewModel(
+        factory = ImageViewModel.factory(
+            repository = app.imageRepository,
+            attachmentStore = app.attachmentStore,
+            settingsRepository = app.settingsRepository,
+        ),
+    )
+    val imageState by imageViewModel.state.collectAsStateWithLifecycle()
+    val imageConversations by imageViewModel.conversations.collectAsStateWithLifecycle()
+    val lamps by app.conversationLamps.current.collectAsStateWithLifecycle()
     val branchParent by viewModel.branchParent.collectAsStateWithLifecycle()
     val conversations by viewModel.searchResults.collectAsStateWithLifecycle()
     // 分支页与「下辖分支（N）」都要用**未过滤**的全量会话：带搜索过滤的列表会让父子关系缺失
@@ -58,6 +72,8 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
     var showSettings by remember { mutableStateOf(false) }
     var showConversations by remember { mutableStateOf(false) }
     var showModelPicker by remember { mutableStateOf(false) }
+    /** 生图模式：主界面换成生图页，会话列表也只显示生图会话。 */
+    var imageMode by remember { mutableStateOf(false) }
     /** 非空时叠在最上面显示分支页（起点为这条会话）。 */
     var branchRootId by remember { mutableStateOf<String?>(null) }
 
@@ -77,13 +93,25 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
         )
     }
 
-    // 只有聊天主界面（无设置/会话列表/模型选择/编辑弹层/分支页）才允许自动唤键盘；任何其他界面都不唤醒。
-    val chatSurfaceActive = !showSettings && !showConversations && !showModelPicker &&
+    // 只有聊天主界面（无设置/会话列表/模型选择/编辑弹层/分支页/生图页）才允许自动唤键盘；任何其他界面都不唤醒。
+    val chatSurfaceActive = !showSettings && !imageMode && !showConversations && !showModelPicker &&
         editDraft == null && branchRootId == null
 
     BackHandler(enabled = showSettings && !showConversations) { showSettings = false }
     BackHandler(enabled = showConversations) { showConversations = false }
+    BackHandler(enabled = imageMode && !showConversations && !showSettings) { imageMode = false }
     // 分支页自己注册返回（先逐层退回、再关页面），见 BranchScreen；这里不重复注册。
+
+    // 状态灯的「人在不在看」以屏幕为准。对话页和生图页互斥，设置盖住两边时都算没在看。
+    // 会话列表盖在当前页上仍算在看——人已经进过这条会话。
+    val watchingId = when {
+        showSettings -> null
+        imageMode -> imageState.conversationId
+        else -> state.conversationId
+    }
+    LaunchedEffect(watchingId) {
+        app.conversationLamps.setWatching(watchingId)
+    }
 
     // 关闭列表一律连搜索词一起清掉：否则下次打开会看到「没有搜索框却已被过滤」的列表。
     val closeConversations = {
@@ -91,9 +119,63 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
         viewModel.setSearchQuery("")
     }
 
+    val listPage = if (imageMode) {
+        ConversationListPage(
+            conversations = imageConversations,
+            branchCounts = emptyMap(),
+            selectedId = imageState.conversationId,
+            searchQuery = "",
+            onSearchQueryChange = {},
+            onSelect = { id ->
+                imageViewModel.selectConversation(id)
+                closeConversations()
+            },
+            onNew = {
+                imageViewModel.newConversation()
+                closeConversations()
+            },
+            onRename = imageViewModel::renameConversation,
+            onDelete = imageViewModel::deleteConversation,
+        )
+    } else {
+        ConversationListPage(
+            conversations = conversations,
+            branchCounts = branchCounts,
+            selectedId = state.conversationId,
+            searchQuery = searchQuery,
+            onSearchQueryChange = viewModel::setSearchQuery,
+            onSelect = { id ->
+                viewModel.selectConversation(id)
+                closeConversations()
+            },
+            onNew = {
+                viewModel.newConversation()
+                closeConversations()
+            },
+            onRename = viewModel::renameConversation,
+            onDelete = viewModel::deleteConversation,
+        )
+    }
+
     Box(modifier = modifier.fillMaxSize()) {
         if (showSettings) {
             SettingsScreen(onBack = { showSettings = false })
+        } else if (imageMode) {
+            ImageStudioScreen(
+                state = imageState,
+                onInputChange = imageViewModel::setInput,
+                onSend = imageViewModel::send,
+                onStop = imageViewModel::stop,
+                onAddImage = imageViewModel::addImage,
+                onRemoveAttachment = imageViewModel::removeAttachment,
+                onOptimize = imageViewModel::optimizePrompt,
+                onOpenConversations = { showConversations = true },
+                onNewConversation = imageViewModel::newConversation,
+                onSelectModel = imageViewModel::setModel,
+                onRegenerate = imageViewModel::regenerate,
+                onDeleteMessage = imageViewModel::deleteMessage,
+                onNoticeShown = imageViewModel::consumeNotice,
+            )
         } else {
             ChatScreen(
                 state = state,
@@ -161,25 +243,21 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
         ) {
             ConversationListScreen(
                 visible = showConversations,
-                conversations = conversations,
-                branchCounts = branchCounts,
-                selectedId = state.conversationId,
-                searchQuery = searchQuery,
-                onSearchQueryChange = viewModel::setSearchQuery,
-                onSelect = { id ->
-                    viewModel.selectConversation(id)
-                    closeConversations()
-                },
-                onNew = {
-                    viewModel.newConversation()
-                    closeConversations()
-                },
-                onRename = viewModel::renameConversation,
-                onDelete = viewModel::deleteConversation,
+                page = listPage,
+                lamps = lamps,
                 onOpenBranches = { id -> branchRootId = id },
                 onOpenSettings = {
                     closeConversations()
                     showSettings = true
+                },
+                imageMode = imageMode,
+                onOpenImageStudio = {
+                    closeConversations()
+                    imageMode = true
+                },
+                onOpenChat = {
+                    closeConversations()
+                    imageMode = false
                 },
                 onClose = closeConversations,
             )

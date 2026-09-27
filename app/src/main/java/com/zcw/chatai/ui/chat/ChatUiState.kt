@@ -5,9 +5,11 @@ import com.zcw.chatai.data.model.AttachmentKind
 import com.zcw.chatai.data.model.Conversation
 import com.zcw.chatai.data.model.ConversationTitle
 import com.zcw.chatai.data.model.MessageStatus
+import com.zcw.chatai.data.model.Message
 import com.zcw.chatai.data.model.Role
 import com.zcw.chatai.data.model.ToolResult
 import com.zcw.chatai.data.doc.DocumentLabel
+import com.zcw.chatai.data.media.AttachmentStore
 import java.io.File
 
 /** 消息里一张图/一个视频/一段音频：缩略图给气泡，原文件给全屏预览/播放器。 */
@@ -155,3 +157,46 @@ fun resolveBranchParent(conversation: Conversation?, all: List<Conversation>): B
         title = parent.title.ifBlank { ConversationTitle.FALLBACK },
     )
 }
+
+/**
+ * Room `Message` → 列表渲染项。对话与生图会话共用同一份转换：
+ * 缩略图/原文件路径都在这里定，附件类型戳与文档标签也一致。
+ */
+internal fun Message.toChatMessageItem(attachmentStore: AttachmentStore): ChatMessageItem = ChatMessageItem(
+    id = id,
+    role = role,
+    content = content,
+    reasoning = reasoningContent,
+    status = status,
+    errorMessage = errorMessage,
+    model = model,
+    promptTokens = promptTokens,
+    completionTokens = completionTokens,
+    reasoningTokens = reasoningTokens,
+    cachedTokens = cachedTokens,
+    reasoningMs = reasoningMs,
+    images = attachments.map { attachment ->
+        MessageImage(
+            id = attachment.id,
+            thumbnailPath = attachmentStore.thumbnailOf(attachment).absolutePath,
+            fullPath = attachmentStore.fileOf(attachment).absolutePath,
+            width = attachment.width,
+            height = attachment.height,
+            kind = attachment.kind,
+            durationMs = attachment.durationMs,
+            displayName = attachment.displayName,
+            mimeType = attachment.mimeType,
+            extractedPath = attachmentStore.extractedFileOf(attachment)?.absolutePath,
+            label = when (attachment.kind) {
+                AttachmentKind.DOCUMENT -> DocumentLabel.of(
+                    attachment.mimeType,
+                    attachment.displayName ?: attachment.relativePath,
+                )
+                AttachmentKind.AUDIO -> "AUDIO"
+                else -> null
+            },
+        )
+    },
+    attachments = attachments,
+    toolResult = toolResult,
+)

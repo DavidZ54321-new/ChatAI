@@ -92,4 +92,27 @@ object ApiErrorMapper {
         "repetition_truncation" -> "输出出现重复而被截断，请换个说法重试"
         else -> "生成中断（$reason）"
     }
+
+    /**
+     * DashScope（百炼）原生错误码 → 可读中文。
+     * 与 OpenAI 面不同：失败体是**顶层** `{"code": "...", "message": "..."}`，
+     * 没有 `error.message`，所以单独走这条映射。
+     */
+    fun dashScope(code: String?, message: String?): String {
+        val detail = message?.trim()?.takeIf { it.isNotEmpty() }?.take(MAX_DETAIL)
+        val known = when (code?.trim()?.lowercase()) {
+            null, "" -> null
+            "invalidapikey", "invalid_api_key" -> "API Key 无效或已过期，请到设置里检查"
+            "arrearage" -> "账户余额不足或已欠费，请充值后重试"
+            "throttling", "throttling.ratequota" -> "请求过于频繁或已达速率上限，请稍后重试"
+            "datainspectionfailed" -> "提示词或图片内容未通过安全审核，请调整后重试"
+            "modelnotfound", "invalidmodel" -> "该图像模型不存在或未开通，请到设置里换一个模型"
+            "invalidparameter", "invalidparameter.value" -> "请求参数不合法${detail?.let { "：$it" } ?: ""}"
+            "unsupportedmodel" -> "该图像模型不支持当前调用方式，请到设置里换一个模型"
+            "invalidfileformat", "invalidfile.format" -> "图片格式不受支持（支持 JPG/PNG/BMP/TIFF/WEBP/GIF）"
+            "filesizeexceed", "filesizeexceeded" -> "图片超过 10MB 上限，请压缩后再试"
+            else -> null
+        }
+        return known ?: detail ?: "生图请求失败${code?.let { "（$it）" } ?: ""}"
+    }
 }

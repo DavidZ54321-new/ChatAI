@@ -94,4 +94,12 @@ class ChatMetricsTest {
         assertTrue(ChatMetrics.expandedBlockMaxHeight(0.dp).value.isNaN())
         assertTrue(ChatMetrics.expandedBlockMaxHeight(Dp.Unspecified).value.isNaN())
     }
+
+    @Test
+    fun generatedImageIsNinetyFourPercentOfViewportWidth() {
+        assertEquals(0.94f, ChatMetrics.GENERATED_IMAGE_WIDTH_FRACTION, 0.0001f)
+        assertTrue(ChatMetrics.GENERATED_IMAGE_WIDTH_FRACTION < 1f)
+        assertEquals(411f * 0.94f, ChatMetrics.generatedImageWidth(411.dp).value, 0.001f)
+        assertEquals(1.dp, ChatMetrics.generatedImageWidth(0.dp))
+    }
 }

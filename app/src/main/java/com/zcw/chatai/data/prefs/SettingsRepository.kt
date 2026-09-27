@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.zcw.chatai.data.image.ImageModels
 import com.zcw.chatai.data.model.ChatConfig
 import com.zcw.chatai.data.net.EndpointUrl
 import com.zcw.chatai.data.persona.PersonaConfigCodec
@@ -69,6 +70,10 @@ data class ChatSettings(
     val historyImageTurns: Int,
     /** 图搜模型链（原始输入，逗号分隔）；空 = 用 Qwen 预设的默认链。 */
     val imageSearchModelsRaw: String,
+    /** 生图/改图模型覆盖；空 = 用内置默认（`ImageModels.DEFAULT`）。 */
+    val imageGenModelRaw: String = "",
+    /** 是否让服务端做提示词智能改写（Qwen `prompt_extend`，默认开）。 */
+    val imagePromptExtend: Boolean = true,
     val themeMode: ThemeMode,
     /** 品牌配色族（与 [themeMode] 正交：Claude / ChatGPT …）。 */
     val themeFamily: ThemeFamily,
@@ -79,6 +84,10 @@ data class ChatSettings(
             imageSearchModelsRaw,
             ProviderCatalog.byId(ProviderCatalog.QWEN)?.toolModels.orEmpty(),
         )
+
+    /** 生效的生图模型：用户覆盖优先，空则内置默认。 */
+    val imageGenModel: String
+        get() = ImageModels.resolve(imageGenModelRaw)
 
     /** 激活供应商；表意外为空时给一个安全空条目（请求层会给出可读报错）。 */
     val activeProvider: ProviderEntry
@@ -124,6 +133,8 @@ data class ChatSettings(
             streamHaptic = true,
             historyImageTurns = DEFAULT_HISTORY_IMAGE_TURNS,
             imageSearchModelsRaw = "",
+            imageGenModelRaw = "",
+            imagePromptExtend = true,
             themeMode = ThemeMode.SYSTEM,
             themeFamily = ThemeFamily.CLAUDE,
         )
@@ -199,6 +210,8 @@ class SettingsRepository(context: Context) {
         includeEnvTime: Boolean,
         historyImageTurns: Int,
         imageSearchModelsRaw: String,
+        imageGenModelRaw: String,
+        imagePromptExtend: Boolean,
     ) {
         store.edit { prefs ->
             prefs[KEY_PROVIDERS] = ProviderConfigCodec.encode(providers)
@@ -211,6 +224,8 @@ class SettingsRepository(context: Context) {
             prefs[KEY_INCLUDE_ENV_TIME] = includeEnvTime
             prefs[KEY_HISTORY_IMAGE_TURNS] = historyImageTurns
             if (imageSearchModelsRaw.isBlank()) prefs.remove(KEY_IMAGE_SEARCH_MODELS) else prefs[KEY_IMAGE_SEARCH_MODELS] = imageSearchModelsRaw
+            if (imageGenModelRaw.isBlank()) prefs.remove(KEY_IMAGE_GEN_MODEL) else prefs[KEY_IMAGE_GEN_MODEL] = imageGenModelRaw
+            prefs[KEY_IMAGE_PROMPT_EXTEND] = imagePromptExtend
         }
     }
 
@@ -248,6 +263,12 @@ class SettingsRepository(context: Context) {
             } else {
                 prefs[KEY_IMAGE_SEARCH_MODELS] = settings.imageSearchModelsRaw
             }
+            if (settings.imageGenModelRaw.isBlank()) {
+                prefs.remove(KEY_IMAGE_GEN_MODEL)
+            } else {
+                prefs[KEY_IMAGE_GEN_MODEL] = settings.imageGenModelRaw
+            }
+            prefs[KEY_IMAGE_PROMPT_EXTEND] = settings.imagePromptExtend
             prefs[KEY_THEME_MODE] = settings.themeMode.name
             prefs[KEY_THEME_FAMILY] = settings.themeFamily.name
         }
@@ -323,6 +344,8 @@ class SettingsRepository(context: Context) {
             // 轮次单位是 v6 引入的；旧 key（消息条数）按约定统一归一到默认 1 轮。
             historyImageTurns = this[KEY_HISTORY_IMAGE_TURNS] ?: ChatSettings.DEFAULT_HISTORY_IMAGE_TURNS,
             imageSearchModelsRaw = this[KEY_IMAGE_SEARCH_MODELS].orEmpty(),
+            imageGenModelRaw = this[KEY_IMAGE_GEN_MODEL].orEmpty(),
+            imagePromptExtend = this[KEY_IMAGE_PROMPT_EXTEND] ?: true,
             themeMode = this[KEY_THEME_MODE].toEnum(ThemeMode.SYSTEM),
             themeFamily = this[KEY_THEME_FAMILY].toEnum(ThemeFamily.CLAUDE),
         )
@@ -352,6 +375,10 @@ class SettingsRepository(context: Context) {
         val KEY_HISTORY_IMAGE_TURNS = intPreferencesKey("history_image_turns")
         /** 图搜模型链覆盖（空 = 用 Qwen 预设默认）。 */
         val KEY_IMAGE_SEARCH_MODELS = stringPreferencesKey("image_search_models")
+        /** 生图/改图模型覆盖（空 = 内置默认）。 */
+        val KEY_IMAGE_GEN_MODEL = stringPreferencesKey("image_gen_model")
+        /** 生图提示词智能改写（Qwen prompt_extend，默认开）。 */
+        val KEY_IMAGE_PROMPT_EXTEND = booleanPreferencesKey("image_prompt_extend")
         val KEY_EXTRA_PARAMS = stringPreferencesKey("extra_params")
         val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
         val KEY_THEME_FAMILY = stringPreferencesKey("theme_family")

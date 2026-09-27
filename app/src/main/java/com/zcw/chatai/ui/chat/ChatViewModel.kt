@@ -12,7 +12,6 @@ import com.zcw.chatai.data.ConversationBinding
 import com.zcw.chatai.data.SendResult
 import com.zcw.chatai.data.StreamingMessage
 import com.zcw.chatai.data.backup.DataBackup
-import com.zcw.chatai.data.doc.DocumentLabel
 import com.zcw.chatai.data.media.AttachmentLimits
 import com.zcw.chatai.data.media.AttachmentStore
 import com.zcw.chatai.data.model.Attachment
@@ -834,45 +833,7 @@ class ChatViewModel(
         )
     }
 
-    private fun Message.toItem(): ChatMessageItem = ChatMessageItem(
-        id = id,
-        role = role,
-        content = content,
-        reasoning = reasoningContent,
-        status = status,
-        errorMessage = errorMessage,
-        model = model,
-        promptTokens = promptTokens,
-        completionTokens = completionTokens,
-    reasoningTokens = reasoningTokens,
-    cachedTokens = cachedTokens,
-    reasoningMs = reasoningMs,
-        images = attachments.map { attachment ->
-            MessageImage(
-                id = attachment.id,
-                thumbnailPath = attachmentStore.thumbnailOf(attachment).absolutePath,
-                fullPath = attachmentStore.fileOf(attachment).absolutePath,
-                width = attachment.width,
-                height = attachment.height,
-                kind = attachment.kind,
-                durationMs = attachment.durationMs,
-                displayName = attachment.displayName,
-                mimeType = attachment.mimeType,
-                extractedPath = attachmentStore.extractedFileOf(attachment)?.absolutePath,
-                label = when (attachment.kind) {
-                    AttachmentKind.DOCUMENT -> DocumentLabel.of(
-                        attachment.mimeType,
-                        attachment.displayName ?: attachment.relativePath,
-                    )
-                    // 音频用字母牌渲染；点开走预览弹层的音频播放页。
-                    AttachmentKind.AUDIO -> "AUDIO"
-                    else -> null
-                },
-            )
-        },
-        attachments = attachments,
-        toolResult = toolResult,
-    )
+    private fun Message.toItem(): ChatMessageItem = toChatMessageItem(attachmentStore)
 
     private data class TurnSnapshot(
         val streaming: Map<String, StreamingMessage>,

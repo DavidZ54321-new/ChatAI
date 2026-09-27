@@ -5,11 +5,14 @@ import android.content.ComponentCallbacks2
 import android.content.pm.ApplicationInfo
 import android.content.res.Configuration
 import com.zcw.chatai.data.ChatRepository
+import com.zcw.chatai.data.ConversationLamps
 import com.zcw.chatai.data.backup.DataBackup
 import com.zcw.chatai.data.db.AppDatabase
+import com.zcw.chatai.data.image.ImageRepository
 import com.zcw.chatai.data.media.AttachmentStore
 import com.zcw.chatai.data.media.VideoUploadCoordinator
 import com.zcw.chatai.data.net.ChatApi
+import com.zcw.chatai.data.net.DashScopeImageClient
 import com.zcw.chatai.data.net.DashScopeUpload
 import com.zcw.chatai.data.net.FailoverChatApi
 import com.zcw.chatai.data.net.OpenAiCompatibleChatApi
@@ -70,6 +73,15 @@ class ChatAiApp : Application() {
         VideoUploadCoordinator(attachmentStore, dashScopeUpload)
     }
 
+    /** DashScope 千问图像生成/编辑客户端（同步接口，文生图与改图共用）。 */
+    val dashScopeImageClient: DashScopeImageClient by lazy { DashScopeImageClient() }
+
+    /** 前台保活：对话与生图**共用同一实例**（代数计数共享，避免互相把服务拆掉）。 */
+    private val turnForeground: ChatTurnForeground by lazy { ChatTurnForeground(this) }
+
+    /** 会话列表状态灯：对话与生图共用。会话 id 全局唯一，屏幕上同时只看着一条。 */
+    val conversationLamps: ConversationLamps by lazy { ConversationLamps() }
+
     val chatRepository: ChatRepository by lazy {
         ChatRepository(
             db = database,
@@ -80,7 +92,21 @@ class ChatAiApp : Application() {
             imageProviders = imageSearchProviders,
             videoUploadCoordinator = videoUploadCoordinator,
             webFetcher = webFetcher,
-            turnForeground = ChatTurnForeground(this),
+            turnForeground = turnForeground,
+            lamps = conversationLamps,
+        )
+    }
+
+    /** 生图会话的唯一业务入口（与对话平级，共用会话/消息表与附件存储）。 */
+    val imageRepository: ImageRepository by lazy {
+        ImageRepository(
+            db = database,
+            settingsRepository = settingsRepository,
+            imageClient = dashScopeImageClient,
+            attachmentStore = attachmentStore,
+            chatApi = chatApi,
+            turnForeground = turnForeground,
+            lamps = conversationLamps,
         )
     }
 
@@ -92,7 +118,10 @@ class ChatAiApp : Application() {
             settingsRepository = settingsRepository,
             attachmentStore = attachmentStore,
             // 有回合在跑时拒绝导入：正在写的消息行会被覆盖。
-            busy = { chatRepository.busyConversations.value.isNotEmpty() },
+            busy = {
+                chatRepository.busyConversations.value.isNotEmpty() ||
+                    imageRepository.busyConversations.value.isNotEmpty()
+            },
             // 附件路径可能被复用（同 id 换成另一张图），还原后必须丢掉旧位图缓存。
             onImported = { RemoteImages.clear() },
         )

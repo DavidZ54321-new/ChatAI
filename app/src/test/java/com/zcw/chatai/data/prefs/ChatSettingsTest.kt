@@ -160,6 +160,13 @@ class ChatSettingsTest {
     }
 
     @Test
+    fun imageGenModelUsesOverrideOrBuiltInDefault() {
+        assertEquals("qwen-image-3.0-pro", settings.imageGenModel)
+        assertEquals("qwen-image-2.0-pro", settings.copy(imageGenModelRaw = " qwen-image-2.0-pro ").imageGenModel)
+        assertTrue(ChatSettings.Default.imagePromptExtend)
+    }
+
+    @Test
     fun emptyProviderTableDegradesToBlankEntry() {
         val empty = ChatSettings.Default.copy(providers = emptyMap(), activeProviderId = "nothing")
         val config = empty.toChatConfig()

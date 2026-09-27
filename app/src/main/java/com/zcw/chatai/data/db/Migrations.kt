@@ -98,3 +98,16 @@ val MIGRATION_6_7 = object : Migration(6, 7) {
         db.execSQL("ALTER TABLE conversations ADD COLUMN parent_conversation_id TEXT NOT NULL DEFAULT ''")
     }
 }
+
+/**
+ * v7 → v8：会话区分种类（普通对话 / 生图）。
+ *
+ * - `conversations.kind`：`ConversationKind` 的名字（'CHAT' / 'IMAGE'）。
+ *   `DEFAULT 'CHAT'` 正是老会话的正确取值，**不需要 `UPDATE` 回填**。
+ * - 只加一列，消息表复用（生图会话的用户轮/助手轮就是普通消息行，附件走既有 JSON 列）。
+ */
+val MIGRATION_7_8 = object : Migration(7, 8) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE conversations ADD COLUMN kind TEXT NOT NULL DEFAULT 'CHAT'")
+    }
+}

@@ -1,5 +1,11 @@
 package com.zcw.chatai.data.model
 
+/**
+ * 会话种类：普通对话 vs 生图（聊天启发式的图像生成/编辑）。
+ * 与消息表共用一套存储，只靠 `conversations.kind` 判别列区分，列表按它各自过滤。
+ */
+enum class ConversationKind { CHAT, IMAGE }
+
 data class Conversation(
     val id: String,
     val title: String,
@@ -17,4 +23,6 @@ data class Conversation(
     val personaId: String = "",
     /** 分支的来源会话 id；空串 = 普通会话。只用于列表里的父子嵌套展示。 */
     val parentConversationId: String = "",
+    /** 会话种类；普通对话与生图各自只在自己的列表里出现。 */
+    val kind: ConversationKind = ConversationKind.CHAT,
 )

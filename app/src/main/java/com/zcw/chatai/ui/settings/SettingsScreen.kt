@@ -41,6 +41,7 @@ import androidx.activity.compose.BackHandler
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.platform.LocalContext
 import com.zcw.chatai.ChatAiApp
+import com.zcw.chatai.data.image.ImageModels
 import com.zcw.chatai.data.prefs.ImageDetail
 import com.zcw.chatai.data.prefs.ThemeMode
 import com.zcw.chatai.data.provider.ProviderCatalog
@@ -320,6 +321,27 @@ fun SettingsScreen(
                 onSelect = { value -> viewModel.update { it.copy(historyImageTurns = value) } },
             )
 
+            SectionTitle("图像生成")
+            Field(
+                label = "图像模型",
+                value = state.imageGenModel,
+                onValueChange = { value -> viewModel.update { it.copy(imageGenModel = value) } },
+                placeholder = ImageModels.DEFAULT,
+                singleLine = true,
+            )
+            SwitchRow(
+                label = "提示词智能改写 (prompt_extend)",
+                checked = state.imagePromptExtend,
+                onCheckedChange = { value -> viewModel.update { it.copy(imagePromptExtend = value) } },
+            )
+            Text(
+                text = "生图 / 改图走通义千问原生接口（multimodal-generation），与对话模型无关；" +
+                    "需先在「服务商」里配好通义千问的 API Key。不带输入图即文生图，带图即图像编辑。",
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.onSurfaceVariant,
+            )
+            ImageGenStatus(providers = state.providers)
+
             SectionTitle("外观")
             SwitchRow(
                 label = "流式输出时震动",
@@ -426,6 +448,20 @@ private fun ImageSearchStatus(providers: Map<String, ProviderEntry>) {
             "文搜图 / 图搜图：通义千问（已配置，自动随 🌐 开关可用）"
         } else {
             "文搜图 / 图搜图：未配置通义千问，暂不可用（去「服务商」添加）"
+        },
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+    )
+}
+
+@Composable
+private fun ImageGenStatus(providers: Map<String, ProviderEntry>) {
+    val qwenConfigured = providers[ProviderCatalog.QWEN]?.apiKey?.isNotBlank() == true
+    Text(
+        text = if (qwenConfigured) {
+            "生图 / 改图：通义千问（已配置）"
+        } else {
+            "生图 / 改图：未配置通义千问的 API Key，暂不可用（去「服务商」填写）"
         },
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
