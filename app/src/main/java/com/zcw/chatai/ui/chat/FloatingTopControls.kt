@@ -8,17 +8,18 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import com.zcw.chatai.R
 
 @Composable
 fun FloatingTopControls(
     onOpenConversations: () -> Unit,
     onNewConversation: () -> Unit,
-    onOverflow: () -> Unit,
+    onOpenOutline: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -40,9 +41,9 @@ fun FloatingTopControls(
             onClick = onNewConversation,
         )
         IconBareButton(
-            icon = Icons.Filled.MoreVert,
-            contentDescription = "更多",
-            onClick = onOverflow,
+            painter = painterResource(R.drawable.ic_track),
+            contentDescription = "链路",
+            onClick = onOpenOutline,
             iconSize = 22.dp,
         )
     }

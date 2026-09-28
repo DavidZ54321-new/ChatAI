@@ -41,6 +41,18 @@ class ChatListScrollTest {
     }
 
     @Test
+    fun abortedJumpIsNotLocatedUnlessTheUserTookOver() {
+        assertFalse(shouldMarkLocated(reached = false, stillPinned = false, userTookOver = false))
+        assertTrue(shouldMarkLocated(reached = false, stillPinned = false, userTookOver = true))
+        assertTrue(shouldMarkLocated(reached = true, stillPinned = false, userTookOver = false))
+        assertTrue(shouldMarkLocated(reached = false, stillPinned = true, userTookOver = false))
+        assertFalse(shouldResumeFollow(reached = false, stillPinned = false, userTookOver = false))
+        assertFalse(shouldResumeFollow(reached = false, stillPinned = false, userTookOver = true))
+        assertTrue(shouldResumeFollow(reached = false, stillPinned = true, userTookOver = false))
+        assertFalse(shouldResumeFollow(reached = true, stillPinned = true, userTookOver = false))
+    }
+
+    @Test
     fun followScrollAllowedOnlyNearEndAndWithMoreToScroll() {
         // 贴底跟滑（末项/倒数第二项可见）且还有前向余量 → 可以补滚。
         assertTrue(canFollowScroll(lastVisibleIndex = 4, totalItems = 5, canScrollForward = true))

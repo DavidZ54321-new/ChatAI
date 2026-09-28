@@ -50,6 +50,19 @@ fun canFollowScroll(
 
 private const val COMPOSE_SETTLE_MS = 64L
 
+/**
+ * 贴底这次算不算「已经定位」。
+ *
+ * 手指拿走滚动（[userTookOver]）时列表要露出来，不再强行跳。
+ * 程序把钉拔了、又没到底，就不能记成已定位，否则下一次对得上的消息不会再贴底。
+ */
+fun shouldMarkLocated(reached: Boolean, stillPinned: Boolean, userTookOver: Boolean): Boolean =
+    userTookOver || reached || stillPinned
+
+/** 没到底、钉还在、也不是手指打断：再向前补一次。 */
+fun shouldResumeFollow(reached: Boolean, stillPinned: Boolean, userTookOver: Boolean): Boolean =
+    !userTookOver && !reached && stillPinned
+
 /** 贴底跟滑时一次向前补的像素上限（会被 maxScroll 钳住，等价于「滚到当前真末尾」）。 */
 private const val FOLLOW_CATCHUP_PX = 1 shl 24
 

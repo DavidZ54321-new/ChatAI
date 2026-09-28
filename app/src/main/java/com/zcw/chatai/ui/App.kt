@@ -246,8 +246,6 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
                 onBranch = viewModel::branchConversation,
                 onSwitchConversation = viewModel::selectConversation,
                 onNewConversation = viewModel::newConversation,
-                onClearConversation = viewModel::clearConversation,
-                onOpenSettings = { showSettings = true },
                 onOpenConversations = { showConversations = true },
                 onAddImage = viewModel::addAttachment,
                 onAddVideo = viewModel::addVideo,
@@ -264,6 +262,7 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
                 composerFocusAllowed = chatSurfaceActive,
                 branchParent = branchParent,
                 streamHapticsEnabled = streamHaptic && chatSurfaceActive,
+                tailLayouts = app.tailLayouts,
             )
             if (showModelPicker) {
                 ModelPickerSheet(

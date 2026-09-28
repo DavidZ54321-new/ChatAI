@@ -31,6 +31,8 @@ import com.zcw.chatai.data.web.qwen.QwenWebSearchProvider
 import com.zcw.chatai.data.web.WebFetcher
 import com.zcw.chatai.data.web.WebSearchProvider
 import com.zcw.chatai.ui.chat.RemoteImages
+import com.zcw.chatai.ui.chat.TailLayoutStore
+import java.io.File
 import com.zcw.chatai.util.MainThreadWatchdog
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import kotlinx.coroutines.CoroutineScope
@@ -51,6 +53,11 @@ class ChatAiApp : Application() {
     val chatApi: ChatApi by lazy { FailoverChatApi(OpenAiCompatibleChatApi()) }
 
     val attachmentStore: AttachmentStore by lazy { AttachmentStore(this) }
+
+    /** 每个会话最后一组的高度。杀进程后还能把列表直接放回底部。 */
+    val tailLayouts: TailLayoutStore by lazy {
+        TailLayoutStore(File(filesDir, "tail-layout.txt"), appScope)
+    }
 
     /** 按供应商选搜索后端：DeepSeek 走 Anthropic 面，Qwen 走 Responses，Go 按模型路由两面，MiMo 走 Chat 面插件。 */
     val webSearchProviders: Map<String, WebSearchProvider> by lazy {
@@ -152,6 +159,7 @@ class ChatAiApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        tailLayouts.load()
         RemoteImages.install(this)
         // PdfBox-Android 的字体/AFM 资源走 APK assets，必须先给它 AssetManager，
         // 否则 new PDFTextStripper() 直接炸（表现为解析失败，堆栈只剩类名）。

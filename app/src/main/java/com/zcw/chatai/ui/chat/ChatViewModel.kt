@@ -775,15 +775,16 @@ class ChatViewModel(
         turn: TurnSnapshot,
         composer: ComposerSnapshot,
     ): ChatUiState {
+        val owned = messagesFor(id, messages)
         val activeStream = id?.let { turn.streaming[it] }
         streamGhost = streamGhost.step(
             conversationId = id,
             activeStream = activeStream,
             // 每行「正文 + 思考」的字符数：幽灵靠它判断 DB 的定稿内容有没有发射到位。
-            dbTextLengths = messages.associate { it.id to it.content.length + (it.reasoningContent?.length ?: 0) },
+            dbTextLengths = owned.associate { it.id to it.content.length + (it.reasoningContent?.length ?: 0) },
         )
         val overlay = streamGhost.overlay(activeStream)
-        val items = messages.map { message ->
+        val items = owned.map { message ->
             val item = message.toItem()
             if (overlay != null && overlay.messageId == message.id) {
                 item.copy(

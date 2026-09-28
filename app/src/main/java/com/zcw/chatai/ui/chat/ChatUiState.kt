@@ -111,6 +111,8 @@ data class ChatMessageItem(
     /** `role=TOOL` 行的结构化结果；其余行为 null。 */
     val toolResult: ToolResult? = null,
     val citations: List<MessageCitation> = emptyList(),
+    /** 消息落库时间（毫秒）。链路页用它标每一轮；0 只出现在没填时间的测试数据里。 */
+    val createdAt: Long = 0,
 )
 
 data class ChatUiState(
@@ -206,4 +208,5 @@ internal fun Message.toChatMessageItem(attachmentStore: AttachmentStore): ChatMe
     attachments = attachments,
     toolResult = toolResult,
     citations = citations,
+    createdAt = createdAt,
 )

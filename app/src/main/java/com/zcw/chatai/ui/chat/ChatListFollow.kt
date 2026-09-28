@@ -11,6 +11,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
@@ -32,6 +33,12 @@ class ChatListFollow internal constructor(
     val jumpToBottom: () -> Unit,
     /** 停止跟随：用户触摸列表 / 展开工具、思考详情时调用。 */
     val unpin: () -> Unit,
+    /**
+     * 把当前会话的某一行滚到视口顶（链路点用户气泡）。
+     * 会话已经换掉、或锚点消息不在这份列表里，就不滚。
+     * 定位还没完成时取消贴底，滚完再露出列表。
+     */
+    val scrollTo: (conversationId: String, index: Int, anchorId: String) -> Unit,
     /** 是否仍钉在底部。只有 [ChatScrollToBottomButton] 读它。 */
     internal val pinned: State<Boolean>,
 )
@@ -59,6 +66,7 @@ fun rememberChatListFollow(
 ): ChatListFollow {
     val scope = rememberCoroutineScope()
     val pinned = remember { mutableStateOf(true) }
+    val userTookOver = remember { mutableStateOf(false) }
     val job = remember { mutableStateOf<Job?>(null) }
     // 已完成首次定位的会话；以及「正在定位哪个会话」。
     val locatedConversation = remember { mutableStateOf<String?>(null) }
@@ -75,16 +83,20 @@ fun rememberChatListFollow(
     /** 跳到底并（必要时）标记定位完成。定位期间 follow 不会进来抢 job。 */
     fun launchJump(target: String) {
         cancel()
+        userTookOver.value = false
         pinned.value = true
         locatingTarget.value = target
         job.value = scope.launch {
             val reached = listState.jumpToEnd(stillPinned = { pinned.value })
             if (locatingTarget.value == target) {
-                // 不管有没有到底都要露出列表，否则定位被打断时会一直不可见；
-                // 若还处于跟随态却没到底（极端超长项），再补一次跟随。
-                locatedConversation.value = target
+                val tookOver = userTookOver.value
+                val still = pinned.value
+                // 手指打断要露出列表。程序打断又没到底则保持未定位，下一拍再贴底。
+                if (shouldMarkLocated(reached, still, tookOver)) {
+                    locatedConversation.value = target
+                }
                 locatingTarget.value = null
-                if (!reached && pinned.value) {
+                if (shouldResumeFollow(reached, still, tookOver)) {
                     job.value = scope.launch { listState.followToEnd(stillPinned = { pinned.value }) }
                 }
             }
@@ -99,12 +111,35 @@ fun rememberChatListFollow(
     // 身份固定：pointerInput / nestedScroll 拿到的永远是同一个 lambda。
     val stopFollowing = remember {
         {
+            userTookOver.value = true
             pinned.value = false
-            // 首次定位还没完成时别把定位任务掐掉，否则会永远停在「未定位」。
+            // 首次定位还没完成时别把定位任务掐掉，否则完成回调走不到，列表会一直藏着。
+            // 手指打断由 [shouldMarkLocated] 把这次算成已露出。
             if (locatingTarget.value == null) {
                 job.value?.cancel()
                 job.value = null
             }
+        }
+    }
+
+    val currentConversation = rememberUpdatedState(conversationId)
+    val messagesNow = rememberUpdatedState(messages)
+    val scrollTo = scrollTo@{ id: String, index: Int, anchorId: String ->
+        if (currentConversation.value != id) return@scrollTo
+        if (locatedConversation.value == id) {
+            userTookOver.value = true
+            pinned.value = false
+        } else {
+            locatingTarget.value = null
+            userTookOver.value = false
+            pinned.value = false
+        }
+        cancel()
+        job.value = scope.launch {
+            if (currentConversation.value == id && messagesNow.value.any { it.id == anchorId }) {
+                listState.scrollToItem(index)
+            }
+            if (currentConversation.value == id) locatedConversation.value = id
         }
     }
 
@@ -115,6 +150,7 @@ fun rememberChatListFollow(
                 if (source == NestedScrollSource.UserInput) {
                     userScrolled.value = true
                     if (available.y > 0f) {
+                        userTookOver.value = true
                         pinned.value = false
                         if (locatingTarget.value == null) {
                             job.value?.cancel()
@@ -189,6 +225,7 @@ fun rememberChatListFollow(
         nestedScrollConnection = nestedScrollConnection,
         jumpToBottom = { conversationId?.let { launchJump(it) } },
         unpin = stopFollowing,
+        scrollTo = scrollTo,
         pinned = pinned,
     )
 }

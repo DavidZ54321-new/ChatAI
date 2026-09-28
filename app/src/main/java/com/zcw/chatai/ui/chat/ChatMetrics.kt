@@ -60,6 +60,12 @@ object ChatMetrics {
      */
     const val EXPANDED_BLOCK_MAX_HEIGHT_FRACTION = 0.30f
 
+    /**
+     * 链路页里展开的思考 / 工具正文上限 = 视窗高 18%。
+     * 比主列表的 30% 更矮，翻一轮时不被一块展开内容占满。
+     */
+    const val OUTLINE_BLOCK_MAX_HEIGHT_FRACTION = 0.18f
+
     /** 加载占位的最小宽度，避免行内出现「什么都没有」的空档。 */
     val MARKDOWN_IMAGE_MIN_WIDTH: Dp = 120.dp
 
@@ -102,6 +108,12 @@ object ChatMetrics {
     fun expandedBlockMaxHeight(windowHeight: Dp): Dp {
         if (!windowHeight.isSpecified || windowHeight.value <= 0f) return Dp.Unspecified
         return (windowHeight * EXPANDED_BLOCK_MAX_HEIGHT_FRACTION).coerceAtLeast(1.dp)
+    }
+
+    /** 链路页展开块的高度上限；视窗高未知时返回 [Dp.Unspecified]。 */
+    fun outlineBlockMaxHeight(windowHeight: Dp): Dp {
+        if (!windowHeight.isSpecified || windowHeight.value <= 0f) return Dp.Unspecified
+        return (windowHeight * OUTLINE_BLOCK_MAX_HEIGHT_FRACTION).coerceAtLeast(1.dp)
     }
 
     /**

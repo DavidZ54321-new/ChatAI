@@ -87,6 +87,14 @@ class ChatMetricsTest {
     }
 
     @Test
+    fun outlineBlockIsEighteenPercentOfViewportHeight() {
+        // Pixel 6a：914dp 视窗 → 164.52dp。链路页的展开块比主列表的 30% 更矮。
+        assertEquals(164.52f, ChatMetrics.outlineBlockMaxHeight(914.dp).value, 0.001f)
+        assertTrue(ChatMetrics.outlineBlockMaxHeight(0.dp).value.isNaN())
+        assertTrue(ChatMetrics.outlineBlockMaxHeight(Dp.Unspecified).value.isNaN())
+    }
+
+    @Test
     fun expandedBlockIsThirtyPercentOfViewportHeight() {
         // Pixel 6a：914dp 视窗 → 274.2dp（思考块与工具结果块共用同一上限）。
         assertEquals(274.2f, ChatMetrics.expandedBlockMaxHeight(914.dp).value, 0.001f)

@@ -31,7 +31,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.zcw.chatai.data.model.ToolKind
 import com.zcw.chatai.data.model.ToolResult
 import com.zcw.chatai.data.model.ToolStatus
 import com.zcw.chatai.ui.theme.ChatTheme
@@ -50,7 +49,7 @@ fun ToolCallBlock(
     val scheme = MaterialTheme.colorScheme
     var expanded by rememberSaveable { mutableStateOf(false) }
     var previewIndex by remember { mutableStateOf<Int?>(null) }
-    val title = toolTitle(result)
+    val title = toolCallTitle(result)
     Column(modifier = modifier.fillMaxWidth().animateContentSize()) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -157,11 +156,4 @@ fun ToolCallBlock(
     }
 }
 
-private fun toolTitle(result: ToolResult): String = when (result.kind) {
-    ToolKind.FETCH -> "网页抓取"
-    ToolKind.IMAGE_SEARCH -> "文搜图"
-    ToolKind.IMAGE_SIMILAR -> "以图搜图"
-    // 旧数据没有 kind：沿用升级前的启发式（抓取行的 detail 是 URL / 「正在抓取」）。
-    ToolKind.SEARCH ->
-        if (result.detail.startsWith("http") || result.detail.startsWith("正在抓取")) "网页抓取" else "联网搜索"
-}
+

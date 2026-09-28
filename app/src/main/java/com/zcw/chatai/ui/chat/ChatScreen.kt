@@ -101,8 +101,6 @@ fun ChatScreen(
     /** 切到指定会话（分支横幅点回来源会话用）。 */
     onSwitchConversation: (String) -> Unit,
     onNewConversation: () -> Unit,
-    onClearConversation: () -> Unit,
-    onOpenSettings: () -> Unit,
     onOpenConversations: () -> Unit,
     onAddImage: (Uri) -> Unit,
     onAddVideo: (Uri) -> Unit,
@@ -122,6 +120,7 @@ fun ChatScreen(
     branchParent: BranchParent?,
     /** 设置开着，且聊天主界面露出来（列表/模型选择/编辑弹层盖住时为 false）。前后台由 [StreamHaptics] 自己看。 */
     streamHapticsEnabled: Boolean,
+    tailLayouts: TailLayoutStore,
     modifier: Modifier = Modifier,
 ) {
     val colors = ChatTheme.colors
@@ -137,18 +136,21 @@ fun ChatScreen(
     var documentTarget by remember { mutableStateOf<MessageImage?>(null) }
     // SVG/HTML 全屏 viewer 目标：Dialog 随开随建、退出即销毁，列表里不驻留 WebView。
     var previewPage by remember { mutableStateOf<PreviewTarget?>(null) }
-    var overflowOpen by remember { mutableStateOf(false) }
     var attachOpen by remember { mutableStateOf(false) }
     var confirmResend by remember { mutableStateOf(false) }
     // 分支确认：点的是哪条 AI 回复，确认后才真的复制（破坏性小但不可逆，值得问一次）。
     var branchTarget by remember { mutableStateOf<ChatMessageItem?>(null) }
+    /** 打开链路时的会话。对不上当前会话就当关着，避免把上一份行号套到新会话上。 */
+    var outlineFor by remember { mutableStateOf<String?>(null) }
+    var outlineEntryIndex by remember { mutableIntStateOf(0) }
+    val outlineVisible = outlineFor != null && outlineFor == state.conversationId
 
     // 只有聊天主界面可见、且没有被任何浮层遮挡时才允许唤键盘：
     // 设置页 / 会话列表 / 模型选择（上层标志）与附件面板 / 溢出菜单 / 消息操作 / 图片预览（本地浮层）一律不唤醒。
     // 编辑弹层也算浮层：从系统相册选完附件回来时不该把键盘飘到 Composer 上。
     val focusAllowedNow = rememberUpdatedState(
-        composerFocusAllowed && !attachOpen && !overflowOpen &&
-        actionTarget == null && previewTarget == null && documentTarget == null && previewPage == null &&
+        composerFocusAllowed && !outlineVisible && !attachOpen &&
+            actionTarget == null && previewTarget == null && documentTarget == null && previewPage == null &&
             editDraft == null && !confirmResend && branchTarget == null,
     )
     // 聚焦成功才唤键盘：requestFocus 失败（节点已移除）时不弹，避免键盘飘到别的界面上。
@@ -199,6 +201,9 @@ fun ChatScreen(
         if (resumeTick == 0 || state.isTurnActive) return@LaunchedEffect
         withFrameNanos { }
         focusComposerIfAllowed()
+    }
+    LaunchedEffect(outlineVisible) {
+        if (outlineVisible) hideKeyboardForNavigation()
     }
     val composerRect = remember { mutableStateOf(Rect.Zero) }
     val topInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
@@ -405,7 +410,7 @@ fun ChatScreen(
                         } else {
                             0.dp
                         }
-                        Box(Modifier.padding(top = turnGap)) {
+                        val row: @Composable () -> Unit = {
                             when (group) {
                                 is MessageGroup.User -> UserMessageItem(
                                     message = group.items.single(),
@@ -432,6 +437,21 @@ fun ChatScreen(
                                     onContinue = onItemContinue,
                                 )
                             }
+                        }
+                        val tailConversation = state.conversationId
+                        if (index == groups.lastIndex && tailConversation != null) {
+                            TailGroup(
+                                conversationId = tailConversation,
+                                groupKey = group.key,
+                                contentChars = tailContentChars(group.items),
+                                streaming = state.isTurnActive,
+                                located = follow.located,
+                                store = tailLayouts,
+                                modifier = Modifier.padding(top = turnGap),
+                                content = row,
+                            )
+                        } else {
+                            Box(Modifier.padding(top = turnGap), content = { row() })
                         }
                     }
                     item(key = "disclaimer") { Disclaimer() }
@@ -475,7 +495,11 @@ fun ChatScreen(
                 onOpenConversations()
             },
             onNewConversation = onNewConversation,
-            onOverflow = { overflowOpen = true },
+            onOpenOutline = {
+                hideKeyboardForNavigation()
+                outlineEntryIndex = listState.firstVisibleItemIndex
+                outlineFor = state.conversationId
+            },
             modifier = Modifier.align(Alignment.TopCenter),
         )
         ChatScrollToBottomButton(
@@ -543,6 +567,23 @@ fun ChatScreen(
                     .padding(horizontal = 14.dp, vertical = 10.dp),
             )
         }
+        TurnOutlineOverlay(
+            visible = outlineVisible,
+            messages = messages,
+            conversationTitle = state.title,
+            hasBranchHeader = branchParent != null,
+            isTurnActive = state.isTurnActive,
+            entryIndex = outlineEntryIndex,
+            onDismiss = { outlineFor = null },
+            onJump = jump@{ stop ->
+                val id = state.conversationId ?: return@jump
+                if (outlineFor != id) return@jump
+                val index = TurnOutline.lazyIndexOf(stop.anchorKey, groups, branchParent != null)
+                    ?: return@jump
+                follow.scrollTo(id, index, stop.anchorKey)
+                outlineFor = null
+            },
+        )
     }
 
     val target = actionTarget
@@ -629,21 +670,6 @@ fun ChatScreen(
             },
             dismissButton = {
                 TextButton(onClick = { branchTarget = null }) { Text("取消") }
-            },
-        )
-    }
-
-    if (overflowOpen) {
-        ChatOverflowSheet(
-            onDismiss = { overflowOpen = false },
-            onClearConversation = {
-                overflowOpen = false
-                onClearConversation()
-            },
-            onOpenSettings = {
-                overflowOpen = false
-                hideKeyboardForNavigation()
-                onOpenSettings()
             },
         )
     }

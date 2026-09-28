@@ -5,8 +5,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.platform.LocalWindowInfo
 import com.zcw.chatai.data.prefs.ThemeFamily
+
+val LocalThemeFamily = staticCompositionLocalOf { ThemeFamily.CLAUDE }
+
+val LocalDarkTheme = staticCompositionLocalOf { false }
 
 /**
  * 双轴主题：主题族（品牌配色）+ 明暗。配色表在 [ThemeRegistry]，加主题不改这里。
@@ -27,6 +32,8 @@ fun ChatAITheme(
     CompositionLocalProvider(
         LocalChatColors provides palette.chatColors,
         LocalChatTypography provides chatTypography,
+        LocalThemeFamily provides themeFamily,
+        LocalDarkTheme provides darkTheme,
     ) {
         MaterialTheme(
             colorScheme = palette.colorScheme,
