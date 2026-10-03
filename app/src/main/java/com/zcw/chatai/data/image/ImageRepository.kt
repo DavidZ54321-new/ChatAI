@@ -20,8 +20,7 @@ import com.zcw.chatai.data.model.MessageStatus
 import com.zcw.chatai.data.model.Role
 import com.zcw.chatai.data.net.ChatApi
 import com.zcw.chatai.data.net.ChatStreamEvent
-import com.zcw.chatai.data.net.DashScopeImageClient
-import com.zcw.chatai.data.net.QwenImageRequest
+import com.zcw.chatai.data.prefs.ChatSettings
 import com.zcw.chatai.data.prefs.SettingsRepository
 import com.zcw.chatai.data.prefs.toChatConfig
 import com.zcw.chatai.data.provider.ProviderCatalog
@@ -47,8 +46,13 @@ import kotlinx.coroutines.withContext
 
 private const val TAG = "ImageRepository"
 
-/** 纯文生图（无输入图）时的默认分辨率；有输入图则省略 size，交给模型保持原图比例。 */
-private const val DEFAULT_TEXT_TO_IMAGE_SIZE = "1024*1024"
+/** 一次生图已经解析好的后端。发送和重新生成共用，避免各猜一次供应商。 */
+private data class ResolvedImageTurn(
+    val backend: ImageBackend,
+    val providerId: String,
+    val model: String,
+    val acceptsImageInput: Boolean,
+)
 
 sealed interface ImageSendResult {
     data object Started : ImageSendResult
@@ -68,14 +72,15 @@ data class ImageRepoError(
 /**
  * 生图的唯一业务入口（与 `ChatRepository` 平级）。
  *
- * 与对话回路不同，这里是**一次性**调用：落用户消息 → 建助手占位 → DashScope 生图（同步）
- * → 下载结果落盘 → 定稿助手消息。没有流式、没有 Agent、没有工具。
+ * 与对话回路不同，这里是**一次性**调用：落用户消息 → 建助手占位 → 图像后端出图
+ * → 结果字节落盘 → 定稿助手消息。没有流式、没有 Agent、没有工具。
+ * 后端由会话的 `providerId` 选择（通义千问或 OpenAI）。
  * 生成跑在仓库自己的 scope 上（用户动作不依赖 UI 生命周期），并借 [TurnForeground] 在前台保活。
  */
 class ImageRepository(
     private val db: AppDatabase,
     private val settingsRepository: SettingsRepository,
-    private val imageClient: DashScopeImageClient,
+    private val backends: List<ImageBackend>,
     private val attachmentStore: AttachmentStore,
     /** 提示词改写用它（走当前对话模型，与生图后端无关）。 */
     private val chatApi: ChatApi,
@@ -89,12 +94,54 @@ class ImageRepository(
 
     private val turns = TurnRegistry()
 
+    /** 发送前同步校验要用。DataStore 是 Flow，这里留最新一帧。 */
+    private val settingsNow = MutableStateFlow<ChatSettings?>(null)
+
+    init {
+        scope.launch { settingsRepository.settings.collect { settingsNow.value = it } }
+    }
+
     /** 正在生成的会话集合（UI 用它决定发送/停止键）。 */
     val busyConversations: StateFlow<Set<String>> = turns.busy
 
     private val _errors = MutableStateFlow<ImageRepoError?>(null)
 
     val errors: StateFlow<ImageRepoError?> = _errors.asStateFlow()
+
+    /** 远程拉到的模型。空表表示该供应商仍用内置名单。 */
+    private val _remoteModels = MutableStateFlow<Map<String, List<ImageModelOption>>>(emptyMap())
+
+    val remoteModels: StateFlow<Map<String, List<ImageModelOption>>> = _remoteModels.asStateFlow()
+
+    fun modelSections(remote: Map<String, List<ImageModelOption>> = _remoteModels.value): List<ImageModelSection> =
+        ImageModelCatalog.sections(backends, remote)
+
+    fun selection(
+        model: String,
+        storedProviderId: String?,
+        remote: Map<String, List<ImageModelOption>> = _remoteModels.value,
+    ): ImageSelection = ImageModelCatalog.selection(backends, remote, model, storedProviderId)
+
+    /** 按供应商各拉一次模型列表。失败的那段保持空，选择器继续显示内置项。 */
+    suspend fun refreshModels() {
+        val settings = settingsRepository.settings.first()
+        val fetched = backends.associate { backend ->
+            val entry = settings.providers[backend.providerId]
+            val models = if (entry == null || entry.apiKey.isBlank()) {
+                emptyList()
+            } else {
+                try {
+                    backend.listModels(settings.toChatConfig(backend.providerId))
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Throwable) {
+                    emptyList()
+                }
+            }
+            backend.providerId to models
+        }
+        _remoteModels.value = fetched
+    }
 
     fun consumeError() {
         _errors.value = null
@@ -122,23 +169,25 @@ class ImageRepository(
 
     // ---------- 会话 ----------
 
-    suspend fun createConversation(model: String? = null): String {
+    suspend fun createConversation(model: String? = null, providerId: String? = null): String {
         val settings = settingsRepository.settings.first()
+        val resolvedModel = model?.takeIf { it.isNotBlank() } ?: settings.imageGenModel
+        val resolvedProvider = resolveTurn(resolvedModel, providerId.orEmpty())?.providerId
+            ?: ProviderCatalog.QWEN
         val id = newId()
         val timestamp = nowMs()
         db.conversationDao().upsert(
             ConversationEntity(
                 id = id,
                 title = ConversationTitle.FALLBACK,
-                model = model?.takeIf { it.isNotBlank() } ?: settings.imageGenModel,
+                model = resolvedModel,
                 systemPrompt = null,
                 createdAt = timestamp,
                 updatedAt = timestamp,
                 lastMessagePreview = "",
                 messageCount = 0,
                 isPinned = false,
-                // 生图后端固定是通义千问（DashScope 原生接口）；连接参数按该条目解析。
-                providerId = ProviderCatalog.QWEN,
+                providerId = resolvedProvider,
                 personaId = "",
                 webSearchEnabled = false,
                 kind = ConversationKind.IMAGE.name,
@@ -152,9 +201,9 @@ class ImageRepository(
         db.conversationDao().rename(id, clean, nowMs())
     }
 
-    suspend fun setConversationModel(id: String, model: String) {
-        if (model.isBlank()) return
-        db.conversationDao().updateModel(id, model, nowMs())
+    suspend fun setConversationModel(id: String, providerId: String, model: String) {
+        if (model.isBlank() || providerId.isBlank()) return
+        db.conversationDao().updateProviderAndModel(id, providerId, model, nowMs())
     }
 
     /** 删除会话：连同它的附件目录；跑在仓库 scope 上，界面退出也不半途而废。 */
@@ -203,15 +252,17 @@ class ImageRepository(
         prompt: String,
         userImages: List<Attachment> = emptyList(),
         model: String,
+        providerId: String,
     ): ImageSendResult {
         val trimmed = prompt.trim()
         if (trimmed.isEmpty()) return ImageSendResult.Rejected("请输入提示词")
-        if (userImages.size > ImageInputs.MAX_IMAGES) {
-            return ImageSendResult.Rejected("最多只能输入 ${ImageInputs.MAX_IMAGES} 张图片")
-        }
+        val settings = settingsNow.value ?: return ImageSendResult.Rejected("生图配置还没准备好，请重试")
+        val turn = resolveTurn(model.ifBlank { settings.imageGenModel }, providerId)
+        rejectTurn(turn, userImages, settings)?.let { return ImageSendResult.Rejected(it) }
+        val resolved = turn ?: return ImageSendResult.Rejected("当前供应商不支持生图")
         val job = turns.startIfIdle(conversationId) {
             launchTurn(conversationId, "生成失败") {
-                startGeneration(conversationId, trimmed, userImages, model, insertUser = true)
+                startGeneration(conversationId, trimmed, userImages, resolved, insertUser = true)
             }
         }
         return if (job == null) ImageSendResult.Busy else ImageSendResult.Started
@@ -227,22 +278,31 @@ class ImageRepository(
                     _errors.value = ImageRepoError(conversationId, "只能重新生成生成结果")
                     return@launchTurn null
                 }
+                val conversation = db.conversationDao().getById(conversationId)
                 val all = db.messageDao().getByConversation(conversationId)
                 val user = all.lastOrNull { it.role == Role.USER.name && it.seq < target.seq }
-                db.messageDao().deleteById(assistantMessageId)
-                db.messageDao().deleteFrom(conversationId, target.seq + 1)
                 if (user == null) {
                     _errors.value = ImageRepoError(conversationId, "找不到对应的提示词，无法重新生成")
-                    refreshSummary(conversationId)
                     return@launchTurn null
                 }
-                val model = db.conversationDao().getById(conversationId)?.model.orEmpty()
+                val settings = settingsRepository.settings.first()
+                val turn = resolveTurn(
+                    conversation?.model?.takeIf { it.isNotBlank() } ?: settings.imageGenModel,
+                    conversation?.providerId.orEmpty(),
+                )
+                val userImages = AttachmentCodec.decode(user.attachments)
+                rejectTurn(turn, userImages, settings)?.let { reason ->
+                    _errors.value = ImageRepoError(conversationId, reason)
+                    return@launchTurn null
+                }
+                db.messageDao().deleteById(assistantMessageId)
+                db.messageDao().deleteFrom(conversationId, target.seq + 1)
                 startGeneration(
                     conversationId = conversationId,
                     prompt = user.content,
                     // 用户行只存了用户自己的图；「上一张」由 startGeneration 按规则实时推导。
-                    userImages = AttachmentCodec.decode(user.attachments),
-                    model = model,
+                    userImages = userImages,
+                    turn = turn ?: return@launchTurn null,
                     insertUser = false,
                 )
             }
@@ -277,11 +337,47 @@ class ImageRepository(
 
     // ---------- 内部 ----------
 
+    /**
+     * 一次发送用的后端。供应商以调用方传入的 [providerId] 为准（已知的图像后端），
+     * 不再在落库时用模型名另猜一次。
+     */
+    private fun resolveTurn(model: String, providerId: String): ResolvedImageTurn? {
+        val selection = ImageModelCatalog.selection(
+            backends,
+            _remoteModels.value,
+            model,
+            providerId.takeIf { it.isNotBlank() },
+        )
+        val backend = backends.firstOrNull { it.providerId == selection.providerId } ?: return null
+        return ResolvedImageTurn(
+            backend = backend,
+            providerId = selection.providerId,
+            model = model.trim(),
+            acceptsImageInput = selection.acceptsImageInput,
+        )
+    }
+
+    /** 落库前的拒绝原因。通过时返回 null。 */
+    private fun rejectTurn(
+        turn: ResolvedImageTurn?,
+        userImages: List<Attachment>,
+        settings: ChatSettings,
+    ): String? {
+        if (turn == null) return "当前供应商不支持生图"
+        if (!turn.acceptsImageInput && userImages.isNotEmpty()) return "当前模型只支持文生图"
+        if (userImages.size > turn.backend.maxInputImages) {
+            return "最多只能输入 ${turn.backend.maxInputImages} 张图片"
+        }
+        val key = settings.providers[turn.providerId]?.apiKey
+        if (key.isNullOrBlank()) return ImageModelCatalog.missingKey(turn.providerId)
+        return null
+    }
+
     private suspend fun startGeneration(
         conversationId: String,
         prompt: String,
         userImages: List<Attachment>,
-        model: String,
+        turn: ResolvedImageTurn,
         insertUser: Boolean,
     ): MessageStatus? {
         val conversation = db.conversationDao().getById(conversationId)
@@ -289,13 +385,24 @@ class ImageRepository(
             _errors.value = ImageRepoError(conversationId, "会话不存在")
             return null
         }
-        // 静默强制带入上一轮生成结果作为图 1：不落库、界面不显示，只在组请求时拼上。
-        val previous = ImageInputs.previousImage(
-            db.messageDao().getByConversation(conversationId).map { it.toModel() },
-        )
-        val wireInputs = ImageInputs.wireInputs(previous, userImages)
         val settings = settingsRepository.settings.first()
-        val imageModel = model.trim().ifEmpty { settings.imageGenModel }
+        val imageModel = turn.model.ifBlank { settings.imageGenModel }
+        if (conversation.providerId != turn.providerId || conversation.model != imageModel) {
+            db.conversationDao().updateProviderAndModel(conversationId, turn.providerId, imageModel, nowMs())
+        }
+        // 静默强制带入上一轮生成结果作为图 1。不吃参考图的模型不带。
+        val previous = if (turn.acceptsImageInput) {
+            ImageInputs.previousImage(
+                db.messageDao().getByConversation(conversationId).map { it.toModel() },
+            )
+        } else {
+            null
+        }
+        val wireInputs = if (turn.acceptsImageInput) {
+            ImageInputs.wireInputs(previous, userImages, turn.backend.maxInputImages)
+        } else {
+            emptyList()
+        }
         val timestamp = nowMs()
 
         if (insertUser) {
@@ -348,35 +455,22 @@ class ImageRepository(
         )
         refreshSummary(conversationId)
 
-        // 后端配置：固定用通义千问条目（Key 为空给可读错误，落一条 ERROR 助手消息保住提示词）。
-        val entry = settings.providers[ProviderCatalog.QWEN]
-        if (entry == null || entry.apiKey.isBlank()) {
-            withContext(NonCancellable) {
-                finalizeAssistant(assistantId, MessageStatus.ERROR, "生图需要通义千问的 API Key，请到设置里配置")
-                refreshSummary(conversationId)
-            }
-            return MessageStatus.ERROR
-        }
-        val config = settings.toChatConfig(ProviderCatalog.QWEN)
+        val config = settings.toChatConfig(turn.providerId)
 
         val dataUrls = withContext(Dispatchers.IO) {
             wireInputs.mapNotNull { attachment -> attachmentStore.toRequestImage(attachment, null)?.dataUrl }
         }
-        val request = QwenImageRequest(
+        val request = ImageGenerateRequest(
             model = imageModel,
             prompt = prompt,
             images = dataUrls,
-            n = 1,
-            // 有输入图 → 省略 size（保持原图比例）；纯文生图 → 稳妥的方形。
-            size = if (dataUrls.isEmpty()) DEFAULT_TEXT_TO_IMAGE_SIZE else null,
             promptExtend = settings.imagePromptExtend,
-            watermark = false,
         )
 
         try {
-            val urls = imageClient.generate(config, request)
-            val attachments = urls.map { url ->
-                attachmentStore.importGeneratedImage(conversationId, imageClient.download(url))
+            val images = turn.backend.generate(config, request)
+            val attachments = images.map { bytes ->
+                attachmentStore.importGeneratedImage(conversationId, bytes)
             }
             withContext(NonCancellable) {
                 finalizeAssistant(assistantId, MessageStatus.COMPLETE, null)

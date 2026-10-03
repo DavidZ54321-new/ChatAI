@@ -211,6 +211,7 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
                 onOpenConversations = { showConversations = true },
                 onNewConversation = imageViewModel::newConversation,
                 onSelectModel = imageViewModel::setModel,
+                onRefreshModels = imageViewModel::refreshModels,
                 onRegenerate = imageViewModel::regenerate,
                 onDeleteMessage = imageViewModel::deleteMessage,
                 onNoticeShown = imageViewModel::consumeNotice,

@@ -505,8 +505,8 @@ private fun ImageWorkspaceSettings(
         onCheckedChange = { value -> viewModel.update { it.copy(imagePromptExtend = value) } },
     )
     Text(
-        text = "生图 / 改图走通义千问原生接口（multimodal-generation），与对话模型无关；" +
-            "需先在下方「服务商」里配好通义千问的 API Key。不带输入图即文生图，带图即图像编辑。",
+        text = "图像生成只用通义千问和 OpenAI。不带输入图是文生图，带图是图像编辑。" +
+            "需在「服务商」里配好对应的 API Key。提示词智能改写只对通义千问生效。",
         style = MaterialTheme.typography.bodySmall,
         color = scheme.onSurfaceVariant,
     )
@@ -689,13 +689,13 @@ private fun ImageSearchStatus(providers: Map<String, ProviderEntry>) {
 
 @Composable
 private fun ImageGenStatus(providers: Map<String, ProviderEntry>) {
-    val qwenConfigured = providers[ProviderCatalog.QWEN]?.apiKey?.isNotBlank() == true
+    fun configured(id: String): String {
+        val name = ProviderCatalog.displayName(id)
+        val ready = providers[id]?.apiKey?.isNotBlank() == true
+        return if (ready) "$name（已配置）" else "$name（未配置 Key）"
+    }
     Text(
-        text = if (qwenConfigured) {
-            "生图 / 改图：通义千问（已配置）"
-        } else {
-            "生图 / 改图：未配置通义千问的 API Key，暂不可用（去「服务商」填写）"
-        },
+        text = "生图 / 改图：${configured(ProviderCatalog.QWEN)}，${configured(ProviderCatalog.OPENAI)}",
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
     )

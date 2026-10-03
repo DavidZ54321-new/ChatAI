@@ -1,6 +1,8 @@
 package com.zcw.chatai.ui.image
 
 import com.zcw.chatai.data.image.ImageInputs
+import com.zcw.chatai.data.image.ImageModelSection
+import com.zcw.chatai.data.provider.ProviderCatalog
 import com.zcw.chatai.ui.chat.ChatMessageItem
 import com.zcw.chatai.ui.chat.PendingAttachment
 
@@ -9,6 +11,11 @@ data class ImageUiState(
     val conversationId: String? = null,
     val title: String = "新图像",
     val model: String = "",
+    val providerId: String = ProviderCatalog.QWEN,
+    val providerLabel: String = "通义千问",
+    val modelSections: List<ImageModelSection> = emptyList(),
+    val maxInputImages: Int = ImageInputs.MAX_IMAGES,
+    val acceptsImageInput: Boolean = true,
     val messages: List<ChatMessageItem> = emptyList(),
     val input: String = "",
     /** 用户本轮自己传的图（自动带入的「上一张」不在其中，也不显示）。 */
@@ -19,7 +26,7 @@ data class ImageUiState(
     /** 提示词改写流式进行中。 */
     val rewriting: Boolean = false,
     val notice: String? = null,
-    /** 是否已配置通义千问的 API Key（未配置时给提示并拦下发请求）。 */
+    /** 当前图像供应商是否已配置 API Key。 */
     val available: Boolean = true,
 ) {
     val canSend: Boolean
@@ -27,5 +34,5 @@ data class ImageUiState(
 
     /** 用户本轮最多还能传几张（有上一张时它占掉一个名额）。 */
     val userImageLimit: Int
-        get() = ImageInputs.MAX_IMAGES - if (hasPreviousImage) 1 else 0
+        get() = ImageInputs.userSlotLimit(hasPreviousImage, maxInputImages, acceptsImageInput)
 }

@@ -1,8 +1,8 @@
 package com.zcw.chatai.data.image
 
 /**
- * 生图/改图模型：内置候选 + 用户覆盖。与对话模型、图搜模型**完全解耦**
- * （生图走 DashScope 原生的 multimodal-generation 端点，与任何对话供应商无关）。
+ * 千问生图的内置候选与默认模型。选择器的完整名单（含 OpenAI、含远程刷新）
+ * 在 [ImageModelCatalog]；这里只留设置页默认值和断网回落。
  */
 object ImageModels {
 

@@ -12,7 +12,10 @@ import com.zcw.chatai.data.image.ImageRepository
 import com.zcw.chatai.data.media.AttachmentStore
 import com.zcw.chatai.data.media.VideoUploadCoordinator
 import com.zcw.chatai.data.net.ChatApi
+import com.zcw.chatai.data.image.openai.OpenAiImageBackend
+import com.zcw.chatai.data.image.qwen.QwenImageBackend
 import com.zcw.chatai.data.net.DashScopeImageClient
+import com.zcw.chatai.data.net.OpenAiImageClient
 import com.zcw.chatai.data.net.DashScopeUpload
 import com.zcw.chatai.data.net.DashScopeVideoClient
 import com.zcw.chatai.data.net.FailoverChatApi
@@ -112,7 +115,10 @@ class ChatAiApp : Application() {
         ImageRepository(
             db = database,
             settingsRepository = settingsRepository,
-            imageClient = dashScopeImageClient,
+            backends = listOf(
+                QwenImageBackend(dashScopeImageClient),
+                OpenAiImageBackend(OpenAiImageClient(), chatApi),
+            ),
             attachmentStore = attachmentStore,
             chatApi = chatApi,
             turnForeground = turnForeground,

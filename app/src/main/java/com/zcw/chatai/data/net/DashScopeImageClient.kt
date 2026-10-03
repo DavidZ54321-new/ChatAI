@@ -85,6 +85,30 @@ class DashScopeImageClient(
         return http.bytes
     }
 
+    /** GET 一段 JSON（模型列表等）。非 2xx 抛 [ChatApiException]，调用方决定是否保留已拿到的页。 */
+    suspend fun getText(url: String, apiKey: String, maxBytes: Int = MAX_RESPONSE_BYTES): String {
+        val request = Request.Builder()
+            .url(url)
+            .header("Accept", "application/json")
+            .header("User-Agent", OpenAiCompatibleChatApi.USER_AGENT)
+            .apply {
+                if (apiKey.isNotBlank()) header("Authorization", "Bearer $apiKey")
+            }
+            .get()
+            .build()
+        val http = try {
+            TransientNetwork.retry { client.awaitBody(request, maxBytes) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (t: Throwable) {
+            throw ChatApiException("请求失败：${t.message ?: "网络异常"}", t)
+        }
+        if (http.code !in 200..299) {
+            throw ChatApiException(ApiErrorMapper.httpError(http.code, http.text.take(300)))
+        }
+        return http.text
+    }
+
     companion object {
         private val JSON_MEDIA_TYPE = "application/json".toMediaType()
         private const val MAX_RESPONSE_BYTES = 2_000_000

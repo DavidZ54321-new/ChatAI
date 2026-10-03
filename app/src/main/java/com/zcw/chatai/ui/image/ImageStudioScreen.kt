@@ -54,7 +54,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
-import com.zcw.chatai.data.image.ImageModels
 import com.zcw.chatai.data.model.AttachmentKind
 import com.zcw.chatai.data.model.MessageStatus
 import com.zcw.chatai.data.model.Role
@@ -91,7 +90,8 @@ fun ImageStudioScreen(
     onOptimize: () -> Unit,
     onOpenConversations: () -> Unit,
     onNewConversation: () -> Unit,
-    onSelectModel: (String) -> Unit,
+    onSelectModel: (String, String) -> Unit,
+    onRefreshModels: () -> Unit,
     onRegenerate: (String) -> Unit,
     onDeleteMessage: (String) -> Unit,
     onNoticeShown: () -> Unit,
@@ -221,7 +221,7 @@ fun ImageStudioScreen(
         }
         if (!state.available) {
             Text(
-                text = "生图需要通义千问的 API Key：请到「设置 → 服务商」配置。",
+                text = "生图需要${state.providerLabel}的 API Key：请到「设置 → 服务商」配置。",
                 style = MaterialTheme.typography.labelSmall,
                 color = colors.accentAmber,
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp),
@@ -246,7 +246,10 @@ fun ImageStudioScreen(
             onAttachClick = { attachOpen = true },
             onRemoveAttachment = onRemoveAttachment,
             onOptimize = onOptimize,
-            onModelClick = { modelPickerOpen = true },
+            onModelClick = {
+                modelPickerOpen = true
+                onRefreshModels()
+            },
             focusRequester = composerFocus,
             modifier = Modifier
                 .onGloballyPositioned { composerRect.value = it.boundsInParent() }
@@ -279,21 +282,30 @@ fun ImageStudioScreen(
     }
 
     if (modelPickerOpen) {
-        DarkSheet(onDismiss = { modelPickerOpen = false }) {
+        DarkSheet(onDismiss = { modelPickerOpen = false }, scroll = true) {
             Text(
                 text = "图像模型",
                 style = MaterialTheme.typography.titleMedium,
                 color = ChatTheme.colors.codeOnBackground,
                 modifier = Modifier.padding(start = 24.dp, top = 8.dp, bottom = 4.dp),
             )
-            ImageModels.presets.forEach { model ->
-                SheetAction(
-                    label = if (model == state.model) "✓ $model" else model,
-                    onClick = {
-                        onSelectModel(model)
-                        modelPickerOpen = false
-                    },
+            state.modelSections.forEach { section ->
+                Text(
+                    text = section.title,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = ChatTheme.colors.codeHeaderText,
+                    modifier = Modifier.padding(start = 24.dp, top = 12.dp, bottom = 2.dp),
                 )
+                section.models.forEach { model ->
+                    val selected = model.id == state.model && section.providerId == state.providerId
+                    SheetAction(
+                        label = if (selected) "✓ ${model.label}" else model.label,
+                        onClick = {
+                            onSelectModel(section.providerId, model.id)
+                            modelPickerOpen = false
+                        },
+                    )
+                }
             }
         }
     }

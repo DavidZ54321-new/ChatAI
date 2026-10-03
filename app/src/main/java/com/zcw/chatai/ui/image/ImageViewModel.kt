@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import com.zcw.chatai.data.image.ImageModelCatalog
 import com.zcw.chatai.data.image.ImageRepository
 import com.zcw.chatai.data.image.ImageSendResult
 import com.zcw.chatai.data.media.AttachmentStore
@@ -15,7 +16,6 @@ import com.zcw.chatai.data.model.Conversation
 import com.zcw.chatai.data.model.Message
 import com.zcw.chatai.data.model.Role
 import com.zcw.chatai.data.prefs.SettingsRepository
-import com.zcw.chatai.data.provider.ProviderCatalog
 import com.zcw.chatai.ui.chat.PendingAttachment
 import com.zcw.chatai.ui.common.ConversationSearch
 import com.zcw.chatai.ui.chat.toChatMessageItem
@@ -81,11 +81,19 @@ class ImageViewModel(
         repository.busyConversations,
         composerFlow,
         settingsRepository.settings,
-    ) { core, busy, composer, settings ->
+        repository.remoteModels,
+    ) { core, busy, composer, settings, remote ->
+        val model = core.conversation?.model?.takeIf { it.isNotBlank() } ?: settings.imageGenModel
+        val selection = repository.selection(model, core.conversation?.providerId, remote)
         ImageUiState(
             conversationId = core.id,
             title = core.conversation?.title ?: "新图像",
-            model = core.conversation?.model?.takeIf { it.isNotBlank() } ?: settings.imageGenModel,
+            model = model,
+            providerId = selection.providerId,
+            providerLabel = selection.providerLabel,
+            modelSections = repository.modelSections(remote),
+            maxInputImages = selection.maxInputImages,
+            acceptsImageInput = selection.acceptsImageInput,
             messages = core.messages.map { it.toChatMessageItem(attachmentStore) },
             input = composer.input,
             pending = composer.pending,
@@ -96,7 +104,7 @@ class ImageViewModel(
             isBusy = core.id != null && busy.contains(core.id),
             rewriting = composer.rewriting,
             notice = composer.notice,
-            available = settings.providers[ProviderCatalog.QWEN]?.apiKey?.isNotBlank() == true,
+            available = settings.providers[selection.providerId]?.apiKey?.isNotBlank() == true,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ImageUiState())
 
@@ -126,6 +134,10 @@ class ImageViewModel(
 
     fun addImage(uri: Uri) {
         viewModelScope.launch {
+            if (!state.value.acceptsImageInput) {
+                notice.value = "当前模型只支持文生图"
+                return@launch
+            }
             if (pending.value.size >= state.value.userImageLimit) {
                 notice.value = "本轮最多还能再传 ${state.value.userImageLimit} 张图片"
                 return@launch
@@ -179,7 +191,7 @@ class ImageViewModel(
         val text = input.value
         if (text.isBlank()) return
         if (!state.value.available) {
-            notice.value = "生图需要通义千问的 API Key，请到设置里配置"
+            notice.value = ImageModelCatalog.missingKey(state.value.providerId)
             return
         }
         // 只传用户自己传的图；上一轮生成结果由仓库静默带入为图 1。
@@ -193,7 +205,7 @@ class ImageViewModel(
     }
 
     private fun dispatchSend(id: String, text: String, images: List<Attachment>) {
-        when (val result = repository.send(id, text, images, state.value.model)) {
+        when (val result = repository.send(id, text, images, state.value.model, state.value.providerId)) {
             ImageSendResult.Started -> {
                 input.value = ""
                 pending.value = emptyList()
@@ -223,7 +235,10 @@ class ImageViewModel(
         cancelRewrite()
         discardPending()
         viewModelScope.launch {
-            conversationId.value = repository.createConversation(state.value.model.ifBlank { null })
+            conversationId.value = repository.createConversation(
+                model = state.value.model.ifBlank { null },
+                providerId = state.value.providerId,
+            )
         }
     }
 
@@ -243,14 +258,19 @@ class ImageViewModel(
         if (conversationId.value == id) conversationId.value = null
     }
 
-    fun setModel(model: String) {
-        if (model.isBlank()) return
+    fun setModel(providerId: String, model: String) {
+        if (model.isBlank() || providerId.isBlank()) return
         val id = conversationId.value
         if (id == null) {
-            viewModelScope.launch { conversationId.value = repository.createConversation(model) }
+            viewModelScope.launch { conversationId.value = repository.createConversation(model, providerId) }
             return
         }
-        viewModelScope.launch { repository.setConversationModel(id, model) }
+        viewModelScope.launch { repository.setConversationModel(id, providerId, model) }
+    }
+
+    /** 打开模型选择器时刷新远程名单。失败不影响已经显示的内置项。 */
+    fun refreshModels() {
+        viewModelScope.launch { repository.refreshModels() }
     }
 
     override fun onCleared() {
@@ -268,7 +288,10 @@ class ImageViewModel(
 
     private suspend fun ensureConversation(): String = conversationLock.withLock {
         conversationId.value?.let { return@withLock it }
-        val created = repository.createConversation(state.value.model.ifBlank { null })
+        val created = repository.createConversation(
+            model = state.value.model.ifBlank { null },
+            providerId = state.value.providerId,
+        )
         conversationId.value = created
         created
     }
