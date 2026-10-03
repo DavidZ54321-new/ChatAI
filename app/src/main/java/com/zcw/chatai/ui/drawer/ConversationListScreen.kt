@@ -227,18 +227,15 @@ fun ConversationListScreen(
                         onClick = onOpenVideoStudio,
                     )
                 }
-                // 只有对话工作区有搜索（生图/视频会话不参与对话搜索）。
-                if (mode == WorkspaceMode.CHAT) {
-                    MenuRow(
-                        icon = Icons.Filled.Search,
-                        label = "搜索",
-                        onClick = {
-                            // 收起搜索时一并清空关键词，避免「搜索框没了但列表还在过滤」。
-                            if (searching) onSearchQueryChange("")
-                            searching = !searching
-                        },
-                    )
-                }
+                MenuRow(
+                    icon = Icons.Filled.Search,
+                    label = "搜索",
+                    onClick = {
+                        // 收起搜索时一并清空关键词，避免「搜索框没了但列表还在过滤」。
+                        if (searching) onSearchQueryChange("")
+                        searching = !searching
+                    },
+                )
             }
 
             if (searching) {
@@ -246,7 +243,7 @@ fun ConversationListScreen(
                     value = searchQuery,
                     onValueChange = onSearchQueryChange,
                     singleLine = true,
-                    placeholder = { Text("搜索聊天记录") },
+                    placeholder = { Text("搜索记录") },
                     leadingIcon = {
                         Icon(
                             imageVector = Icons.Filled.Search,

@@ -7,6 +7,7 @@ import com.zcw.chatai.data.TurnRegistry
 import com.zcw.chatai.data.db.AppDatabase
 import com.zcw.chatai.data.db.AttachmentCodec
 import com.zcw.chatai.data.db.ConversationEntity
+import com.zcw.chatai.data.db.LikePattern
 import com.zcw.chatai.data.db.MessageEntity
 import com.zcw.chatai.data.db.toModel
 import com.zcw.chatai.data.media.AttachmentStore
@@ -103,6 +104,11 @@ class ImageRepository(
 
     fun observeConversations(): Flow<List<Conversation>> =
         db.conversationDao().observeByKind(ConversationKind.IMAGE.name)
+            .map { list -> list.map { it.toModel() } }
+
+    /** 标题或消息正文命中关键词的生图会话（关键词按字面量匹配，见 [LikePattern]）。 */
+    fun searchConversations(query: String): Flow<List<Conversation>> =
+        db.conversationDao().search(ConversationKind.IMAGE.name, LikePattern.contains(query))
             .map { list -> list.map { it.toModel() } }
 
     fun observeConversation(id: String): Flow<Conversation?> =

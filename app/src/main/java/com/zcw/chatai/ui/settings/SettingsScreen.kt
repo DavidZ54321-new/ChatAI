@@ -25,6 +25,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -57,6 +58,7 @@ import com.zcw.chatai.data.prefs.ThemeMode
 import com.zcw.chatai.data.provider.ProviderCatalog
 import com.zcw.chatai.data.provider.ProviderEntry
 import com.zcw.chatai.ui.common.ModelAutocompleteField
+import com.zcw.chatai.ui.drawer.WorkspaceMode
 import com.zcw.chatai.ui.persona.PersonasScreen
 import com.zcw.chatai.ui.theme.ChatTheme
 import com.zcw.chatai.ui.theme.ThemeRegistry
@@ -64,6 +66,8 @@ import com.zcw.chatai.ui.theme.ThemeRegistry
 @Composable
 fun SettingsScreen(
     onBack: () -> Unit,
+    /** 打开设置时所在的工作区：顶栏只画这一区的专有项，底部「通用」三个工作区都有。 */
+    mode: WorkspaceMode,
     modifier: Modifier = Modifier,
 ) {
     var showPersonas by remember { mutableStateOf(false) }
@@ -142,6 +146,21 @@ fun SettingsScreen(
                 .padding(horizontal = 18.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
+            when (mode) {
+                WorkspaceMode.CHAT -> ChatWorkspaceSettings(
+                    state = state,
+                    viewModel = viewModel,
+                    scheme = scheme,
+                    activePersonaName = activePersonaName,
+                    toolEndpointsExpanded = toolEndpointsExpanded,
+                    onToggleToolEndpoints = { toolEndpointsExpanded = !toolEndpointsExpanded },
+                    onOpenPersonas = { showPersonas = true },
+                )
+                WorkspaceMode.IMAGE -> ImageWorkspaceSettings(state = state, viewModel = viewModel, scheme = scheme)
+                WorkspaceMode.VIDEO -> VideoWorkspaceSettings(state = state, viewModel = viewModel, scheme = scheme)
+            }
+
+            SectionTitle("通用")
             SectionTitle("服务商")
             val customProviderIds = state.providers.keys.filter(ProviderCatalog::isCustom)
             val customSelected = ProviderCatalog.isCustom(state.activeProviderId)
@@ -189,7 +208,7 @@ fun SettingsScreen(
                 )
             }
 
-            SectionTitle("接口")
+            SectionTitle("连接")
             Field(
                 label = "Base URL（Chat 兼容）",
                 value = state.baseUrl,
@@ -198,57 +217,6 @@ fun SettingsScreen(
                     ?: "https://…",
                 keyboardType = KeyboardType.Uri,
             )
-            Text(
-                text = if (toolEndpointsExpanded) "收起工具端点" else "其它协议端点（搜索/图搜，非主对话）",
-                style = MaterialTheme.typography.labelLarge,
-                color = scheme.primary,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable { toolEndpointsExpanded = !toolEndpointsExpanded }
-                    .padding(vertical = 4.dp),
-            )
-            if (toolEndpointsExpanded) {
-                Field(
-                    label = "Anthropic Base URL",
-                    value = state.displayedAnthropicBase,
-                    onValueChange = { value ->
-                        viewModel.update {
-                            it.copy(
-                                anthropicBaseUrl = SettingsViewModel.storedOverride(
-                                    value,
-                                    SettingsViewModel.derivedAnthropicBase(it.activeProviderId, it.baseUrl),
-                                ),
-                            )
-                        }
-                    },
-                    placeholder = SettingsViewModel.derivedAnthropicBase(state.activeProviderId, state.baseUrl)
-                        .ifBlank { "https://…/v1" },
-                    keyboardType = KeyboardType.Uri,
-                )
-                Field(
-                    label = "Responses Base URL",
-                    value = state.displayedResponsesBase,
-                    onValueChange = { value ->
-                        viewModel.update {
-                            it.copy(
-                                responsesBaseUrl = SettingsViewModel.storedOverride(
-                                    value,
-                                    SettingsViewModel.derivedResponsesBase(it.baseUrl),
-                                ),
-                            )
-                        }
-                    },
-                    placeholder = SettingsViewModel.derivedResponsesBase(state.baseUrl)
-                        .ifBlank { "https://…/v1" },
-                    keyboardType = KeyboardType.Uri,
-                )
-                Text(
-                    text = "留空或改回推导值即跟随 Chat Base URL。DeepSeek 搜索走 Anthropic，" +
-                        "通义千问搜索/图搜走 Responses，OpenCode Go 搜索走同一 v1 根的 /messages。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = scheme.onSurfaceVariant,
-                )
-            }
             Field(
                 label = "API Key",
                 value = state.apiKey,
@@ -257,161 +225,6 @@ fun SettingsScreen(
                 keyboardType = KeyboardType.Password,
                 masked = true,
             )
-            ModelAutocompleteField(
-                label = if (state.models.isEmpty()) "模型" else "模型（共 ${state.models.size} 个）",
-                value = state.model,
-                onValueChange = { value -> viewModel.update { it.copy(model = value) } },
-                placeholder = ProviderCatalog.byId(state.activeProviderId)?.defaultModel?.takeIf { it.isNotBlank() }
-                    ?: "model-name",
-                models = state.models,
-                busy = state.busy,
-                onFetch = viewModel::testConnection,
-            )
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                ActionPill(
-                    label = if (state.busy) "连接中…" else "测试连接 / 拉取模型列表",
-                    onClick = viewModel::testConnection,
-                    enabled = !state.busy,
-                )
-                if (state.busy) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp),
-                        strokeWidth = 2.dp,
-                        color = scheme.primary,
-                    )
-                }
-            }
-
-            SectionTitle("工具")
-            ChoiceRow(
-                label = "联网搜索后端",
-                hint = "这些工具经对应供应商的 API 执行，与当前对话模型无关（借道），按次计费；" +
-                    "选中项只是首选，失败（空结果或报错）会自动借道其它已配置的后端",
-                options = buildList {
-                    add(null to "跟随会话")
-                    ProviderCatalog.presets
-                        .filter { it.caps.textSearch && state.providers.containsKey(it.id) }
-                        .forEach { add(it.id to it.displayName) }
-                },
-                selected = state.searchProviderId,
-                onSelect = { value -> viewModel.update { it.copy(searchProviderId = value) } },
-            )
-            Field(
-                label = "图搜模型（按优先级）",
-                value = state.imageSearchModels,
-                onValueChange = { value -> viewModel.update { it.copy(imageSearchModels = value) } },
-                placeholder = ProviderCatalog.byId(ProviderCatalog.QWEN)?.toolModels
-                    ?.joinToString(",")
-                    ?: "qwen3.8-27b,qwen3.8-max",
-                singleLine = true,
-                error = state.imageSearchModelsError,
-            )
-            Text(
-                text = "文搜图 / 图搜图借道通义千问时按顺序尝试：先 27b，空结果或报错再退下一个；" +
-                    "留空用内置默认。与「通义千问」条目里的对话模型无关。",
-                style = MaterialTheme.typography.bodySmall,
-                color = scheme.onSurfaceVariant,
-            )
-            ImageSearchStatus(providers = state.providers)
-
-            SectionTitle("角色")
-            Text(
-                text = "当前默认：${activePersonaName.ifBlank { "未设置" }}（新会话记住上次在对话里切换的角色）",
-                style = MaterialTheme.typography.bodySmall,
-                color = scheme.onSurfaceVariant,
-            )
-            ActionPill(
-                label = "管理角色（新增 / 修改 / 删除）",
-                onClick = { showPersonas = true },
-            )
-            Text(
-                text = "每份角色自带系统提示词、温度、思考强度、长度上限与附加参数；" +
-                    "会话过程中在「模型与供应商」弹层里切换角色，只影响该会话今后的回答。",
-                style = MaterialTheme.typography.bodySmall,
-                color = scheme.onSurfaceVariant,
-            )
-
-            SectionTitle("生成")
-            SwitchRow(
-                label = "流式返回用量统计 (stream_options.include_usage)",
-                checked = state.includeUsage,
-                onCheckedChange = { value -> viewModel.update { it.copy(includeUsage = value) } },
-            )
-            SwitchRow(
-                label = "上下文末尾附带当前时间",
-                checked = state.includeEnvTime,
-                onCheckedChange = { value -> viewModel.update { it.copy(includeEnvTime = value) } },
-            )
-            Text(
-                text = "打开后，每次请求最后会带一条系统时间（年月日、星期、时分秒），方便模型判断时效；关闭则完全不发送。",
-                style = MaterialTheme.typography.bodySmall,
-                color = scheme.onSurfaceVariant,
-            )
-
-            SectionTitle("图片")
-            ChoiceRow(
-                label = "图片精度 (detail)",
-                hint = "省流档会把图片缩到 512×512，实测输入 token 约为标准档的 1/5",
-                options = ImageDetail.entries.map { it to it.label() },
-                selected = state.imageDetail,
-                onSelect = { value -> viewModel.update { it.copy(imageDetail = value) } },
-            )
-            ChoiceRow(
-                label = "历史图片轮次",
-                hint = "保留「当前轮 + 最近 N 轮」的图片（单位是轮次，不是消息条数）；" +
-                    "每张图都带来源标注，当前轮的图永远保留",
-                options = listOf(
-                    1 to "最近 1 轮",
-                    2 to "最近 2 轮",
-                    3 to "最近 3 轮",
-                    -1 to "全部",
-                    0 to "只发当前轮",
-                ),
-                selected = state.historyImageTurns,
-                onSelect = { value -> viewModel.update { it.copy(historyImageTurns = value) } },
-            )
-
-            SectionTitle("图像生成")
-            Field(
-                label = "图像模型",
-                value = state.imageGenModel,
-                onValueChange = { value -> viewModel.update { it.copy(imageGenModel = value) } },
-                placeholder = ImageModels.DEFAULT,
-                singleLine = true,
-            )
-            SwitchRow(
-                label = "提示词智能改写 (prompt_extend)",
-                checked = state.imagePromptExtend,
-                onCheckedChange = { value -> viewModel.update { it.copy(imagePromptExtend = value) } },
-            )
-            Text(
-                text = "生图 / 改图走通义千问原生接口（multimodal-generation），与对话模型无关；" +
-                    "需先在「服务商」里配好通义千问的 API Key。不带输入图即文生图，带图即图像编辑。",
-                style = MaterialTheme.typography.bodySmall,
-                color = scheme.onSurfaceVariant,
-            )
-            ImageGenStatus(providers = state.providers)
-
-            SectionTitle("视频生成")
-            Field(
-                label = "视频模型",
-                value = state.videoGenModel,
-                onValueChange = { value -> viewModel.update { it.copy(videoGenModel = value) } },
-                placeholder = VideoModels.DEFAULT,
-                singleLine = true,
-            )
-            SwitchRow(
-                label = "提示词智能改写 (prompt_extend)",
-                checked = state.videoPromptExtend,
-                onCheckedChange = { value -> viewModel.update { it.copy(videoPromptExtend = value) } },
-            )
-            Text(
-                text = "文生 / 图生（首帧、首尾帧）/ 参考生视频走通义千问的异步接口；" +
-                    "需先在「服务商」里配好通义千问的 API Key。任务在后台跑，切走或杀掉 App 也不会中断。",
-                style = MaterialTheme.typography.bodySmall,
-                color = scheme.onSurfaceVariant,
-            )
-            VideoGenStatus(providers = state.providers)
 
             SectionTitle("外观")
             SwitchRow(
@@ -493,6 +306,239 @@ fun SettingsScreen(
             dismissButton = { TextButton(onClick = { confirmDeleteProviderId = null }) { Text("取消") } },
         )
     }
+}
+
+@Composable
+private fun ChatWorkspaceSettings(
+    state: SettingsViewModel.FormState,
+    viewModel: SettingsViewModel,
+    scheme: ColorScheme,
+    activePersonaName: String,
+    toolEndpointsExpanded: Boolean,
+    onToggleToolEndpoints: () -> Unit,
+    onOpenPersonas: () -> Unit,
+) {
+    SectionTitle("对话")
+    ModelAutocompleteField(
+        label = if (state.models.isEmpty()) "对话模型" else "对话模型（共 ${state.models.size} 个）",
+        value = state.model,
+        onValueChange = { value -> viewModel.update { it.copy(model = value) } },
+        placeholder = ProviderCatalog.byId(state.activeProviderId)?.defaultModel?.takeIf { it.isNotBlank() }
+            ?: "model-name",
+        models = state.models,
+        busy = state.busy,
+        onFetch = viewModel::testConnection,
+    )
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        ActionPill(
+            label = if (state.busy) "连接中…" else "测试连接 / 拉取模型列表",
+            onClick = viewModel::testConnection,
+            enabled = !state.busy,
+        )
+        if (state.busy) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(18.dp),
+                strokeWidth = 2.dp,
+                color = scheme.primary,
+            )
+        }
+    }
+    Text(
+        text = if (toolEndpointsExpanded) "收起工具端点" else "其它协议端点（搜索/图搜，非主对话）",
+        style = MaterialTheme.typography.labelLarge,
+        color = scheme.primary,
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onToggleToolEndpoints)
+            .padding(vertical = 4.dp),
+    )
+    if (toolEndpointsExpanded) {
+        Field(
+            label = "Anthropic Base URL",
+            value = state.displayedAnthropicBase,
+            onValueChange = { value ->
+                viewModel.update {
+                    it.copy(
+                        anthropicBaseUrl = SettingsViewModel.storedOverride(
+                            value,
+                            SettingsViewModel.derivedAnthropicBase(it.activeProviderId, it.baseUrl),
+                        ),
+                    )
+                }
+            },
+            placeholder = SettingsViewModel.derivedAnthropicBase(state.activeProviderId, state.baseUrl)
+                .ifBlank { "https://…/v1" },
+            keyboardType = KeyboardType.Uri,
+        )
+        Field(
+            label = "Responses Base URL",
+            value = state.displayedResponsesBase,
+            onValueChange = { value ->
+                viewModel.update {
+                    it.copy(
+                        responsesBaseUrl = SettingsViewModel.storedOverride(
+                            value,
+                            SettingsViewModel.derivedResponsesBase(it.baseUrl),
+                        ),
+                    )
+                }
+            },
+            placeholder = SettingsViewModel.derivedResponsesBase(state.baseUrl)
+                .ifBlank { "https://…/v1" },
+            keyboardType = KeyboardType.Uri,
+        )
+        Text(
+            text = "留空或改回推导值即跟随 Chat Base URL。DeepSeek 搜索走 Anthropic，" +
+                "通义千问搜索/图搜走 Responses，OpenCode Go 搜索走同一 v1 根的 /messages。",
+            style = MaterialTheme.typography.bodySmall,
+            color = scheme.onSurfaceVariant,
+        )
+    }
+
+    SectionTitle("工具")
+    ChoiceRow(
+        label = "联网搜索后端",
+        hint = "这些工具经对应供应商的 API 执行，与当前对话模型无关（借道），按次计费；" +
+            "选中项只是首选，失败（空结果或报错）会自动借道其它已配置的后端",
+        options = buildList {
+            add(null to "跟随会话")
+            ProviderCatalog.presets
+                .filter { it.caps.textSearch && state.providers.containsKey(it.id) }
+                .forEach { add(it.id to it.displayName) }
+        },
+        selected = state.searchProviderId,
+        onSelect = { value -> viewModel.update { it.copy(searchProviderId = value) } },
+    )
+    Field(
+        label = "图搜模型（按优先级）",
+        value = state.imageSearchModels,
+        onValueChange = { value -> viewModel.update { it.copy(imageSearchModels = value) } },
+        placeholder = ProviderCatalog.byId(ProviderCatalog.QWEN)?.toolModels
+            ?.joinToString(",")
+            ?: "qwen3.8-27b,qwen3.8-max",
+        singleLine = true,
+        error = state.imageSearchModelsError,
+    )
+    Text(
+        text = "文搜图 / 图搜图借道通义千问时按顺序尝试：先 27b，空结果或报错再退下一个；" +
+            "留空用内置默认。与「通义千问」条目里的对话模型无关。",
+        style = MaterialTheme.typography.bodySmall,
+        color = scheme.onSurfaceVariant,
+    )
+    ImageSearchStatus(providers = state.providers)
+
+    SectionTitle("角色")
+    Text(
+        text = "当前默认：${activePersonaName.ifBlank { "未设置" }}（新会话记住上次在对话里切换的角色）",
+        style = MaterialTheme.typography.bodySmall,
+        color = scheme.onSurfaceVariant,
+    )
+    ActionPill(
+        label = "管理角色（新增 / 修改 / 删除）",
+        onClick = onOpenPersonas,
+    )
+    Text(
+        text = "每份角色自带系统提示词、温度、思考强度、长度上限与附加参数；" +
+            "会话过程中在「模型与供应商」弹层里切换角色，只影响该会话今后的回答。",
+        style = MaterialTheme.typography.bodySmall,
+        color = scheme.onSurfaceVariant,
+    )
+
+    SectionTitle("生成")
+    SwitchRow(
+        label = "流式返回用量统计 (stream_options.include_usage)",
+        checked = state.includeUsage,
+        onCheckedChange = { value -> viewModel.update { it.copy(includeUsage = value) } },
+    )
+    SwitchRow(
+        label = "上下文末尾附带当前时间",
+        checked = state.includeEnvTime,
+        onCheckedChange = { value -> viewModel.update { it.copy(includeEnvTime = value) } },
+    )
+    Text(
+        text = "打开后，每次请求最后会带一条系统时间（年月日、星期、时分秒），方便模型判断时效；关闭则完全不发送。",
+        style = MaterialTheme.typography.bodySmall,
+        color = scheme.onSurfaceVariant,
+    )
+
+    SectionTitle("看图")
+    ChoiceRow(
+        label = "图片精度 (detail)",
+        hint = "省流档会把图片缩到 512×512，实测输入 token 约为标准档的 1/5",
+        options = ImageDetail.entries.map { it to it.label() },
+        selected = state.imageDetail,
+        onSelect = { value -> viewModel.update { it.copy(imageDetail = value) } },
+    )
+    ChoiceRow(
+        label = "历史图片轮次",
+        hint = "保留「当前轮 + 最近 N 轮」的图片（单位是轮次，不是消息条数）；" +
+            "每张图都带来源标注，当前轮的图永远保留",
+        options = listOf(
+            1 to "最近 1 轮",
+            2 to "最近 2 轮",
+            3 to "最近 3 轮",
+            -1 to "全部",
+            0 to "只发当前轮",
+        ),
+        selected = state.historyImageTurns,
+        onSelect = { value -> viewModel.update { it.copy(historyImageTurns = value) } },
+    )
+}
+
+@Composable
+private fun ImageWorkspaceSettings(
+    state: SettingsViewModel.FormState,
+    viewModel: SettingsViewModel,
+    scheme: ColorScheme,
+) {
+    SectionTitle("图像生成")
+    Field(
+        label = "图像模型",
+        value = state.imageGenModel,
+        onValueChange = { value -> viewModel.update { it.copy(imageGenModel = value) } },
+        placeholder = ImageModels.DEFAULT,
+        singleLine = true,
+    )
+    SwitchRow(
+        label = "提示词智能改写 (prompt_extend)",
+        checked = state.imagePromptExtend,
+        onCheckedChange = { value -> viewModel.update { it.copy(imagePromptExtend = value) } },
+    )
+    Text(
+        text = "生图 / 改图走通义千问原生接口（multimodal-generation），与对话模型无关；" +
+            "需先在下方「服务商」里配好通义千问的 API Key。不带输入图即文生图，带图即图像编辑。",
+        style = MaterialTheme.typography.bodySmall,
+        color = scheme.onSurfaceVariant,
+    )
+    ImageGenStatus(providers = state.providers)
+}
+
+@Composable
+private fun VideoWorkspaceSettings(
+    state: SettingsViewModel.FormState,
+    viewModel: SettingsViewModel,
+    scheme: ColorScheme,
+) {
+    SectionTitle("视频生成")
+    Field(
+        label = "视频模型",
+        value = state.videoGenModel,
+        onValueChange = { value -> viewModel.update { it.copy(videoGenModel = value) } },
+        placeholder = VideoModels.DEFAULT,
+        singleLine = true,
+    )
+    SwitchRow(
+        label = "提示词智能改写 (prompt_extend)",
+        checked = state.videoPromptExtend,
+        onCheckedChange = { value -> viewModel.update { it.copy(videoPromptExtend = value) } },
+    )
+    Text(
+        text = "文生 / 图生（首帧、首尾帧）/ 参考生视频走通义千问的异步接口；" +
+            "需先在下方「服务商」里配好通义千问的 API Key。任务在后台跑，切走或杀掉 App 也不会中断。",
+        style = MaterialTheme.typography.bodySmall,
+        color = scheme.onSurfaceVariant,
+    )
+    VideoGenStatus(providers = state.providers)
 }
 
 @Composable

@@ -27,6 +27,7 @@ import com.zcw.chatai.data.provider.ProviderCatalog
 import com.zcw.chatai.data.provider.ToolBackendResolver
 import com.zcw.chatai.data.web.ImageSearchProvider
 import com.zcw.chatai.data.web.WebSearchProvider
+import com.zcw.chatai.ui.common.ConversationSearch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -85,20 +86,19 @@ class ChatViewModel(
     /** 建会话是「读-改-写」，两条协程并发 can 都看到 null 而各建一条空会话，串行化掉。 */
     private val conversationLock = Mutex()
 
+    /** 未过滤的全部对话。分支树要用这份，不能用带搜索过滤的 [searchResults]。 */
     val conversations: StateFlow<List<Conversation>> = repository.observeConversations()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    /** 会话列表页的搜索词；空串 = 不过滤（直接看全部会话）。 */
-    private val _searchQuery = MutableStateFlow("")
+    private val listSearch = ConversationSearch(
+        all = conversations,
+        search = repository::searchConversations,
+        scope = viewModelScope,
+    )
 
-    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+    val searchQuery: StateFlow<String> = listSearch.searchQuery
 
-    /** 会话列表页展示的数据：有关键词就走标题+消息正文检索，否则全部会话。 */
-    val searchResults: StateFlow<List<Conversation>> = _searchQuery
-        .flatMapLatest { query ->
-            if (query.isBlank()) conversations else repository.searchConversations(query)
-        }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val searchResults: StateFlow<List<Conversation>> = listSearch.results
 
     private val messagesFlow = conversationId.flatMapLatest { id ->
         if (id == null) flowOf(emptyList()) else repository.observeMessages(id)
@@ -614,9 +614,7 @@ class ChatViewModel(
     }
 
     /** 会话列表页搜索：关键词变化时 [searchResults] 自动重算。 */
-    fun setSearchQuery(query: String) {
-        _searchQuery.value = query
-    }
+    fun setSearchQuery(query: String) = listSearch.setQuery(query)
 
     fun newConversation() {
         discardPending()

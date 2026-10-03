@@ -17,13 +17,13 @@ import com.zcw.chatai.data.model.Role
 import com.zcw.chatai.data.prefs.SettingsRepository
 import com.zcw.chatai.data.provider.ProviderCatalog
 import com.zcw.chatai.ui.chat.PendingAttachment
+import com.zcw.chatai.ui.common.ConversationSearch
 import com.zcw.chatai.ui.chat.toChatMessageItem
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -50,8 +50,15 @@ class ImageViewModel(
     private var rewriteJob: Job? = null
     private var rewriteOriginal: String = ""
 
-    val conversations: StateFlow<List<Conversation>> = repository.observeConversations()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    private val listSearch = ConversationSearch(
+        all = repository.observeConversations(),
+        search = repository::searchConversations,
+        scope = viewModelScope,
+    )
+
+    val searchQuery: StateFlow<String> = listSearch.searchQuery
+
+    val searchResults: StateFlow<List<Conversation>> = listSearch.results
 
     private val conversationFlow = conversationId.flatMapLatest { id ->
         if (id == null) flowOf(null) else repository.observeConversation(id)
@@ -109,6 +116,9 @@ class ImageViewModel(
     fun setInput(text: String) {
         input.value = text
     }
+
+    /** 会话列表页搜索：关键词变化时 [searchResults] 自动重算。 */
+    fun setSearchQuery(query: String) = listSearch.setQuery(query)
 
     fun consumeNotice() {
         notice.value = null

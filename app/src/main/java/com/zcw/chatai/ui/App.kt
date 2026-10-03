@@ -57,7 +57,8 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
         ),
     )
     val imageState by imageViewModel.state.collectAsStateWithLifecycle()
-    val imageConversations by imageViewModel.conversations.collectAsStateWithLifecycle()
+    val imageConversations by imageViewModel.searchResults.collectAsStateWithLifecycle()
+    val imageSearchQuery by imageViewModel.searchQuery.collectAsStateWithLifecycle()
     val videoViewModel: VideoViewModel = viewModel(
         factory = VideoViewModel.factory(
             repository = app.videoRepository,
@@ -66,7 +67,8 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
         ),
     )
     val videoState by videoViewModel.state.collectAsStateWithLifecycle()
-    val videoConversations by videoViewModel.conversations.collectAsStateWithLifecycle()
+    val videoConversations by videoViewModel.searchResults.collectAsStateWithLifecycle()
+    val videoSearchQuery by videoViewModel.searchQuery.collectAsStateWithLifecycle()
     val lamps by app.conversationLamps.current.collectAsStateWithLifecycle()
     val branchParent by viewModel.branchParent.collectAsStateWithLifecycle()
     val conversations by viewModel.searchResults.collectAsStateWithLifecycle()
@@ -134,6 +136,8 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
     val closeConversations = {
         showConversations = false
         viewModel.setSearchQuery("")
+        imageViewModel.setSearchQuery("")
+        videoViewModel.setSearchQuery("")
     }
 
     val listPage = when (mode) {
@@ -141,8 +145,8 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
             conversations = imageConversations,
             branchCounts = emptyMap(),
             selectedId = imageState.conversationId,
-            searchQuery = "",
-            onSearchQueryChange = {},
+            searchQuery = imageSearchQuery,
+            onSearchQueryChange = imageViewModel::setSearchQuery,
             onSelect = { id ->
                 imageViewModel.selectConversation(id)
                 closeConversations()
@@ -159,8 +163,8 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
             conversations = videoConversations,
             branchCounts = emptyMap(),
             selectedId = videoState.conversationId,
-            searchQuery = "",
-            onSearchQueryChange = {},
+            searchQuery = videoSearchQuery,
+            onSearchQueryChange = videoViewModel::setSearchQuery,
             onSelect = { id ->
                 videoViewModel.selectConversation(id)
                 closeConversations()
@@ -194,7 +198,7 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
 
     Box(modifier = modifier.fillMaxSize()) {
         if (showSettings) {
-            SettingsScreen(onBack = { showSettings = false })
+            SettingsScreen(onBack = { showSettings = false }, mode = mode)
         } else if (mode == WorkspaceMode.IMAGE) {
             ImageStudioScreen(
                 state = imageState,
