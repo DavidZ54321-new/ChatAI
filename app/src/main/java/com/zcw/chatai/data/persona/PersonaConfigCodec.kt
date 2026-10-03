@@ -61,6 +61,20 @@ object PersonaConfigCodec {
         ),
     )
 
+    /**
+     * 只替换一张角色的思考强度。id 不在表里返回 null；档位没变返回原表
+     * （调用方据此跳过落盘）。不改其它字段，也不涉及激活角色 id。
+     */
+    fun replacingReasoning(
+        personas: Map<String, PersonaEntry>,
+        personaId: String,
+        effort: ReasoningEffort,
+    ): Map<String, PersonaEntry>? {
+        val entry = personas[personaId] ?: return null
+        if (entry.reasoningEffort == effort) return personas
+        return personas + (personaId to entry.copy(reasoningEffort = effort))
+    }
+
     /** 解析激活角色 id：不在表里时顺延到首个，表空时回落默认 id。 */
     fun resolveActiveId(personas: Map<String, PersonaEntry>, activeId: String?): String =
         when {

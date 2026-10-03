@@ -202,6 +202,7 @@ fun MessageEditSheet(
                 onSelect = actions.onModelChange,
                 onSelectProvider = actions.onProviderChange,
                 onSelectPersona = {},
+                onReasoningEffort = { _, _ -> },
                 onOpenSettings = null,
             )
         }

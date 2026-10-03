@@ -5,8 +5,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -286,19 +284,11 @@ private fun PersonaRow(
 }
 
 private fun personaSummary(entry: PersonaEntry): String = buildList {
-    add("思考 ${entry.reasoningEffort.personaLabel()}")
+    add("思考 ${entry.reasoningEffort.sliderLabel()}")
     entry.temperature?.let { add("温度 $it") }
     entry.maxTokens?.let { add("上限 $it") }
     if (entry.extraParams.isNotBlank()) add("附加参数")
 }.joinToString(" · ")
-
-private fun ReasoningEffort.personaLabel(): String = when (this) {
-    ReasoningEffort.FOLLOW_DEFAULT -> "跟随服务端"
-    ReasoningEffort.OFF -> "关"
-    ReasoningEffort.LOW -> "低"
-    ReasoningEffort.HIGH -> "高"
-    ReasoningEffort.MAX -> "最高"
-}
 
 /** 编辑器草稿：id 为 null 表示新增。 */
 private data class PersonaDraft(
@@ -342,7 +332,6 @@ private data class PersonaDraft(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun PersonaEditDialog(
     draft: PersonaDraft,
@@ -379,39 +368,11 @@ private fun PersonaEditDialog(
                     placeholder = "留空则不加 system 消息",
                     singleLine = false,
                 )
-                Text(
-                    text = "思考强度",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                EffortSparkSlider(
+                    value = state.reasoningEffort,
+                    onValueChange = { state = state.copy(reasoningEffort = it) },
+                    valueText = state.reasoningEffort.sliderLabel(),
                 )
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    ReasoningEffort.entries.forEach { option ->
-                        val selected = option == state.reasoningEffort
-                        Text(
-                            text = option.personaLabel(),
-                            style = MaterialTheme.typography.labelLarge,
-                            color = if (selected) {
-                                MaterialTheme.colorScheme.onPrimary
-                            } else {
-                                MaterialTheme.colorScheme.onSurface
-                            },
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(999.dp))
-                                .background(
-                                    if (selected) {
-                                        MaterialTheme.colorScheme.primary
-                                    } else {
-                                        ChatTheme.colors.chipBackground
-                                    },
-                                )
-                                .clickable { state = state.copy(reasoningEffort = option) }
-                                .padding(horizontal = 14.dp, vertical = 8.dp),
-                        )
-                    }
-                }
                 PersonaField(
                     label = "温度 (temperature)",
                     value = state.temperature,

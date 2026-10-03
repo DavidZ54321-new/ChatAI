@@ -21,6 +21,7 @@ import com.zcw.chatai.data.model.Message
 import com.zcw.chatai.data.model.MessageStatus
 import com.zcw.chatai.data.model.Role
 import com.zcw.chatai.data.persona.PersonaEntry
+import com.zcw.chatai.data.prefs.ReasoningEffort
 import com.zcw.chatai.data.prefs.SettingsRepository
 import com.zcw.chatai.data.provider.ProviderCatalog
 import com.zcw.chatai.data.provider.ToolBackendResolver
@@ -712,6 +713,17 @@ class ChatViewModel(
                 return@launch
             }
             repository.setConversationPersona(id, personaId)
+        }
+    }
+
+    /**
+     * 改这个角色的思考强度。挂在 ViewModel 上：模型弹层关掉也不会取消写入。
+     * [personaId] 用滑条回调当时的角色，不读之后才变的界面状态。
+     */
+    fun setPersonaReasoning(personaId: String, effort: ReasoningEffort) {
+        if (personaId.isBlank()) return
+        viewModelScope.launch {
+            settingsRepository.updatePersonaReasoning(personaId, effort)
         }
     }
 

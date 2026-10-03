@@ -26,8 +26,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import com.zcw.chatai.ChatAiApp
+import com.zcw.chatai.data.prefs.ReasoningEffort
 import com.zcw.chatai.data.provider.ProviderCatalog
 import com.zcw.chatai.ui.common.ModelAutocompleteField
+import com.zcw.chatai.ui.persona.EffortSparkSlider
+import com.zcw.chatai.ui.persona.sliderLabel
 import com.zcw.chatai.ui.theme.ChatTheme
 import kotlinx.coroutines.flow.first
 
@@ -48,6 +51,7 @@ fun ModelPickerSheet(
     onSelect: (String) -> Unit,
     onSelectProvider: (String) -> Unit,
     onSelectPersona: (String) -> Unit,
+    onReasoningEffort: (personaId: String, effort: ReasoningEffort) -> Unit,
     onOpenSettings: () -> Unit,
 ) {
     // 撑满并滚动：键盘把视口压矮时，不滚动的 Column 会把最底下的输入框挤成一条缝。
@@ -59,6 +63,7 @@ fun ModelPickerSheet(
             onSelect = onSelect,
             onSelectProvider = onSelectProvider,
             onSelectPersona = onSelectPersona,
+            onReasoningEffort = onReasoningEffort,
             onOpenSettings = onOpenSettings,
         )
     }
@@ -78,6 +83,8 @@ internal fun ModelPickerContent(
     onSelect: (String) -> Unit,
     onSelectProvider: (String) -> Unit,
     onSelectPersona: (String) -> Unit,
+    /** 改当前角色的思考强度。编辑消息弹层不选角色，传空实现即可。 */
+    onReasoningEffort: (personaId: String, effort: ReasoningEffort) -> Unit,
     /** null = 不给「去设置」入口（编辑弹层里跳设置会丢掉草稿）。 */
     onOpenSettings: (() -> Unit)?,
 ) {
@@ -225,6 +232,15 @@ internal fun ModelPickerContent(
                 )
             }
         }
+        personas[personaId]?.let { entry ->
+            EffortSparkSlider(
+                value = entry.reasoningEffort,
+                onValueChange = { onReasoningEffort(personaId, it) },
+                valueText = entry.reasoningEffort.sliderLabel(),
+                trackColor = colors.codeButtonBackground,
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+            )
+        }
     }
     // 换供应商后重建，免得复用上一个供应商时的「是否在输入」筛选状态。
     key(providerId) {
@@ -249,16 +265,6 @@ internal fun ModelPickerContent(
             style = MaterialTheme.typography.bodySmall,
             color = colors.accentAmber,
             modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
-        )
-    }
-    if (onOpenSettings != null) {
-        Text(
-            text = "服务与密钥设置",
-            style = MaterialTheme.typography.labelLarge,
-            color = colors.codeHeaderText,
-            modifier = Modifier
-                .padding(horizontal = 24.dp, vertical = 12.dp)
-                .clickable(onClick = onOpenSettings),
         )
     }
 }

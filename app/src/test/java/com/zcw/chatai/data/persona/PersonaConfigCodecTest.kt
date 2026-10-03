@@ -3,6 +3,7 @@ package com.zcw.chatai.data.persona
 import com.zcw.chatai.data.prefs.ReasoningEffort
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -121,5 +122,20 @@ class PersonaConfigCodecTest {
             PersonaConfigCodec.validateName("一".repeat(25)),
         )
         assertNull(PersonaConfigCodec.validateName("翻译官"))
+    }
+
+    @Test
+    fun replacingReasoningTouchesOnlyThatPersona() {
+        val translator = PersonaEntry(name = "翻译", reasoningEffort = ReasoningEffort.LOW, temperature = 0.2)
+        val coder = PersonaEntry(name = "编码", reasoningEffort = ReasoningEffort.HIGH, systemPrompt = "be brief")
+        val table = mapOf("translator" to translator, "coder" to coder)
+
+        val updated = PersonaConfigCodec.replacingReasoning(table, "translator", ReasoningEffort.MAX)
+        assertEquals(ReasoningEffort.MAX, updated?.get("translator")?.reasoningEffort)
+        assertEquals(0.2, updated?.get("translator")?.temperature)
+        assertEquals(coder, updated?.get("coder"))
+
+        assertSame(table, PersonaConfigCodec.replacingReasoning(table, "translator", ReasoningEffort.LOW))
+        assertNull(PersonaConfigCodec.replacingReasoning(table, "missing", ReasoningEffort.OFF))
     }
 }

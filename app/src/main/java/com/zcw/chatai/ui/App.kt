@@ -276,6 +276,7 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
                     },
                     onSelectProvider = viewModel::setProvider,
                     onSelectPersona = viewModel::setPersona,
+                    onReasoningEffort = viewModel::setPersonaReasoning,
                     onOpenSettings = {
                         showModelPicker = false
                         showSettings = true

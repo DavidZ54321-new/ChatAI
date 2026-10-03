@@ -313,6 +313,20 @@ class SettingsRepository(context: Context) {
         }
     }
 
+    /**
+     * 只改一张角色的思考强度。读改写都在同一次 [edit] 里，不写激活角色 id，
+     * 所以和「切换角色」叠在一起时不会把激活 id 盖回去。
+     */
+    suspend fun updatePersonaReasoning(personaId: String, effort: ReasoningEffort) {
+        store.edit { prefs ->
+            val current = PersonaConfigCodec.decode(prefs[KEY_PERSONAS])
+            val updated = PersonaConfigCodec.replacingReasoning(current, personaId, effort)
+                ?: return@edit
+            if (updated === current) return@edit
+            prefs[KEY_PERSONAS] = PersonaConfigCodec.encode(updated)
+        }
+    }
+
     suspend fun updateThemeMode(mode: ThemeMode) {
         store.edit { prefs ->
             prefs[KEY_THEME_MODE] = mode.name
