@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -30,7 +29,6 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -38,6 +36,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.zcw.chatai.R
 import com.zcw.chatai.data.video.VideoMode
+import com.zcw.chatai.ui.common.RewriteLock
+import com.zcw.chatai.ui.common.RewritePromptField
 import com.zcw.chatai.ui.chat.IconBareButton
 import com.zcw.chatai.ui.chat.PendingAttachment
 import com.zcw.chatai.ui.chat.PendingAttachmentStrip
@@ -80,8 +80,9 @@ fun VideoComposer(
     val focused by interaction.collectIsFocusedAsState()
     val focus = if (focused) 1f else 0f
     val borderColor = lerp(colors.hairline, scheme.primary, focus)
+    Box(modifier = modifier.fillMaxWidth()) {
     Column(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxWidth()
             .border(
                 width = ComposerFocusRing,
@@ -105,29 +106,18 @@ fun VideoComposer(
         if (pending.isNotEmpty()) {
             PendingAttachmentStrip(pending = pending, onRemove = onRemoveAttachment)
         }
-        BasicTextField(
+        RewritePromptField(
             value = value,
             onValueChange = onValueChange,
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 26.dp, max = 180.dp)
-                .focusRequester(focusRequester),
-            textStyle = MaterialTheme.typography.bodyLarge.copy(color = scheme.onSurface),
-            cursorBrush = SolidColor(scheme.primary),
-            maxLines = 8,
+            rewriting = rewriting,
+            placeholder = "描述要生成的视频，或按「第1个镜头[0-3秒] …」写分镜；点「优化」自动改写",
+            maxHeight = 180.dp,
+            restingMaxLines = 8,
+            focusRequester = focusRequester,
             interactionSource = interaction,
-            decorationBox = { innerTextField ->
-                Box(contentAlignment = Alignment.TopStart) {
-                    if (value.isEmpty()) {
-                        Text(
-                            text = "描述要生成的视频，或按「第1个镜头[0-3秒] …」写分镜；点「优化」自动改写",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = scheme.onSurfaceVariant,
-                        )
-                    }
-                    innerTextField()
-                }
-            },
+            textStyle = MaterialTheme.typography.bodyLarge.copy(color = scheme.onSurface),
+            cursorColor = scheme.primary,
+            placeholderColor = scheme.onSurfaceVariant,
         )
         // 第一行：生成设置（模式 / 参数 / 模型），窄屏可横向滚动。
         Row(
@@ -155,9 +145,9 @@ fun VideoComposer(
                 tint = scheme.onSurfaceVariant,
             )
             MiniPill(
-                text = if (rewriting) "取消优化" else "优化",
+                text = "优化",
                 onClick = onOptimize,
-                enabled = value.isNotBlank() || rewriting,
+                enabled = value.isNotBlank() && !rewriting,
             )
             MiniPill(text = "分镜", onClick = onInsertShot)
             Spacer(Modifier.weight(1f))
@@ -168,6 +158,13 @@ fun VideoComposer(
                 onStop = onStop,
             )
         }
+    }
+        RewriteLock(
+            visible = rewriting,
+            shape = RoundedCornerShape(ComposerCorner + ComposerFocusRing),
+            surface = colors.surfaceCard,
+            indicator = scheme.primary,
+        )
     }
 }
 

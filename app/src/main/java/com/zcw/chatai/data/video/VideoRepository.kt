@@ -26,6 +26,7 @@ import com.zcw.chatai.data.net.VideoGenPayload
 import com.zcw.chatai.data.net.VideoSynthesisOutcome
 import com.zcw.chatai.data.net.VideoTaskOutcome
 import com.zcw.chatai.data.prefs.SettingsRepository
+import com.zcw.chatai.data.prefs.requireTextRewriteConfig
 import com.zcw.chatai.data.prefs.toChatConfig
 import com.zcw.chatai.data.provider.ProviderCatalog
 import java.util.UUID
@@ -164,7 +165,7 @@ class VideoRepository(
             ConversationEntity(
                 id = id,
                 title = ConversationTitle.FALLBACK,
-                model = model?.takeIf { it.isNotBlank() } ?: settings.videoGenModel,
+                model = model?.takeIf { it.isNotBlank() } ?: settings.resolvedVideoWorkspaceModel,
                 systemPrompt = null,
                 createdAt = timestamp,
                 updatedAt = timestamp,
@@ -485,18 +486,9 @@ class VideoRepository(
 
     // ---------- 提示词改写 ----------
 
+    /** 提示词改写只用文本区的对话模型，不用视频供应商上的模型名。 */
     fun rewritePrompt(text: String): Flow<String> = settingsRepository.settings.flatMapLatest { current ->
-        val providerId = when {
-            current.providers[current.activeProviderId]?.apiKey?.isNotBlank() == true ->
-                current.activeProviderId
-            current.providers[ProviderCatalog.QWEN]?.apiKey?.isNotBlank() == true -> ProviderCatalog.QWEN
-            else -> current.activeProviderId
-        }
-        val config = current.toChatConfig(providerId).copy(
-            enabledTools = emptyList(),
-            webSearchEnabled = false,
-            includeEnvTime = false,
-        )
+        val config = current.requireTextRewriteConfig()
         chatApi.stream(config, VideoPromptRewriter.request(text))
             .mapNotNull { event -> (event as? ChatStreamEvent.Delta)?.content }
     }

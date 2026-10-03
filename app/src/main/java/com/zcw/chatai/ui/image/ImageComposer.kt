@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -29,13 +28,14 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.zcw.chatai.R
+import com.zcw.chatai.ui.common.RewriteLock
+import com.zcw.chatai.ui.common.RewritePromptField
 import com.zcw.chatai.ui.chat.IconBareButton
 import com.zcw.chatai.ui.chat.PendingAttachment
 import com.zcw.chatai.ui.chat.PendingAttachmentStrip
@@ -74,8 +74,9 @@ fun ImageComposer(
     val focused by interaction.collectIsFocusedAsState()
     val focus = if (focused) 1f else 0f
     val borderColor = lerp(colors.hairline, scheme.primary, focus)
+    Box(modifier = modifier.fillMaxWidth()) {
     Column(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxWidth()
             .border(
                 width = ComposerFocusRing,
@@ -99,29 +100,18 @@ fun ImageComposer(
         if (pending.isNotEmpty()) {
             PendingAttachmentStrip(pending = pending, onRemove = onRemoveAttachment)
         }
-        BasicTextField(
+        RewritePromptField(
             value = value,
             onValueChange = onValueChange,
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 26.dp, max = 150.dp)
-                .focusRequester(focusRequester),
-            textStyle = MaterialTheme.typography.bodyLarge.copy(color = scheme.onSurface),
-            cursorBrush = SolidColor(scheme.primary),
-            maxLines = 6,
+            rewriting = rewriting,
+            placeholder = "描述你想生成或修改的画面…",
+            maxHeight = 150.dp,
+            restingMaxLines = 6,
+            focusRequester = focusRequester,
             interactionSource = interaction,
-            decorationBox = { innerTextField ->
-                Box(contentAlignment = Alignment.TopStart) {
-                    if (value.isEmpty()) {
-                        Text(
-                            text = "描述你想生成或修改的画面…",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = scheme.onSurfaceVariant,
-                        )
-                    }
-                    innerTextField()
-                }
-            },
+            textStyle = MaterialTheme.typography.bodyLarge.copy(color = scheme.onSurface),
+            cursorColor = scheme.primary,
+            placeholderColor = scheme.onSurfaceVariant,
         )
         BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
             val chipMaxWidth = maxWidth * 0.28f
@@ -133,7 +123,7 @@ fun ImageComposer(
                     iconSize = 22.dp,
                     tint = scheme.onSurfaceVariant,
                 )
-                OptimizePill(rewriting = rewriting, enabled = value.isNotBlank() || rewriting, onClick = onOptimize)
+                OptimizePill(enabled = value.isNotBlank() && !rewriting, onClick = onOptimize)
                 ModelChip(model = model, onClick = onModelClick, maxWidth = chipMaxWidth)
                 Spacer(Modifier.weight(1f))
                 PrimaryActionButton(
@@ -145,10 +135,17 @@ fun ImageComposer(
             }
         }
     }
+        RewriteLock(
+            visible = rewriting,
+            shape = RoundedCornerShape(ComposerCorner + ComposerFocusRing),
+            surface = colors.surfaceCard,
+            indicator = scheme.primary,
+        )
+    }
 }
 
 @Composable
-private fun OptimizePill(rewriting: Boolean, enabled: Boolean, onClick: () -> Unit) {
+private fun OptimizePill(enabled: Boolean, onClick: () -> Unit) {
     val colors = ChatTheme.colors
     val scheme = MaterialTheme.colorScheme
     Box(
@@ -159,7 +156,7 @@ private fun OptimizePill(rewriting: Boolean, enabled: Boolean, onClick: () -> Un
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
         Text(
-            text = if (rewriting) "取消优化" else "优化",
+            text = "优化",
             style = MaterialTheme.typography.labelLarge,
             color = if (enabled) scheme.onSurfaceVariant else scheme.onSurfaceVariant.copy(alpha = 0.4f),
         )

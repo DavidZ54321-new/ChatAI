@@ -7,6 +7,10 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.zcw.chatai.data.image.ImageModelCatalog
+import com.zcw.chatai.data.prefs.WorkspaceSlot
+import com.zcw.chatai.ui.common.launchPromptRewrite
+import com.zcw.chatai.data.image.openai.OpenAiImageOptions
+import com.zcw.chatai.data.image.qwen.QwenImageOptions
 import com.zcw.chatai.data.image.ImageRepository
 import com.zcw.chatai.data.image.ImageSendResult
 import com.zcw.chatai.data.media.AttachmentStore
@@ -19,12 +23,12 @@ import com.zcw.chatai.data.prefs.SettingsRepository
 import com.zcw.chatai.ui.chat.PendingAttachment
 import com.zcw.chatai.ui.common.ConversationSearch
 import com.zcw.chatai.ui.chat.toChatMessageItem
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
@@ -48,7 +52,6 @@ class ImageViewModel(
     private val conversationLock = Mutex()
 
     private var rewriteJob: Job? = null
-    private var rewriteOriginal: String = ""
 
     private val listSearch = ConversationSearch(
         all = repository.observeConversations(),
@@ -83,8 +86,11 @@ class ImageViewModel(
         settingsRepository.settings,
         repository.remoteModels,
     ) { core, busy, composer, settings, remote ->
-        val model = core.conversation?.model?.takeIf { it.isNotBlank() } ?: settings.imageGenModel
-        val selection = repository.selection(model, core.conversation?.providerId, remote)
+        val model = core.conversation?.model?.takeIf { it.isNotBlank() }
+            ?: settings.resolvedImageWorkspaceModel
+        val provider = core.conversation?.providerId?.takeIf { it.isNotBlank() }
+            ?: settings.resolvedImageWorkspaceProvider
+        val selection = repository.selection(model, provider, remote)
         ImageUiState(
             conversationId = core.id,
             title = core.conversation?.title ?: "新图像",
@@ -105,6 +111,9 @@ class ImageViewModel(
             rewriting = composer.rewriting,
             notice = composer.notice,
             available = settings.providers[selection.providerId]?.apiKey?.isNotBlank() == true,
+            openAiImage = settings.openAiImage,
+            qwenImage = settings.qwenImage,
+            imagePromptExtend = settings.imagePromptExtend,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ImageUiState())
 
@@ -155,36 +164,10 @@ class ImageViewModel(
         pending.value = pending.value.filterNot { it.id == attachmentId }
     }
 
-    /** 优化提示词：流式写回输入框；再点一次取消并恢复原文。 */
     fun optimizePrompt() {
-        if (rewriting.value) {
-            val restored = rewriteOriginal
-            rewriteJob?.cancel()
-            rewriteJob = null
-            input.value = restored
-            rewriting.value = false
-            return
-        }
-        val text = input.value.trim()
-        if (text.isEmpty()) {
-            notice.value = "先输入提示词再优化"
-            return
-        }
-        rewriteOriginal = text
-        rewriting.value = true
-        input.value = ""
-        rewriteJob = viewModelScope.launch {
-            try {
-                repository.rewritePrompt(text).collect { delta -> input.value = input.value + delta }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (t: Throwable) {
-                if (input.value.isBlank()) input.value = text
-                notice.value = t.message?.takeIf { it.isNotBlank() } ?: "提示词优化失败"
-            } finally {
-                rewriting.value = false
-            }
-        }
+        viewModelScope.launchPromptRewrite(input, rewriting, notice) {
+            repository.rewritePrompt(it)
+        }?.let { rewriteJob = it }
     }
 
     fun send() {
@@ -235,9 +218,10 @@ class ImageViewModel(
         cancelRewrite()
         discardPending()
         viewModelScope.launch {
+            val settings = settingsRepository.settings.first()
             conversationId.value = repository.createConversation(
-                model = state.value.model.ifBlank { null },
-                providerId = state.value.providerId,
+                model = settings.resolvedImageWorkspaceModel,
+                providerId = settings.resolvedImageWorkspaceProvider,
             )
         }
     }
@@ -260,12 +244,24 @@ class ImageViewModel(
 
     fun setModel(providerId: String, model: String) {
         if (model.isBlank() || providerId.isBlank()) return
-        val id = conversationId.value
-        if (id == null) {
-            viewModelScope.launch { conversationId.value = repository.createConversation(model, providerId) }
-            return
+        viewModelScope.launch {
+            settingsRepository.updateWorkspace(WorkspaceSlot.Image, providerId, model)
+            val id = conversationId.value ?: return@launch
+            repository.setConversationModel(id, providerId, model)
         }
-        viewModelScope.launch { repository.setConversationModel(id, providerId, model) }
+    }
+
+    /** OpenAI 的质量、尺寸、格式等。全局生效，下次生图就带上。 */
+    fun setOpenAiImage(options: OpenAiImageOptions) {
+        viewModelScope.launch { settingsRepository.updateOpenAiImage(options) }
+    }
+
+    fun setQwenImage(options: QwenImageOptions) {
+        viewModelScope.launch { settingsRepository.updateQwenImage(options) }
+    }
+
+    fun setImagePromptExtend(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.updateImagePromptExtend(enabled) }
     }
 
     /** 打开模型选择器时刷新远程名单。失败不影响已经显示的内置项。 */

@@ -22,6 +22,7 @@ import com.zcw.chatai.data.net.ChatApi
 import com.zcw.chatai.data.net.ChatStreamEvent
 import com.zcw.chatai.data.prefs.ChatSettings
 import com.zcw.chatai.data.prefs.SettingsRepository
+import com.zcw.chatai.data.prefs.requireTextRewriteConfig
 import com.zcw.chatai.data.prefs.toChatConfig
 import com.zcw.chatai.data.provider.ProviderCatalog
 import java.util.UUID
@@ -171,9 +172,9 @@ class ImageRepository(
 
     suspend fun createConversation(model: String? = null, providerId: String? = null): String {
         val settings = settingsRepository.settings.first()
-        val resolvedModel = model?.takeIf { it.isNotBlank() } ?: settings.imageGenModel
-        val resolvedProvider = resolveTurn(resolvedModel, providerId.orEmpty())?.providerId
-            ?: ProviderCatalog.QWEN
+        val resolvedModel = model?.takeIf { it.isNotBlank() } ?: settings.resolvedImageWorkspaceModel
+        val resolvedProvider = providerId?.takeIf { it.isNotBlank() }
+            ?: settings.resolvedImageWorkspaceProvider
         val id = newId()
         val timestamp = nowMs()
         db.conversationDao().upsert(
@@ -257,7 +258,10 @@ class ImageRepository(
         val trimmed = prompt.trim()
         if (trimmed.isEmpty()) return ImageSendResult.Rejected("请输入提示词")
         val settings = settingsNow.value ?: return ImageSendResult.Rejected("生图配置还没准备好，请重试")
-        val turn = resolveTurn(model.ifBlank { settings.imageGenModel }, providerId)
+        val turn = resolveTurn(
+            model.ifBlank { settings.resolvedImageWorkspaceModel },
+            providerId.ifBlank { settings.resolvedImageWorkspaceProvider },
+        )
         rejectTurn(turn, userImages, settings)?.let { return ImageSendResult.Rejected(it) }
         val resolved = turn ?: return ImageSendResult.Rejected("当前供应商不支持生图")
         val job = turns.startIfIdle(conversationId) {
@@ -287,8 +291,9 @@ class ImageRepository(
                 }
                 val settings = settingsRepository.settings.first()
                 val turn = resolveTurn(
-                    conversation?.model?.takeIf { it.isNotBlank() } ?: settings.imageGenModel,
-                    conversation?.providerId.orEmpty(),
+                    conversation?.model?.takeIf { it.isNotBlank() } ?: settings.resolvedImageWorkspaceModel,
+                    conversation?.providerId?.takeIf { it.isNotBlank() }
+                        ?: settings.resolvedImageWorkspaceProvider,
                 )
                 val userImages = AttachmentCodec.decode(user.attachments)
                 rejectTurn(turn, userImages, settings)?.let { reason ->
@@ -317,20 +322,10 @@ class ImageRepository(
 
     /**
      * 提示词改写：把用户的抽象描述改写成画面式描述，流式吐给 UI 写回输入框。
-     * 用**当前对话模型**（激活供应商，若它没配 Key 则退到已配置的通义千问）。
+     * 只用文本区的对话模型，不用图像供应商上的模型名。
      */
     fun rewritePrompt(text: String): Flow<String> = settingsRepository.settings.flatMapLatest { current ->
-        val providerId = when {
-            current.providers[current.activeProviderId]?.apiKey?.isNotBlank() == true ->
-                current.activeProviderId
-            current.providers[ProviderCatalog.QWEN]?.apiKey?.isNotBlank() == true -> ProviderCatalog.QWEN
-            else -> current.activeProviderId
-        }
-        val config = current.toChatConfig(providerId).copy(
-            enabledTools = emptyList(),
-            webSearchEnabled = false,
-            includeEnvTime = false,
-        )
+        val config = current.requireTextRewriteConfig()
         chatApi.stream(config, PromptRewriter.request(text))
             .mapNotNull { event -> (event as? ChatStreamEvent.Delta)?.content }
     }
@@ -386,7 +381,7 @@ class ImageRepository(
             return null
         }
         val settings = settingsRepository.settings.first()
-        val imageModel = turn.model.ifBlank { settings.imageGenModel }
+        val imageModel = turn.model.ifBlank { settings.resolvedImageWorkspaceModel }
         if (conversation.providerId != turn.providerId || conversation.model != imageModel) {
             db.conversationDao().updateProviderAndModel(conversationId, turn.providerId, imageModel, nowMs())
         }
@@ -465,6 +460,8 @@ class ImageRepository(
             prompt = prompt,
             images = dataUrls,
             promptExtend = settings.imagePromptExtend,
+            openAi = settings.openAiImage,
+            qwen = settings.qwenImage,
         )
 
         try {

@@ -53,19 +53,22 @@ class QwenImageBackend(
     }
 
     override suspend fun generate(config: ChatConfig, request: ImageGenerateRequest): List<ByteArray> {
+        val options = request.qwen.sanitized()
+        val editing = request.images.isNotEmpty()
+        val extend = request.promptExtend
         val qwen = QwenImageRequest(
             model = request.model,
             prompt = request.prompt,
             images = request.images,
-            n = 1,
-            size = if (request.images.isEmpty()) TEXT_TO_IMAGE_SIZE else null,
-            promptExtend = request.promptExtend,
-            watermark = false,
+            n = options.count,
+            size = options.wireSize(editing),
+            negativePrompt = options.negativePrompt,
+            promptExtend = extend,
+            promptExtendMode = options.wireExtendMode(editing, extend == true),
+            enableThinking = options.wireThinking(extend == true),
+            watermark = options.watermark,
+            seed = options.seed,
         )
         return client.generate(config, qwen).map { url -> client.download(url) }
-    }
-
-    companion object {
-        private const val TEXT_TO_IMAGE_SIZE = "1024*1024"
     }
 }

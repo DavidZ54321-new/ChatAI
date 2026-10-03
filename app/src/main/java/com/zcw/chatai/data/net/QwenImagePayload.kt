@@ -21,6 +21,10 @@ data class QwenImageRequest(
     val size: String? = null,
     val negativePrompt: String? = null,
     val promptExtend: Boolean? = null,
+    /** `direct` 或 `agent`。空则不下发。 */
+    val promptExtendMode: String? = null,
+    /** 只在智能改写打开时由调用方传入。 */
+    val enableThinking: Boolean? = null,
     val watermark: Boolean? = null,
     val seed: Int? = null,
 )
@@ -60,6 +64,8 @@ object QwenImagePayload {
             request.size?.takeIf { it.isNotBlank() }?.let { put("size", it) }
             request.negativePrompt?.takeIf { it.isNotBlank() }?.let { put("negative_prompt", it) }
             request.promptExtend?.let { put("prompt_extend", it) }
+            request.promptExtendMode?.takeIf { it.isNotBlank() }?.let { put("prompt_extend_mode", it) }
+            request.enableThinking?.let { put("enable_thinking", it) }
             request.watermark?.let { put("watermark", it) }
             request.seed?.let { put("seed", it) }
         }

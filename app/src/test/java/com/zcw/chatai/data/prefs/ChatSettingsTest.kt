@@ -2,6 +2,7 @@ package com.zcw.chatai.data.prefs
 
 import com.zcw.chatai.data.persona.PersonaConfigCodec
 import com.zcw.chatai.data.persona.PersonaEntry
+import com.zcw.chatai.data.net.ChatApiException
 import com.zcw.chatai.data.provider.ProviderCatalog
 import com.zcw.chatai.data.provider.ProviderEntry
 import org.junit.Assert.assertEquals
@@ -164,6 +165,56 @@ class ChatSettingsTest {
         assertEquals("qwen-image-3.0-pro", settings.imageGenModel)
         assertEquals("qwen-image-2.0-pro", settings.copy(imageGenModelRaw = " qwen-image-2.0-pro ").imageGenModel)
         assertTrue(ChatSettings.Default.imagePromptExtend)
+    }
+
+    @Test
+    fun imageWorkspaceStaysOffTheActiveTextProvider() {
+        assertEquals(ProviderCatalog.QWEN, settings.resolvedImageWorkspaceProvider)
+        assertEquals("qwen-image-3.0-pro", settings.resolvedImageWorkspaceModel)
+        val image = settings.copy(
+            imageWorkspace = WorkspaceMemory(ProviderCatalog.OPENAI, "gpt-image-2.5-flare"),
+            activeProviderId = ProviderCatalog.DEEPSEEK,
+        )
+        assertEquals(ProviderCatalog.OPENAI, image.resolvedImageWorkspaceProvider)
+        assertEquals("gpt-image-2.5-flare", image.resolvedImageWorkspaceModel)
+        assertEquals(ProviderCatalog.DEEPSEEK, image.activeProviderId)
+        assertEquals(ProviderCatalog.QWEN, settings.resolvedVideoWorkspaceProvider)
+    }
+
+    @Test
+    fun rewriteUsesTheTextModelNotTheImageProvider() {
+        val image = settings.copy(
+            providers = settings.providers + (
+                ProviderCatalog.OPENAI to ProviderEntry("https://oa.example/v1", "sk-oa", "gptimage")
+                ),
+            imageWorkspace = WorkspaceMemory(ProviderCatalog.OPENAI, "gpt-image-2.5-flare"),
+            activeProviderId = ProviderCatalog.DEEPSEEK,
+        )
+        val fallback = image.requireTextRewriteConfig()
+        assertEquals(ProviderCatalog.DEEPSEEK, fallback.providerId)
+        assertEquals("deepseek-flash", fallback.model)
+
+        val picked = image.copy(
+            textWorkspace = WorkspaceMemory(ProviderCatalog.QWEN, "qwen3.8-max"),
+        )
+        val config = picked.requireTextRewriteConfig()
+        assertEquals(ProviderCatalog.QWEN, config.providerId)
+        assertEquals("qwen3.8-max", config.model)
+        assertEquals("sk-qw", config.apiKey)
+        assertEquals("", config.systemPrompt)
+        assertEquals("none", config.reasoningEffort)
+        assertNull(config.temperature)
+        assertNull(config.maxTokens)
+        assertNull(config.extraParams)
+        assertFalse(config.includeEnvTime)
+
+        val missing = settings.copy(activeProviderId = ProviderCatalog.OPENAI)
+        try {
+            missing.requireTextRewriteConfig()
+            throw AssertionError("expected missing key")
+        } catch (error: ChatApiException) {
+            assertTrue(error.message!!.contains("文本供应商"))
+        }
     }
 
     @Test

@@ -36,5 +36,6 @@ class OpenAiImageBackend(
             model = request.model,
             prompt = request.prompt,
             images = request.images,
+            options = request.openAi,
         )
 }

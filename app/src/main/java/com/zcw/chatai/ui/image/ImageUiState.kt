@@ -2,6 +2,8 @@ package com.zcw.chatai.ui.image
 
 import com.zcw.chatai.data.image.ImageInputs
 import com.zcw.chatai.data.image.ImageModelSection
+import com.zcw.chatai.data.image.openai.OpenAiImageOptions
+import com.zcw.chatai.data.image.qwen.QwenImageOptions
 import com.zcw.chatai.data.provider.ProviderCatalog
 import com.zcw.chatai.ui.chat.ChatMessageItem
 import com.zcw.chatai.ui.chat.PendingAttachment
@@ -28,6 +30,12 @@ data class ImageUiState(
     val notice: String? = null,
     /** 当前图像供应商是否已配置 API Key。 */
     val available: Boolean = true,
+    /** OpenAI 生图参数。千问会话不使用。 */
+    val openAiImage: OpenAiImageOptions = OpenAiImageOptions(),
+    /** 千问生图参数。OpenAI 会话不使用。 */
+    val qwenImage: QwenImageOptions = QwenImageOptions(),
+    /** 千问 prompt_extend。和设置页是同一个开关。 */
+    val imagePromptExtend: Boolean = true,
 ) {
     val canSend: Boolean
         get() = input.isNotBlank() && !isBusy && !rewriting

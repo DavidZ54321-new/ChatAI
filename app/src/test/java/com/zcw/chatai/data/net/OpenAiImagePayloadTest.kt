@@ -23,6 +23,29 @@ class OpenAiImagePayloadTest {
     }
 
     @Test
+    fun writesChosenOutputFieldsAndSkipsPngCompression() {
+        val payload = OpenAiImagePayload.generations(
+            model = "gpt-image-2.5-sunburst",
+            prompt = "贴纸",
+            options = com.zcw.chatai.data.image.openai.OpenAiImageOptions(
+                quality = "low",
+                size = "1536x1024",
+                background = "transparent",
+                outputFormat = "jpeg",
+                outputCompression = 50,
+                count = 2,
+            ),
+        )
+        assertEquals("low", payload["quality"]!!.jsonPrimitive.content)
+        assertEquals("1536x1024", payload["size"]!!.jsonPrimitive.content)
+        assertEquals("transparent", payload["background"]!!.jsonPrimitive.content)
+        assertEquals("png", payload["output_format"]!!.jsonPrimitive.content)
+        assertEquals(2, payload["n"]!!.jsonPrimitive.content.toInt())
+        assertFalse(payload.containsKey("output_compression"))
+        assertFalse(payload.containsKey("response_format"))
+    }
+
+    @Test
     fun editsKeepsImageOrderAndUsesAutoSize() {
         val payload = OpenAiImagePayload.edits(
             model = "gpt-image-2.5-sunburst",

@@ -1,6 +1,7 @@
 package com.zcw.chatai.data.prefs
 
 import android.content.Context
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.doublePreferencesKey
@@ -9,8 +10,11 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.zcw.chatai.data.image.ImageModels
+import com.zcw.chatai.data.image.openai.OpenAiImageOptions
+import com.zcw.chatai.data.image.qwen.QwenImageOptions
 import com.zcw.chatai.data.video.VideoModels
 import com.zcw.chatai.data.model.ChatConfig
+import com.zcw.chatai.data.net.ChatApiException
 import com.zcw.chatai.data.net.EndpointUrl
 import com.zcw.chatai.data.persona.PersonaConfigCodec
 import com.zcw.chatai.data.persona.PersonaEntry
@@ -76,10 +80,20 @@ data class ChatSettings(
     val imageGenModelRaw: String = "",
     /** 是否让服务端做提示词智能改写（Qwen `prompt_extend`，默认开）。 */
     val imagePromptExtend: Boolean = true,
+    /** OpenAI 生图的质量、尺寸、背景、格式、张数。空字段不下发。 */
+    val openAiImage: OpenAiImageOptions = OpenAiImageOptions(),
+    /** 千问生图的尺寸、张数、反向提示词、种子、水印和改写方式。 */
+    val qwenImage: QwenImageOptions = QwenImageOptions(),
     /** 视频生成模型覆盖；空 = 用内置默认（`VideoModels.DEFAULT`）。 */
     val videoGenModelRaw: String = "",
     /** 视频提示词智能改写（DashScope `prompt_extend`，默认开）。 */
     val videoPromptExtend: Boolean = true,
+    /** 图像工作区。空 = 还没选过，回落到千问和 [imageGenModel]。 */
+    val imageWorkspace: WorkspaceMemory = WorkspaceMemory(),
+    /** 视频工作区。空 = 还没选过，回落到千问和 [videoGenModel]。 */
+    val videoWorkspace: WorkspaceMemory = WorkspaceMemory(),
+    /** 文本模型面板最后一次选择。空 = 用激活供应商和它的模型栏。 */
+    val textWorkspace: WorkspaceMemory = WorkspaceMemory(),
     val themeMode: ThemeMode,
     /** 品牌配色族（与 [themeMode] 正交：Claude / ChatGPT …）。 */
     val themeFamily: ThemeFamily,
@@ -98,6 +112,32 @@ data class ChatSettings(
     /** 生效的视频生成模型：用户覆盖优先，空则内置默认。 */
     val videoGenModel: String
         get() = VideoModels.resolve(videoGenModelRaw)
+
+    /** 图像工作区当前配置。空白页、新图像、还没建会话时用它，不看文本区供应商。 */
+    val resolvedImageWorkspaceProvider: String
+        get() = imageWorkspace.providerId.trim().ifBlank { ProviderCatalog.QWEN }
+
+    val resolvedImageWorkspaceModel: String
+        get() = imageWorkspace.model.trim().ifBlank { imageGenModel }
+
+    /** 视频工作区当前配置。生视频用这里的模型，不看文本区。 */
+    val resolvedVideoWorkspaceProvider: String
+        get() = videoWorkspace.providerId.trim().ifBlank { ProviderCatalog.QWEN }
+
+    val resolvedVideoWorkspaceModel: String
+        get() = videoWorkspace.model.trim().ifBlank { videoGenModel }
+
+    /** 文本区最后一次在模型面板里选的供应商。空则用激活供应商。 */
+    val resolvedTextWorkspaceProvider: String
+        get() = textWorkspace.providerId.trim().ifBlank { activeProviderId }
+
+    /** 文本区最后一次选的对话模型。空则用该供应商设置里的模型栏。 */
+    val resolvedTextWorkspaceModel: String
+        get() {
+            val chosen = textWorkspace.model.trim()
+            if (chosen.isNotEmpty()) return chosen
+            return providers[resolvedTextWorkspaceProvider]?.model?.trim().orEmpty()
+        }
 
     /** 激活供应商；表意外为空时给一个安全空条目（请求层会给出可读报错）。 */
     val activeProvider: ProviderEntry
@@ -198,6 +238,36 @@ fun ChatSettings.toChatConfig(
     )
 }
 
+/**
+ * 图像/视频「优化」只借用文本供应商的地址、密钥和模型名。
+ * 角色的系统提示词、温度、最大长度、附加参数都不跟过去。
+ * 思考固定关掉。改写任务自己的系统说明在请求消息里，不在这里。
+ */
+fun ChatSettings.requireTextRewriteConfig(): ChatConfig {
+    val providerId = resolvedTextWorkspaceProvider
+    val name = ProviderCatalog.displayName(providerId)
+    val entry = providers[providerId]
+    if (entry == null || entry.apiKey.isBlank()) {
+        throw ChatApiException("提示词优化需要文本供应商「$name」的 API Key，请到设置里配置")
+    }
+    val model = resolvedTextWorkspaceModel
+    if (model.isBlank()) {
+        throw ChatApiException("提示词优化需要文本供应商「$name」的对话模型，请到设置里填写")
+    }
+    return toChatConfig(providerId).copy(
+        model = model,
+        systemPrompt = "",
+        temperature = null,
+        reasoningEffort = ReasoningEffort.OFF.wire,
+        maxTokens = null,
+        extraParams = null,
+        enabledTools = emptyList(),
+        webSearchEnabled = false,
+        includeEnvTime = false,
+        includeUsage = false,
+    )
+}
+
 private val Context.dataStore by preferencesDataStore(name = "settings")
 
 class SettingsRepository(context: Context) {
@@ -291,12 +361,17 @@ class SettingsRepository(context: Context) {
                 prefs[KEY_IMAGE_GEN_MODEL] = settings.imageGenModelRaw
             }
             prefs[KEY_IMAGE_PROMPT_EXTEND] = settings.imagePromptExtend
+            prefs.writeOpenAiImage(settings.openAiImage)
+            prefs.writeQwenImage(settings.qwenImage)
             if (settings.videoGenModelRaw.isBlank()) {
                 prefs.remove(KEY_VIDEO_GEN_MODEL)
             } else {
                 prefs[KEY_VIDEO_GEN_MODEL] = settings.videoGenModelRaw
             }
             prefs[KEY_VIDEO_PROMPT_EXTEND] = settings.videoPromptExtend
+            prefs.writeWorkspace(WorkspaceSlot.Image, settings.imageWorkspace)
+            prefs.writeWorkspace(WorkspaceSlot.Video, settings.videoWorkspace)
+            prefs.writeWorkspace(WorkspaceSlot.Text, settings.textWorkspace)
             prefs[KEY_THEME_MODE] = settings.themeMode.name
             prefs[KEY_THEME_FAMILY] = settings.themeFamily.name
         }
@@ -325,6 +400,31 @@ class SettingsRepository(context: Context) {
             if (updated === current) return@edit
             prefs[KEY_PERSONAS] = PersonaConfigCodec.encode(updated)
         }
+    }
+
+    /** 只改 OpenAI 生图参数，不碰供应商表。取值先收干净再落盘。 */
+    suspend fun updateOpenAiImage(options: OpenAiImageOptions) {
+        val clean = options.sanitized()
+        store.edit { prefs -> prefs.writeOpenAiImage(clean) }
+    }
+
+    /** 只改千问生图参数，不碰供应商表。 */
+    suspend fun updateQwenImage(options: QwenImageOptions) {
+        val clean = options.sanitized()
+        store.edit { prefs -> prefs.writeQwenImage(clean) }
+    }
+
+    /** 记下某个工作区的供应商和模型。空值不写。不改另一区，也不改激活供应商。 */
+    suspend fun updateWorkspace(slot: WorkspaceSlot, providerId: String, model: String) {
+        if (providerId.isBlank() || model.isBlank()) return
+        store.edit { prefs ->
+            prefs.writeWorkspace(slot, WorkspaceMemory(providerId, model))
+        }
+    }
+
+    /** 图像面板里的智能改写开关，和设置页是同一个 key。 */
+    suspend fun updateImagePromptExtend(enabled: Boolean) {
+        store.edit { prefs -> prefs[KEY_IMAGE_PROMPT_EXTEND] = enabled }
     }
 
     suspend fun updateThemeMode(mode: ThemeMode) {
@@ -388,11 +488,91 @@ class SettingsRepository(context: Context) {
             imageSearchModelsRaw = this[KEY_IMAGE_SEARCH_MODELS].orEmpty(),
             imageGenModelRaw = this[KEY_IMAGE_GEN_MODEL].orEmpty(),
             imagePromptExtend = this[KEY_IMAGE_PROMPT_EXTEND] ?: true,
+            openAiImage = OpenAiImageOptions(
+                quality = this[KEY_OPENAI_IMAGE_QUALITY].orEmpty(),
+                size = this[KEY_OPENAI_IMAGE_SIZE].orEmpty(),
+                background = this[KEY_OPENAI_IMAGE_BACKGROUND].orEmpty(),
+                outputFormat = this[KEY_OPENAI_IMAGE_FORMAT].orEmpty(),
+                outputCompression = this[KEY_OPENAI_IMAGE_COMPRESSION],
+                count = this[KEY_OPENAI_IMAGE_COUNT] ?: 1,
+            ).sanitized(),
+            qwenImage = QwenImageOptions(
+                size = this[KEY_QWEN_IMAGE_SIZE].orEmpty(),
+                count = this[KEY_QWEN_IMAGE_COUNT] ?: 1,
+                negativePrompt = this[KEY_QWEN_IMAGE_NEGATIVE].orEmpty(),
+                seed = this[KEY_QWEN_IMAGE_SEED],
+                watermark = this[KEY_QWEN_IMAGE_WATERMARK] ?: false,
+                promptExtendMode = this[KEY_QWEN_IMAGE_EXTEND_MODE].orEmpty(),
+                enableThinking = when (this[KEY_QWEN_IMAGE_THINKING]) {
+                    "true" -> true
+                    "false" -> false
+                    else -> null
+                },
+            ).sanitized(),
             videoGenModelRaw = this[KEY_VIDEO_GEN_MODEL].orEmpty(),
+            imageWorkspace = readWorkspace(WorkspaceSlot.Image),
+            videoWorkspace = readWorkspace(WorkspaceSlot.Video),
+            textWorkspace = readWorkspace(WorkspaceSlot.Text),
             videoPromptExtend = this[KEY_VIDEO_PROMPT_EXTEND] ?: true,
             themeMode = this[KEY_THEME_MODE].toEnum(ThemeMode.SYSTEM),
             themeFamily = this[KEY_THEME_FAMILY].toEnum(ThemeFamily.CLAUDE),
         )
+    }
+
+    private fun Preferences.readWorkspace(slot: WorkspaceSlot): WorkspaceMemory {
+        val (providerKey, modelKey) = slot.keys()
+        return WorkspaceMemory(
+            providerId = this[providerKey].orEmpty(),
+            model = this[modelKey].orEmpty(),
+        )
+    }
+
+    private fun MutablePreferences.writeWorkspace(slot: WorkspaceSlot, memory: WorkspaceMemory) {
+        val (providerKey, modelKey) = slot.keys()
+        fun putOrRemove(key: Preferences.Key<String>, value: String) {
+            if (value.isBlank()) remove(key) else this[key] = value
+        }
+        putOrRemove(providerKey, memory.providerId)
+        putOrRemove(modelKey, memory.model)
+    }
+
+    private fun WorkspaceSlot.keys(): Pair<Preferences.Key<String>, Preferences.Key<String>> = when (this) {
+        WorkspaceSlot.Image -> KEY_IMAGE_WORKSPACE_PROVIDER to KEY_IMAGE_WORKSPACE_MODEL
+        WorkspaceSlot.Video -> KEY_VIDEO_WORKSPACE_PROVIDER to KEY_VIDEO_WORKSPACE_MODEL
+        WorkspaceSlot.Text -> KEY_TEXT_WORKSPACE_PROVIDER to KEY_TEXT_WORKSPACE_MODEL
+    }
+
+    private fun MutablePreferences.writeOpenAiImage(options: OpenAiImageOptions) {
+        val clean = options.sanitized()
+        fun putOrRemove(key: Preferences.Key<String>, value: String) {
+            if (value.isBlank()) remove(key) else this[key] = value
+        }
+        putOrRemove(KEY_OPENAI_IMAGE_QUALITY, clean.quality)
+        putOrRemove(KEY_OPENAI_IMAGE_SIZE, clean.size)
+        putOrRemove(KEY_OPENAI_IMAGE_BACKGROUND, clean.background)
+        putOrRemove(KEY_OPENAI_IMAGE_FORMAT, clean.outputFormat)
+        val compression = clean.outputCompression
+        if (compression == null) remove(KEY_OPENAI_IMAGE_COMPRESSION) else this[KEY_OPENAI_IMAGE_COMPRESSION] = compression
+        this[KEY_OPENAI_IMAGE_COUNT] = clean.count
+    }
+
+    private fun MutablePreferences.writeQwenImage(options: QwenImageOptions) {
+        val clean = options.sanitized()
+        fun putOrRemove(key: Preferences.Key<String>, value: String) {
+            if (value.isBlank()) remove(key) else this[key] = value
+        }
+        putOrRemove(KEY_QWEN_IMAGE_SIZE, clean.size)
+        this[KEY_QWEN_IMAGE_COUNT] = clean.count
+        putOrRemove(KEY_QWEN_IMAGE_NEGATIVE, clean.negativePrompt)
+        val seed = clean.seed
+        if (seed == null) remove(KEY_QWEN_IMAGE_SEED) else this[KEY_QWEN_IMAGE_SEED] = seed
+        this[KEY_QWEN_IMAGE_WATERMARK] = clean.watermark
+        putOrRemove(KEY_QWEN_IMAGE_EXTEND_MODE, clean.promptExtendMode)
+        when (clean.enableThinking) {
+            true -> this[KEY_QWEN_IMAGE_THINKING] = "true"
+            false -> this[KEY_QWEN_IMAGE_THINKING] = "false"
+            null -> remove(KEY_QWEN_IMAGE_THINKING)
+        }
     }
 
     private inline fun <reified T : Enum<T>> String?.toEnum(fallback: T): T =
@@ -423,10 +603,29 @@ class SettingsRepository(context: Context) {
         val KEY_IMAGE_GEN_MODEL = stringPreferencesKey("image_gen_model")
         /** 生图提示词智能改写（Qwen prompt_extend，默认开）。 */
         val KEY_IMAGE_PROMPT_EXTEND = booleanPreferencesKey("image_prompt_extend")
+        val KEY_OPENAI_IMAGE_QUALITY = stringPreferencesKey("openai_image_quality")
+        val KEY_OPENAI_IMAGE_SIZE = stringPreferencesKey("openai_image_size")
+        val KEY_OPENAI_IMAGE_BACKGROUND = stringPreferencesKey("openai_image_background")
+        val KEY_OPENAI_IMAGE_FORMAT = stringPreferencesKey("openai_image_format")
+        val KEY_OPENAI_IMAGE_COMPRESSION = intPreferencesKey("openai_image_compression")
+        val KEY_OPENAI_IMAGE_COUNT = intPreferencesKey("openai_image_count")
+        val KEY_QWEN_IMAGE_SIZE = stringPreferencesKey("qwen_image_size")
+        val KEY_QWEN_IMAGE_COUNT = intPreferencesKey("qwen_image_count")
+        val KEY_QWEN_IMAGE_NEGATIVE = stringPreferencesKey("qwen_image_negative")
+        val KEY_QWEN_IMAGE_SEED = intPreferencesKey("qwen_image_seed")
+        val KEY_QWEN_IMAGE_WATERMARK = booleanPreferencesKey("qwen_image_watermark")
+        val KEY_QWEN_IMAGE_EXTEND_MODE = stringPreferencesKey("qwen_image_extend_mode")
+        val KEY_QWEN_IMAGE_THINKING = stringPreferencesKey("qwen_image_thinking")
         /** 视频生成模型覆盖（空 = 内置默认 wan3.0-video）。 */
         val KEY_VIDEO_GEN_MODEL = stringPreferencesKey("video_gen_model")
         /** 视频提示词智能改写（DashScope prompt_extend，默认开）。 */
         val KEY_VIDEO_PROMPT_EXTEND = booleanPreferencesKey("video_prompt_extend")
+        val KEY_IMAGE_WORKSPACE_PROVIDER = stringPreferencesKey("image_workspace_provider")
+        val KEY_IMAGE_WORKSPACE_MODEL = stringPreferencesKey("image_workspace_model")
+        val KEY_VIDEO_WORKSPACE_PROVIDER = stringPreferencesKey("video_workspace_provider")
+        val KEY_VIDEO_WORKSPACE_MODEL = stringPreferencesKey("video_workspace_model")
+        val KEY_TEXT_WORKSPACE_PROVIDER = stringPreferencesKey("text_workspace_provider")
+        val KEY_TEXT_WORKSPACE_MODEL = stringPreferencesKey("text_workspace_model")
         val KEY_EXTRA_PARAMS = stringPreferencesKey("extra_params")
         val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
         val KEY_THEME_FAMILY = stringPreferencesKey("theme_family")

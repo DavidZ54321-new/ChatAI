@@ -23,6 +23,7 @@ import com.zcw.chatai.data.model.Role
 import com.zcw.chatai.data.persona.PersonaEntry
 import com.zcw.chatai.data.prefs.ReasoningEffort
 import com.zcw.chatai.data.prefs.SettingsRepository
+import com.zcw.chatai.data.prefs.WorkspaceSlot
 import com.zcw.chatai.data.provider.ProviderCatalog
 import com.zcw.chatai.data.provider.ToolBackendResolver
 import com.zcw.chatai.data.web.ImageSearchProvider
@@ -653,6 +654,7 @@ class ChatViewModel(
      */
     fun setModel(model: String) {
         if (model.isBlank()) return
+        rememberTextWorkspace(state.value.providerId, model)
         val id = conversationId.value
         if (id == null) {
             pendingBinding.update { current ->
@@ -676,6 +678,7 @@ class ChatViewModel(
                 notice.value = "「${ProviderCatalog.displayName(providerId)}」还没配置模型，请先到设置里填写"
                 return@launch
             }
+            settingsRepository.updateWorkspace(WorkspaceSlot.Text, providerId, model)
             val id = conversationId.value
             if (id == null) {
                 // 保留用户先选好的角色绑定：整体替换会把 pendingPersonaId 丢掉。
@@ -686,6 +689,14 @@ class ChatViewModel(
                 return@launch
             }
             repository.setConversationProvider(id, providerId, model)
+        }
+    }
+
+    /** 文本面板的选择单独记下，供图像/视频「优化」使用。不改激活供应商。 */
+    private fun rememberTextWorkspace(providerId: String, model: String) {
+        if (providerId.isBlank() || model.isBlank()) return
+        viewModelScope.launch {
+            settingsRepository.updateWorkspace(WorkspaceSlot.Text, providerId, model)
         }
     }
 

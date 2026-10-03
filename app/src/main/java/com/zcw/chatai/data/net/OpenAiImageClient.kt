@@ -1,5 +1,6 @@
 package com.zcw.chatai.data.net
 
+import com.zcw.chatai.data.image.openai.OpenAiImageOptions
 import com.zcw.chatai.data.model.ChatConfig
 import com.zcw.chatai.data.web.awaitBody
 import java.util.concurrent.TimeUnit
@@ -27,15 +28,16 @@ class OpenAiImageClient(
         model: String,
         prompt: String,
         images: List<String>,
+        options: OpenAiImageOptions = OpenAiImageOptions(),
     ): List<ByteArray> = withContext(Dispatchers.IO) {
         val root = EndpointUrl.compatV1Root(config.baseUrl)
             ?: throw ChatApiException("Base URL 无效，无法推导生图端点，请到设置里检查")
         val editing = images.isNotEmpty()
         val path = if (editing) "/images/edits" else "/images/generations"
         val payload = if (editing) {
-            OpenAiImagePayload.edits(model, prompt, images)
+            OpenAiImagePayload.edits(model, prompt, images, options)
         } else {
-            OpenAiImagePayload.generations(model, prompt)
+            OpenAiImagePayload.generations(model, prompt, options)
         }
         val http = post(root + path, config.apiKey, payload)
         val outcome = OpenAiImageParser.parse(http.text)

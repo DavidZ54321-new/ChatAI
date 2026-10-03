@@ -3,11 +3,14 @@ package com.zcw.chatai.data.backup
 import com.zcw.chatai.data.db.AttachmentCodec
 import com.zcw.chatai.data.db.ConversationEntity
 import com.zcw.chatai.data.db.MessageEntity
+import com.zcw.chatai.data.image.openai.OpenAiImageOptions
+import com.zcw.chatai.data.image.qwen.QwenImageOptions
 import com.zcw.chatai.data.model.Attachment
 import com.zcw.chatai.data.persona.PersonaConfigCodec
 import com.zcw.chatai.data.persona.PersonaEntry
 import com.zcw.chatai.data.prefs.ChatSettings
 import com.zcw.chatai.data.prefs.ImageDetail
+import com.zcw.chatai.data.prefs.WorkspaceMemory
 import com.zcw.chatai.data.prefs.ReasoningEffort
 import com.zcw.chatai.data.prefs.ThemeFamily
 import com.zcw.chatai.data.prefs.ThemeMode
@@ -145,6 +148,11 @@ data class SettingsDto(
     val imageSearchModelsRaw: String = "",
     val imageGenModelRaw: String = "",
     val imagePromptExtend: Boolean = true,
+    val openAiImage: OpenAiImageOptions = OpenAiImageOptions(),
+    val qwenImage: QwenImageOptions = QwenImageOptions(),
+    val imageWorkspace: WorkspaceMemory = WorkspaceMemory(),
+    val videoWorkspace: WorkspaceMemory = WorkspaceMemory(),
+    val textWorkspace: WorkspaceMemory = WorkspaceMemory(),
     val themeMode: String = ThemeMode.SYSTEM.name,
     val themeFamily: String = ThemeFamily.CLAUDE.name,
 ) {
@@ -168,6 +176,11 @@ data class SettingsDto(
             imageSearchModelsRaw = imageSearchModelsRaw,
             imageGenModelRaw = imageGenModelRaw,
             imagePromptExtend = imagePromptExtend,
+            openAiImage = openAiImage.sanitized(),
+            qwenImage = qwenImage.sanitized(),
+            imageWorkspace = imageWorkspace,
+            videoWorkspace = videoWorkspace,
+            textWorkspace = textWorkspace,
             themeMode = enumOrDefault(themeMode, ThemeMode.SYSTEM),
             themeFamily = enumOrDefault(themeFamily, ThemeFamily.CLAUDE),
         )
@@ -188,6 +201,11 @@ data class SettingsDto(
             imageSearchModelsRaw = settings.imageSearchModelsRaw,
             imageGenModelRaw = settings.imageGenModelRaw,
             imagePromptExtend = settings.imagePromptExtend,
+            openAiImage = settings.openAiImage,
+            qwenImage = settings.qwenImage,
+            imageWorkspace = settings.imageWorkspace,
+            videoWorkspace = settings.videoWorkspace,
+            textWorkspace = settings.textWorkspace,
             themeMode = settings.themeMode.name,
             themeFamily = settings.themeFamily.name,
         )

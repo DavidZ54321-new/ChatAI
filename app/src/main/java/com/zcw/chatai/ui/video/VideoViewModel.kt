@@ -7,6 +7,8 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.zcw.chatai.data.media.AttachmentStore
+import com.zcw.chatai.data.prefs.WorkspaceSlot
+import com.zcw.chatai.ui.common.launchPromptRewrite
 import com.zcw.chatai.data.model.Attachment
 import com.zcw.chatai.data.model.Conversation
 import com.zcw.chatai.data.model.Message
@@ -21,12 +23,12 @@ import com.zcw.chatai.data.video.VideoTask
 import com.zcw.chatai.data.video.VideoTaskStatus
 import com.zcw.chatai.ui.chat.PendingAttachment
 import com.zcw.chatai.ui.chat.toChatMessageItem
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
@@ -50,7 +52,6 @@ class VideoViewModel(
     private val conversationLock = Mutex()
 
     private var rewriteJob: Job? = null
-    private var rewriteOriginal: String = ""
 
     private val listSearch = ConversationSearch(
         all = repository.observeConversations(),
@@ -96,7 +97,8 @@ class VideoViewModel(
         VideoUiState(
             conversationId = core.id,
             title = core.conversation?.title ?: "新视频",
-            model = core.conversation?.model?.takeIf { it.isNotBlank() } ?: settings.videoGenModel,
+            model = core.conversation?.model?.takeIf { it.isNotBlank() }
+                ?: settings.resolvedVideoWorkspaceModel,
             params = composer.params,
             messages = core.messages.map { it.toChatMessageItem(attachmentStore) },
             taskStatuses = core.tasks.associate { it.messageId to it.status },
@@ -194,36 +196,10 @@ class VideoViewModel(
         input.value = input.value + template
     }
 
-    /** 优化提示词：流式写回输入框，产出按秒分镜；再点一次取消并恢复原文。 */
     fun optimizePrompt() {
-        if (rewriting.value) {
-            val restored = rewriteOriginal
-            rewriteJob?.cancel()
-            rewriteJob = null
-            input.value = restored
-            rewriting.value = false
-            return
-        }
-        val text = input.value.trim()
-        if (text.isEmpty()) {
-            notice.value = "先输入提示词再优化"
-            return
-        }
-        rewriteOriginal = text
-        rewriting.value = true
-        input.value = ""
-        rewriteJob = viewModelScope.launch {
-            try {
-                repository.rewritePrompt(text).collect { delta -> input.value = input.value + delta }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (t: Throwable) {
-                if (input.value.isBlank()) input.value = text
-                notice.value = t.message?.takeIf { it.isNotBlank() } ?: "提示词优化失败"
-            } finally {
-                rewriting.value = false
-            }
-        }
+        viewModelScope.launchPromptRewrite(input, rewriting, notice) {
+            repository.rewritePrompt(it)
+        }?.let { rewriteJob = it }
     }
 
     fun send() {
@@ -285,7 +261,8 @@ class VideoViewModel(
         cancelRewrite()
         discardPending()
         viewModelScope.launch {
-            conversationId.value = repository.createConversation(state.value.model.ifBlank { null })
+            val settings = settingsRepository.settings.first()
+            conversationId.value = repository.createConversation(settings.resolvedVideoWorkspaceModel)
         }
     }
 
@@ -307,12 +284,11 @@ class VideoViewModel(
 
     fun setModel(model: String) {
         if (model.isBlank()) return
-        val id = conversationId.value
-        if (id == null) {
-            viewModelScope.launch { conversationId.value = repository.createConversation(model) }
-            return
+        viewModelScope.launch {
+            settingsRepository.updateWorkspace(WorkspaceSlot.Video, ProviderCatalog.QWEN, model)
+            val id = conversationId.value ?: return@launch
+            repository.setConversationModel(id, model)
         }
-        viewModelScope.launch { repository.setConversationModel(id, model) }
     }
 
     override fun onCleared() {
