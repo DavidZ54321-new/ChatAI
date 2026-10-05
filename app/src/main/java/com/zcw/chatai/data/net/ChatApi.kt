@@ -3,6 +3,7 @@ package com.zcw.chatai.data.net
 import com.zcw.chatai.data.model.ChatConfig
 import com.zcw.chatai.data.model.MessageCitation
 import com.zcw.chatai.data.model.ToolCall
+import java.io.File
 import kotlinx.coroutines.flow.Flow
 
 interface ChatApi {
@@ -41,21 +42,21 @@ data class ChatRequestImage(
 )
 
 /**
- * 视频部件：小文件内联 data URL，大文件是云端的 `oss://` 临时 URL。
- * [isOss] 为 true 时请求需要带厂商的 OSS 解析头（由网络层按需添加）。
+ * 出站视频。云端地址和本地文件是两种形态；占位符只在组 JSON 时生成。
+ * [Remote.isOss] 为 true 时请求带 OSS 解析头。
  */
-data class ChatRequestVideo(
-    val url: String,
-    val isOss: Boolean = false,
-)
+sealed interface ChatRequestVideo {
+    data class Remote(val url: String, val isOss: Boolean = false) : ChatRequestVideo
+    data class Inline(val id: String, val file: File, val mime: String) : ChatRequestVideo
+}
 
 /**
- * 内联音频（`data:audio/mpeg;base64,...` 或 http URL）。
- * MiMo 的 `input_audio` 形状只认一个 `data` 字段（URL 或 data URI），无 `format`。
+ * 出站音频。MiMo 的 `input_audio` 只有一个 `data` 字段（URL 或 data URI），无 `format`。
  */
-data class ChatRequestAudio(
-    val dataUrl: String,
-)
+sealed interface ChatRequestAudio {
+    data class Remote(val dataUrl: String) : ChatRequestAudio
+    data class Inline(val id: String, val file: File, val mime: String) : ChatRequestAudio
+}
 
 sealed interface ChatStreamEvent {
     data class Delta(val content: String? = null, val reasoning: String? = null) : ChatStreamEvent
@@ -84,3 +85,17 @@ sealed interface ChatStreamEvent {
 }
 
 class ChatApiException(message: String, cause: Throwable? = null) : Exception(message, cause)
+
+/** 发送路径上的内存耗尽。只认 [OutOfMemoryError] 本身，不靠堆栈原文猜原因。 */
+const val SEND_OUT_OF_MEMORY = "手机内存不足，没法完成发送，请稍后再试"
+
+fun Throwable.userFacingSendError(fallback: String): String {
+    if (hasOutOfMemory()) return SEND_OUT_OF_MEMORY
+    return message?.takeIf { it.isNotBlank() } ?: fallback
+}
+
+private fun Throwable.hasOutOfMemory(): Boolean {
+    if (this is OutOfMemoryError) return true
+    val nested = cause
+    return nested != null && nested !== this && nested.hasOutOfMemory()
+}

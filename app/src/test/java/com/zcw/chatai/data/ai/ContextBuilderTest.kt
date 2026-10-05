@@ -21,7 +21,7 @@ class ContextBuilderTest {
 
     private val image = ChatRequestImage(dataUrl = "data:image/jpeg;base64,AAAA")
 
-    private val video = ChatRequestVideo(url = "oss://dashscope-instant/x/v.mp4", isOss = true)
+    private val video = ChatRequestVideo.Remote(url = "oss://dashscope-instant/x/v.mp4", isOss = true)
 
     private fun imageProvider(attachment: Attachment): ChatRequestImage? =
         if (attachment.relativePath.endsWith("missing.jpg")) null else image
@@ -519,7 +519,7 @@ class ContextBuilderTest {
         assertNull("音图混排不该出占位", built.single().content.takeIf { it.contains("已省略") })
     }
 
-    private val audio = ChatRequestAudio(dataUrl = "data:audio/mpeg;base64,AAAA")
+    private val audio = ChatRequestAudio.Remote(dataUrl = "data:audio/mpeg;base64,AAAA")
 
     private fun audioAttachment(id: String) = Attachment(
         id = id,

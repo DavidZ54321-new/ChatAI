@@ -198,7 +198,7 @@ class ResponsesChatApiTest {
             withTimeout(TIMEOUT_MS) {
                 ResponsesChatApi().stream(
                     config(),
-                    listOf(ChatRequestMessage("user", "watch", videos = listOf(ChatRequestVideo("oss://x", true)))),
+                    listOf(ChatRequestMessage("user", "watch", videos = listOf(ChatRequestVideo.Remote("oss://x", true)))),
                 ).toList()
             }
             fail("Expected ChatApiException")

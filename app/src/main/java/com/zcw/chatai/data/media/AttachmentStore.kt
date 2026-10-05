@@ -363,27 +363,22 @@ class AttachmentStore(private val context: Context) {
         return name?.endsWith(".mp4", ignoreCase = true) == true
     }
 
-    /** 视频/音频原文件字节（内联 base64 或上传路由用）。 */
-    fun videoBytes(attachment: Attachment): ByteArray? {
-        val file = fileOf(attachment)
-        if (!file.isFile) return null
-        return try {
-            file.readBytes().takeIf { it.isNotEmpty() }
-        } catch (t: Exception) {
-            null
-        }
-    }
-
-    /** 内联视频：整文件 base64 data URL（小于阈值的视频走这条路，无需上传）。 */
+    /**
+     * 内联视频：只交本地文件。base64 在写出请求时流式编码，不把整文件读进堆。
+     */
     fun toRequestVideo(attachment: Attachment): ChatRequestVideo? {
-        val bytes = videoBytes(attachment) ?: return null
-        return ChatRequestVideo(url = ImageCodec.toDataUrl(attachment.mimeType, bytes), isOss = false)
+        val file = fileOf(attachment)
+        if (!file.isFile || file.length() <= 0L) return null
+        return ChatRequestVideo.Inline(attachment.id, file, attachment.mimeType)
     }
 
-    /** 内联音频：整文件 base64 data URL（MiMo `input_audio.data` 形状）。 */
+    /**
+     * 内联音频：只交本地文件。MiMo `input_audio.data` 的 data URL 在写出请求时流式拼上。
+     */
     fun toRequestAudio(attachment: Attachment): ChatRequestAudio? {
-        val bytes = videoBytes(attachment) ?: return null
-        return ChatRequestAudio(dataUrl = ImageCodec.toDataUrl(attachment.mimeType, bytes))
+        val file = fileOf(attachment)
+        if (!file.isFile || file.length() <= 0L) return null
+        return ChatRequestAudio.Inline(attachment.id, file, attachment.mimeType)
     }
 
     /**

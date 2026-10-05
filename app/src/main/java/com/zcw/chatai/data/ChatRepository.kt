@@ -44,6 +44,7 @@ import com.zcw.chatai.data.net.ChatApi
 import com.zcw.chatai.data.net.ChatApiException
 import com.zcw.chatai.data.net.ChatRequestVideo
 import com.zcw.chatai.data.net.ChatStreamEvent
+import com.zcw.chatai.data.net.userFacingSendError
 import com.zcw.chatai.data.prefs.ChatSettings
 import com.zcw.chatai.data.prefs.SettingsRepository
 import com.zcw.chatai.data.prefs.toChatConfig
@@ -914,7 +915,7 @@ class ChatRepository(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (t: Throwable) {
-            failTurn(conversationId, t.message?.takeIf { it.isNotBlank() } ?: "视频处理失败")
+            failTurn(conversationId, t.userFacingSendError("视频处理失败"))
             return null
         } finally {
             _videoUploads.update { it - conversationId }
@@ -1152,10 +1153,10 @@ class ChatRepository(
             throw cancelled
         } catch (t: ChatApiException) {
             status = MessageStatus.ERROR
-            errorMessage = t.message ?: "请求失败"
+            errorMessage = t.userFacingSendError("请求失败")
         } catch (t: Throwable) {
             status = MessageStatus.ERROR
-            errorMessage = t.message ?: "请求失败"
+            errorMessage = t.userFacingSendError("请求失败")
         } finally {
             withContext(NonCancellable) {
                 val assembled = toolCalls.assemble()

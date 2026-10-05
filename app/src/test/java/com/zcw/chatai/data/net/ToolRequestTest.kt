@@ -26,7 +26,7 @@ class ToolRequestTest {
     fun encodesToolSpecsAndToolChoice() {
         val payload = ChatCompletionRequest(
             model = "m",
-            messages = listOf(RequestMessage("user", ChatRequestBody.content("hi", emptyList()))),
+            messages = listOf(RequestMessage("user", ChatRequestBody.content("hi", emptyList()).element)),
             tools = listOf(
                 ChatTool(
                     function = FunctionSpec(
@@ -63,7 +63,7 @@ class ToolRequestTest {
                 ),
                 RequestMessage(
                     role = "tool",
-                    content = ChatRequestBody.content("结果", emptyList()),
+                    content = ChatRequestBody.content("结果", emptyList()).element,
                     toolCallId = "call_1",
                 ),
             ),

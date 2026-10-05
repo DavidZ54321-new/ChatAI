@@ -3,6 +3,7 @@ package com.zcw.chatai.data.net
 import com.zcw.chatai.data.net.dto.ChatCompletionRequest
 import com.zcw.chatai.data.net.dto.ChatRequestBody
 import com.zcw.chatai.data.net.dto.RequestMessage
+import java.io.File
 import com.zcw.chatai.data.net.dto.chatJson
 import com.zcw.chatai.data.provider.ThinkingWire
 import kotlinx.serialization.json.Json
@@ -26,7 +27,7 @@ class ChatRequestBodyTest {
         val payload = ChatCompletionRequest(
             model = "deepseek-flash",
             messages = listOf(
-                RequestMessage("user", ChatRequestBody.content("你好", images)),
+                RequestMessage("user", ChatRequestBody.content("你好", images).element),
             ),
         )
         return ChatRequestBody.encode(json, payload, extra)
@@ -74,7 +75,7 @@ class ChatRequestBodyTest {
             messages = listOf(
                 RequestMessage(
                     "user",
-                    ChatRequestBody.content("", listOf(ChatRequestImage(dataUrl = "data:image/png;base64,BBBB"))),
+                    ChatRequestBody.content("", listOf(ChatRequestImage(dataUrl = "data:image/png;base64,BBBB"))).element,
                 ),
             ),
         )
@@ -179,7 +180,7 @@ class ChatRequestBodyTest {
     fun encodeAppliesThinkingWireAndExtraParamsStillWin() {
         val payload = ChatCompletionRequest(
             model = "mimo-v2.6-flash",
-            messages = listOf(RequestMessage("user", ChatRequestBody.content("hi", emptyList()))),
+            messages = listOf(RequestMessage("user", ChatRequestBody.content("hi", emptyList()).element)),
             reasoningEffort = "none",
         )
         // MiMo 线型：reasoning_effort 被剥、thinking 按档位生成。
@@ -219,8 +220,8 @@ class ChatRequestBodyTest {
             text = "",
             images = emptyList(),
             videos = emptyList(),
-            audios = listOf(ChatRequestAudio(dataUrl = "data:audio/mpeg;base64,AAAA")),
-        ).jsonArray
+            audios = listOf(ChatRequestAudio.Remote("data:audio/mpeg;base64,AAAA")),
+        ).element.jsonArray
         assertEquals(1, parts.size)
         val audio = parts[0].jsonObject
         assertEquals("input_audio", audio.getValue("type").jsonPrimitive.content)
@@ -235,10 +236,38 @@ class ChatRequestBodyTest {
             text = "总结这段音频",
             images = emptyList(),
             videos = emptyList(),
-            audios = listOf(ChatRequestAudio(dataUrl = "data:audio/wav;base64,BBBB")),
-        ).jsonArray
+            audios = listOf(ChatRequestAudio.Remote("data:audio/wav;base64,BBBB")),
+        ).element.jsonArray
         assertEquals(2, parts.size)
         assertEquals("text", parts[0].jsonObject.getValue("type").jsonPrimitive.content)
         assertEquals("input_audio", parts[1].jsonObject.getValue("type").jsonPrimitive.content)
+    }
+
+    @Test
+    fun inlineMediaPlaceholdersFollowTheBlockOrder() {
+        val video = ChatRequestVideo.Inline("vid", File("v.mp4"), "video/mp4")
+        val audio = ChatRequestAudio.Inline("aud", File("a.mp3"), "audio/mpeg")
+        val encoded = ChatRequestBody.content(
+            text = "看",
+            images = emptyList(),
+            videos = listOf(video),
+            audios = listOf(audio),
+        )
+        assertEquals(
+            listOf(
+                InlinePart(InlineMedia.placeholder("vid"), video.file, "video/mp4"),
+                InlinePart(InlineMedia.placeholder("aud"), audio.file, "audio/mpeg"),
+            ),
+            encoded.inlineParts,
+        )
+        val blocks = encoded.element.jsonArray
+        assertEquals(
+            InlineMedia.placeholder("vid"),
+            blocks[1].jsonObject.getValue("video_url").jsonObject.getValue("url").jsonPrimitive.content,
+        )
+        assertEquals(
+            InlineMedia.placeholder("aud"),
+            blocks[2].jsonObject.getValue("input_audio").jsonObject.getValue("data").jsonPrimitive.content,
+        )
     }
 }

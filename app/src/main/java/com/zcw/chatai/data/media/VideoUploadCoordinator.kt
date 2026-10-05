@@ -45,7 +45,7 @@ class VideoUploadCoordinator(
             wire to attachment
         }
 
-        is VideoPlan.Reuse -> ChatRequestVideo(plan.url, isOss = true) to attachment
+        is VideoPlan.Reuse -> ChatRequestVideo.Remote(plan.url, isOss = true) to attachment
 
         is VideoPlan.TooLargeForInline -> {
             val mb = plan.limitBytes / 1024 / 1024
@@ -102,7 +102,7 @@ class VideoUploadCoordinator(
                         pendingPolicy = null,
                     )
                     persist(updated)
-                    ChatRequestVideo(updated.remoteUrl!!, isOss = true) to updated
+                    ChatRequestVideo.Remote(updated.remoteUrl!!, isOss = true) to updated
                 }
             }
         }

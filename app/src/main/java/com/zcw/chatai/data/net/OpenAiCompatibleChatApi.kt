@@ -125,25 +125,29 @@ class OpenAiCompatibleChatApi(
     ): Request {
         val tools = WebTools.specsFor(config.enabledTools)
         val reasoningEffort = config.reasoningEffort?.takeIf { it.isNotBlank() }
+        val inlineParts = ArrayList<InlinePart>()
         val payload = ChatCompletionRequest(
             model = config.model,
             messages = buildList {
                 if (config.systemPrompt.isNotEmpty()) {
-                    add(RequestMessage("system", ChatRequestBody.content(config.systemPrompt, emptyList())))
+                    add(RequestMessage("system", ChatRequestBody.content(config.systemPrompt, emptyList()).element))
                 }
                 messages.forEach { message ->
                     // 图片/视频/音频只能出现在 user 消息里，其它角色一律降级为纯文本。
                     val images = if (message.role == ROLE_USER) message.images else emptyList()
                     val videos = if (message.role == ROLE_USER) message.videos else emptyList()
                     val audios = if (message.role == ROLE_USER) message.audios else emptyList()
+                    // 带 tool_calls 且正文为空的回合不发 content，也就没有内联占位符。
+                    val encoded = if (message.toolCalls.isNotEmpty() && message.content.isEmpty()) {
+                        null
+                    } else {
+                        ChatRequestBody.content(message.content, images, videos, audios)
+                    }
+                    if (encoded != null) inlineParts += encoded.inlineParts
                     add(
                         RequestMessage(
                             role = message.role,
-                            content = if (message.toolCalls.isNotEmpty() && message.content.isEmpty()) {
-                                null
-                            } else {
-                                ChatRequestBody.content(message.content, images, videos, audios)
-                            },
+                            content = encoded?.element,
                             toolCallId = message.toolCallId,
                             toolCalls = message.toolCalls.takeIf { it.isNotEmpty() }?.map {
                                 RequestToolCall(
@@ -170,7 +174,9 @@ class OpenAiCompatibleChatApi(
             thinkingWire = config.thinkingWire,
             reasoningEffort = reasoningEffort,
         )
-        val usesOssMedia = messages.any { message -> message.videos.any { it.isOss } }
+        val usesOssMedia = messages.any { message ->
+            message.videos.any { it is ChatRequestVideo.Remote && it.isOss }
+        }
         return Request.Builder()
             .url(url)
             .header("Accept", "text/event-stream")
@@ -187,7 +193,13 @@ class OpenAiCompatibleChatApi(
                     header("X-DashScope-OssResourceResolve", "enable")
                 }
             }
-            .post(body.toRequestBody(JSON_MEDIA_TYPE))
+            .post(
+                if (inlineParts.isEmpty()) {
+                    body.toRequestBody(JSON_MEDIA_TYPE)
+                } else {
+                    InlineMediaBody(body, inlineParts)
+                },
+            )
             .build()
     }
 

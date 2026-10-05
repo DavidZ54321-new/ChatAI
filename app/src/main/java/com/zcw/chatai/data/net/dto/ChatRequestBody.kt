@@ -3,6 +3,8 @@ package com.zcw.chatai.data.net.dto
 import com.zcw.chatai.data.net.ChatRequestAudio
 import com.zcw.chatai.data.net.ChatRequestImage
 import com.zcw.chatai.data.net.ChatRequestVideo
+import com.zcw.chatai.data.net.InlineMedia
+import com.zcw.chatai.data.net.InlinePart
 import com.zcw.chatai.data.provider.ThinkingWire
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -25,6 +27,11 @@ import kotlinx.serialization.json.putJsonObject
  *    `model` / `messages` / `stream` 以及应用自有的工具协议
  *    (`tools` / `tool_choice`) 受保护，永远以应用生成的值为准。
  */
+data class EncodedContent(
+    val element: JsonElement,
+    val inlineParts: List<InlinePart> = emptyList(),
+)
+
 object ChatRequestBody {
 
     private val ProtectedKeys = setOf("model", "messages", "stream", "tools", "tool_choice")
@@ -78,14 +85,21 @@ object ChatRequestBody {
         return JsonObject(map)
     }
 
+    /**
+     * 组一条消息的 `content`。内联视频/音频的占位符和 [EncodedContent.inlineParts]
+     * 在同一次遍历里产生，顺序就是 JSON 里的出现顺序。
+     */
     fun content(
         text: String,
         images: List<ChatRequestImage>,
         videos: List<ChatRequestVideo> = emptyList(),
         audios: List<ChatRequestAudio> = emptyList(),
-    ): JsonElement {
-        if (images.isEmpty() && videos.isEmpty() && audios.isEmpty()) return JsonPrimitive(text)
-        return buildJsonArray {
+    ): EncodedContent {
+        if (images.isEmpty() && videos.isEmpty() && audios.isEmpty()) {
+            return EncodedContent(JsonPrimitive(text))
+        }
+        val inlineParts = mutableListOf<InlinePart>()
+        val element = buildJsonArray {
             if (text.isNotEmpty()) {
                 add(
                     buildJsonObject {
@@ -115,27 +129,40 @@ object ChatRequestBody {
                 )
             }
             videos.forEach { video ->
+                val url = when (video) {
+                    is ChatRequestVideo.Remote -> video.url
+                    is ChatRequestVideo.Inline -> InlineMedia.placeholder(video.id).also { token ->
+                        inlineParts += InlinePart(token, video.file, video.mime)
+                    }
+                }
                 add(
                     buildJsonObject {
                         put("type", "video_url")
                         putJsonObject("video_url") {
-                            put("url", video.url)
+                            put("url", url)
                         }
                     },
                 )
             }
             audios.forEach { audio ->
                 // MiMo 形状：input_audio 只有一个 data 字段（URL 或 data URI），不是 OpenAI 的 {data,format}。
+                val data = when (audio) {
+                    is ChatRequestAudio.Remote -> audio.dataUrl
+                    is ChatRequestAudio.Inline -> InlineMedia.placeholder(audio.id).also { token ->
+                        inlineParts += InlinePart(token, audio.file, audio.mime)
+                    }
+                }
                 add(
                     buildJsonObject {
                         put("type", "input_audio")
                         putJsonObject("input_audio") {
-                            put("data", audio.dataUrl)
+                            put("data", data)
                         }
                     },
                 )
             }
         }
+        return EncodedContent(element, inlineParts)
     }
 
     private fun parseExtra(raw: String?): JsonObject? {

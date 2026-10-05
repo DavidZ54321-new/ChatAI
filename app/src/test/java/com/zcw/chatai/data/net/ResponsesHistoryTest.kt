@@ -95,7 +95,7 @@ class ResponsesHistoryTest {
                 ChatRequestMessage(
                     role = "user",
                     content = "watch",
-                    videos = listOf(ChatRequestVideo(url = "oss://x", isOss = true)),
+                    videos = listOf(ChatRequestVideo.Remote(url = "oss://x", isOss = true)),
                 ),
             ),
         )
