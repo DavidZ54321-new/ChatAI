@@ -23,6 +23,7 @@ import com.zcw.chatai.data.model.Role
 import com.zcw.chatai.data.persona.PersonaEntry
 import com.zcw.chatai.data.prefs.ReasoningEffort
 import com.zcw.chatai.data.prefs.SettingsRepository
+import com.zcw.chatai.data.prefs.resolveBlankComposer
 import com.zcw.chatai.data.prefs.WorkspaceSlot
 import com.zcw.chatai.data.provider.ProviderCatalog
 import com.zcw.chatai.data.provider.ToolBackendResolver
@@ -117,6 +118,10 @@ class ChatViewModel(
         pendingBinding,
     ) { text, pend, note, settings, binding ->
         val entry = settings.activeProvider
+        // 空白对话的供应商和模型：待落库绑定优先，否则文本工作区，最后才是激活供应商。
+        // 联网是否可用跟这一份走，避免芯片已经换成工作区、开关还按激活供应商算。
+        val (blankProviderId, _) = settings.blankComposer(binding?.providerId, binding?.model)
+        val blankEntry = settings.providers[blankProviderId] ?: entry
         // 工具后端与主对话供应商解耦（借道）：可用性只看后端配置，不看会话模型。
         val backendIds = ToolBackendResolver.resolve(
             providers = settings.providers,
@@ -124,10 +129,8 @@ class ChatViewModel(
             conversationProviderId = null,
             preferredSearchProviderId = settings.searchProviderId,
         )
-        val providerId = binding?.providerId ?: settings.activeProviderId
-        val providerEntry = settings.providers[providerId] ?: entry
-        val hostedSearchAvailable = ProviderCatalog.byId(providerId)?.hostedWebSearch == true &&
-            providerEntry.apiKey.isNotBlank()
+        val hostedSearchAvailable = ProviderCatalog.byId(blankProviderId)?.hostedWebSearch == true &&
+            blankEntry.apiKey.isNotBlank()
         val textAvailable = hostedSearchAvailable || backendIds.textProviderIds.any { backendId ->
             settings.providers[backendId]?.let { backendEntry ->
                 searchProviders[backendId]?.available(backendEntry.baseUrl, backendEntry.apiKey)
@@ -146,10 +149,11 @@ class ChatViewModel(
             defaultModel = entry.model,
             webSearchAvailable = textAvailable || imageAvailable,
             pendingWebSearch = binding?.webSearchEnabled == true,
-            activeProviderId = settings.activeProviderId,
             providers = settings.providers,
             pendingModel = binding?.model,
             pendingProviderId = binding?.providerId,
+            workspaceProviderId = settings.resolvedTextWorkspaceProvider,
+            workspaceModel = settings.textWorkspace.model,
             personas = settings.personas,
             activePersonaId = settings.resolvedActivePersonaId,
             pendingPersonaId = binding?.personaId,
@@ -833,16 +837,18 @@ class ChatViewModel(
                 list
             }
         }
-        // 视频能不能发由**会话绑定的供应商**决定；迁移后的旧会话为空串 → 跟随激活供应商
-        // （与 ChatRepository.resolveConfig 同一条规则）。还没有会话时用「待落库绑定」，
-        // 让用户刚选的供应商/模型立刻在界面上生效。
-        val providerId = conversation?.providerId?.takeIf { it.isNotBlank() }
-            ?: composer.pendingProviderId?.takeIf { it.isNotBlank() }
-            ?: composer.activeProviderId
+        // 视频能不能发由**会话绑定的供应商**决定；迁移后的旧会话为空串 → 跟下面同一条回退。
+        // 还没有会话时：本次待落库绑定优先，否则用文本工作区上次在模型面板的选择
+        // （重启后会话 id 不恢复，靠这份落盘记住底部芯片）。工作区为空才用激活供应商。
+        val (providerId, model) = resolveBlankComposer(
+            providerId = conversation?.providerId?.takeIf { it.isNotBlank() }
+                ?: composer.pendingProviderId,
+            model = conversation?.model?.takeIf { it.isNotBlank() } ?: composer.pendingModel,
+            workspaceProviderId = composer.workspaceProviderId,
+            workspaceModel = composer.workspaceModel,
+            providers = composer.providers,
+        )
         val providerEntry = composer.providers[providerId]
-        val model = conversation?.model?.takeIf { it.isNotBlank() }
-            ?: composer.pendingModel?.takeIf { it.isNotBlank() }
-            ?: composer.defaultModel
         // 角色与供应商同一回退语义：会话绑定 → 待落库 → 激活；已删除的绑定静默跟随激活。
         val rawPersonaId = conversation?.personaId?.takeIf { it.isNotBlank() }
             ?: composer.pendingPersonaId?.takeIf { it.isNotBlank() }
@@ -890,11 +896,13 @@ class ChatViewModel(
         val webSearchAvailable: Boolean,
         /** 还没有会话时用户先开的 🌐；建会话时落库。 */
         val pendingWebSearch: Boolean = false,
-        val activeProviderId: String,
         val providers: Map<String, com.zcw.chatai.data.provider.ProviderEntry>,
         /** 还没有会话时用户先选好的绑定；建会话时落库。 */
         val pendingModel: String? = null,
         val pendingProviderId: String? = null,
+        /** 文本工作区上次的选择。空白时 [workspaceProviderId] 已是激活供应商。 */
+        val workspaceProviderId: String,
+        val workspaceModel: String,
         val personas: Map<String, PersonaEntry> = emptyMap(),
         val activePersonaId: String = "",
         val pendingPersonaId: String? = null,

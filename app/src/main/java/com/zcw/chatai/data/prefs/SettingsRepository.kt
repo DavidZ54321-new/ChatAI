@@ -29,6 +29,27 @@ import kotlinx.coroutines.flow.map
 
 enum class ThemeMode { SYSTEM, LIGHT, DARK }
 
+/**
+ * 空白对话的供应商和模型。显式值优先；供应商空则用 [workspaceProviderId]。
+ * 模型空、且供应商就是工作区时，用 [workspaceModel]；否则用该供应商设置里的模型栏。
+ */
+internal fun resolveBlankComposer(
+    providerId: String?,
+    model: String?,
+    workspaceProviderId: String,
+    workspaceModel: String,
+    providers: Map<String, ProviderEntry>,
+): Pair<String, String> {
+    val provider = providerId?.trim()?.takeIf { it.isNotEmpty() } ?: workspaceProviderId
+    val explicit = model?.trim()?.takeIf { it.isNotEmpty() }
+    val resolved = when {
+        explicit != null -> explicit
+        provider == workspaceProviderId && workspaceModel.isNotBlank() -> workspaceModel.trim()
+        else -> ProviderCatalog.defaultModelFor(providers, provider)
+    }
+    return provider to resolved
+}
+
 /** 品牌配色族：与 [ThemeMode]（明暗）正交；实际配色表在 `ThemeRegistry`。 */
 enum class ThemeFamily { CLAUDE, CHATGPT }
 
@@ -138,6 +159,20 @@ data class ChatSettings(
             if (chosen.isNotEmpty()) return chosen
             return providers[resolvedTextWorkspaceProvider]?.model?.trim().orEmpty()
         }
+
+    /**
+     * 空白对话的供应商和模型，一起返回。
+     * 显式绑定优先；否则用文本工作区上次的选择，工作区为空才落到激活供应商。
+     * 供应商对不上工作区时，不用工作区里的模型名，改用该供应商自己的模型栏。
+     */
+    fun blankComposer(providerId: String?, model: String?): Pair<String, String> =
+        resolveBlankComposer(
+            providerId = providerId,
+            model = model,
+            workspaceProviderId = resolvedTextWorkspaceProvider,
+            workspaceModel = textWorkspace.model,
+            providers = providers,
+        )
 
     /** 激活供应商；表意外为空时给一个安全空条目（请求层会给出可读报错）。 */
     val activeProvider: ProviderEntry

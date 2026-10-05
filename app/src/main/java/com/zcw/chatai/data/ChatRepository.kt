@@ -237,8 +237,9 @@ class ChatRepository(
 
     /**
      * 新建会话。[model] / [providerId] / [personaId] / [webSearchEnabled] 用来把
-     * 「会话还不存在时用户已经选好的绑定」一次性落库，缺省则跟随当前激活供应商/角色
-     * （激活角色已被会话内切换同步更新，所以新会话自然「记住上次选择」）。
+     * 「会话还不存在时用户已经选好的绑定」一次性落库。供应商和模型缺省时跟随
+     * 文本工作区上次在模型面板的选择，工作区还没选过才跟随激活供应商。
+     * 角色缺省跟随激活角色（会话内切换会同步激活，所以新会话记住上次角色）。
      */
     suspend fun createConversation(
         model: String? = null,
@@ -247,7 +248,7 @@ class ChatRepository(
         webSearchEnabled: Boolean = false,
     ): String {
         val settings = settingsRepository.settings.first()
-        val boundProviderId = providerId?.takeIf { it.isNotBlank() } ?: settings.activeProviderId
+        val (boundProviderId, boundModel) = settings.blankComposer(providerId, model)
         // 已删除的角色不落库：直接回退激活（与 buildState 的显示回退同一条规则，不在库里留死绑定）。
         val boundPersonaId = personaId?.takeIf { it.isNotBlank() && it in settings.personas }
             ?: settings.resolvedActivePersonaId
@@ -257,8 +258,7 @@ class ChatRepository(
             ConversationEntity(
                 id = id,
                 title = ConversationTitle.FALLBACK,
-                model = model?.takeIf { it.isNotBlank() }
-                    ?: ProviderCatalog.defaultModelFor(settings.providers, boundProviderId),
+                model = boundModel,
                 systemPrompt = null,
                 createdAt = timestamp,
                 updatedAt = timestamp,

@@ -182,6 +182,50 @@ class ChatSettingsTest {
     }
 
     @Test
+    fun blankComposerRemembersTheTextWorkspace() {
+        val picked = settings.copy(
+            providers = settings.providers + (
+                ProviderCatalog.OPENAI to ProviderEntry("https://oa.example/v1", "sk-oa", "gpt-6-astra")
+                ),
+            activeProviderId = ProviderCatalog.OPENAI,
+            textWorkspace = WorkspaceMemory(ProviderCatalog.QWEN, "qwen3.8-27b"),
+        )
+        val (providerId, model) = picked.blankComposer(null, null)
+        assertEquals(ProviderCatalog.QWEN, providerId)
+        assertEquals("qwen3.8-27b", model)
+    }
+
+    @Test
+    fun blankComposerUsesTheActiveProviderWhenTheWorkspaceIsEmpty() {
+        val (providerId, model) = settings.blankComposer(null, null)
+        assertEquals(ProviderCatalog.DEEPSEEK, providerId)
+        assertEquals("deepseek-flash", model)
+        val blank = settings.blankComposer("  ", "  ")
+        assertEquals(ProviderCatalog.DEEPSEEK, blank.first)
+        assertEquals("deepseek-flash", blank.second)
+    }
+
+    @Test
+    fun blankComposerPrefersAnExplicitBinding() {
+        val picked = settings.copy(
+            textWorkspace = WorkspaceMemory(ProviderCatalog.QWEN, "qwen3.8-27b"),
+        )
+        val (providerId, model) = picked.blankComposer(ProviderCatalog.DEEPSEEK, "deepseek-v4-pro")
+        assertEquals(ProviderCatalog.DEEPSEEK, providerId)
+        assertEquals("deepseek-v4-pro", model)
+    }
+
+    @Test
+    fun blankComposerKeepsAnotherProvidersConfiguredModel() {
+        val picked = settings.copy(
+            textWorkspace = WorkspaceMemory(ProviderCatalog.QWEN, "qwen3.8-27b"),
+        )
+        val (providerId, model) = picked.blankComposer(ProviderCatalog.DEEPSEEK, null)
+        assertEquals(ProviderCatalog.DEEPSEEK, providerId)
+        assertEquals("deepseek-flash", model)
+    }
+
+    @Test
     fun rewriteUsesTheTextModelNotTheImageProvider() {
         val image = settings.copy(
             providers = settings.providers + (
