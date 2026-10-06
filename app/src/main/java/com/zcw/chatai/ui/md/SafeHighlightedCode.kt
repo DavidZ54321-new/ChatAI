@@ -3,6 +3,14 @@ package com.zcw.chatai.ui.md
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -13,7 +21,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -23,6 +30,12 @@ import com.mikepenz.markdown.compose.LocalMarkdownDimens
 import com.mikepenz.markdown.compose.LocalMarkdownPadding
 import com.mikepenz.markdown.compose.elements.MarkdownCodeBackground
 import com.mikepenz.markdown.compose.elements.material.MarkdownBasicText
+import com.zcw.chatai.ui.chat.CodePaint
+import com.zcw.chatai.ui.chat.InChatCenterReport
+import com.zcw.chatai.ui.chat.InChatHighlightColors
+import com.zcw.chatai.ui.chat.InChatHit
+import com.zcw.chatai.ui.chat.InChatSearch
+import org.intellij.markdown.ast.ASTNode
 import dev.snipme.highlights.Highlights
 import dev.snipme.highlights.model.BoldHighlight
 import dev.snipme.highlights.model.ColorHighlight
@@ -96,25 +109,41 @@ internal fun SafeMarkdownHighlightedCode(
     style: TextStyle,
     highlightsBuilder: Highlights.Builder,
     showHeader: Boolean,
+    searchRanges: List<IntRange> = emptyList(),
+    activeRange: IntRange? = null,
+    activeHit: InChatHit? = null,
+    onActiveCenter: InChatCenterReport? = null,
 ) {
     val immediate = LocalInspectionMode.current
     val annotated: AnnotatedString = if (immediate) {
-        remember(code, language, highlightsBuilder) {
-            buildSafeHighlightedAnnotatedString(code, language, highlightsBuilder)
+        remember(code, language, highlightsBuilder, searchRanges, activeRange) {
+            withSearchHighlights(
+                buildSafeHighlightedAnnotatedString(code, language, highlightsBuilder),
+                searchRanges,
+                activeRange,
+            )
         }
     } else {
         val state by produceState(
-            initialValue = AnnotatedString(code),
+            initialValue = withSearchHighlights(AnnotatedString(code), searchRanges, activeRange),
             code,
             language,
             highlightsBuilder,
+            searchRanges,
+            activeRange,
         ) {
-            value = withContext(Dispatchers.Default) {
-                buildSafeHighlightedAnnotatedString(code, language, highlightsBuilder)
-            }
+            value = withSearchHighlights(
+                withContext(Dispatchers.Default) {
+                    buildSafeHighlightedAnnotatedString(code, language, highlightsBuilder)
+                },
+                searchRanges,
+                activeRange,
+            )
         }
         state
     }
+    var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
+    var originY by remember { mutableFloatStateOf(Float.NaN) }
     MarkdownCodeBackground(
         color = LocalMarkdownColors.current.codeBackground,
         shape = RoundedCornerShape(LocalMarkdownDimens.current.codeBackgroundCornerSize),
@@ -128,9 +157,71 @@ internal fun SafeMarkdownHighlightedCode(
         MarkdownBasicText(
             text = annotated,
             style = style,
+            onTextLayout = { layout = it },
             modifier = Modifier
                 .horizontalScroll(rememberScrollState())
-                .padding(LocalMarkdownPadding.current.codeBlock),
+                .padding(LocalMarkdownPadding.current.codeBlock)
+                .onGloballyPositioned { originY = it.positionInWindow().y },
         )
     }
+    val activeStart = activeRange?.first
+    LaunchedEffect(layout, originY, activeStart, activeHit, onActiveCenter) {
+        val report = onActiveCenter ?: return@LaunchedEffect
+        val hit = activeHit ?: return@LaunchedEffect
+        val result = layout ?: return@LaunchedEffect
+        val start = activeStart ?: return@LaunchedEffect
+        if (originY.isNaN() || start !in 0 until result.layoutInput.text.length) return@LaunchedEffect
+        val box = result.getBoundingBox(start)
+        report(hit.messageId, hit.segment, hit.start, originY + (box.top + box.bottom) / 2f)
+    }
+}
+
+internal fun withSearchHighlights(
+    base: AnnotatedString,
+    ranges: List<IntRange>,
+    active: IntRange?,
+): AnnotatedString {
+    if (ranges.isEmpty()) return base
+    return buildAnnotatedString {
+        append(base)
+        for (range in ranges) {
+            val start = range.first
+            val end = range.last + 1
+            if (!isValidHighlightRange(start, end, base.length)) continue
+            val color = if (range == active) InChatHighlightColors.current else InChatHighlightColors.idle
+            addStyle(SpanStyle(background = color), start, end)
+        }
+    }
+}
+
+/** 缩进代码块：库用首尾子节点夹出源码，再 [String.replaceIndent]。 */
+internal fun indentedCodeSpan(node: ASTNode): Pair<Int, Int>? {
+    if (node.children.isEmpty()) return null
+    val start = node.children.first().startOffset
+    val end = node.children.last().endOffset
+    if (start > end) return null
+    return start to end
+}
+
+/** 围栏代码块：和库的 [com.mikepenz.markdown.compose.elements.MarkdownCodeFence] 用同一对下标。 */
+internal fun fenceCodeSpan(node: ASTNode, hasLanguage: Boolean): Pair<Int, Int>? {
+    if (node.children.size < 3) return null
+    val start = node.children[2].startOffset
+    val minCount = if (hasLanguage && node.children.size > 3) 3 else 2
+    val end = node.children[(node.children.size - 2).coerceAtLeast(minCount)].endOffset
+    if (start > end) return null
+    return start to end
+}
+
+internal fun codePaint(
+    content: String,
+    start: Int,
+    end: Int,
+    displayed: String,
+    query: String,
+    hits: List<InChatHit>,
+    active: InChatHit?,
+): CodePaint {
+    if (start < 0 || end > content.length || start > end) return CodePaint(emptyList(), null)
+    return InChatSearch.paintCode(start, content.substring(start, end), displayed, query, hits, active)
 }

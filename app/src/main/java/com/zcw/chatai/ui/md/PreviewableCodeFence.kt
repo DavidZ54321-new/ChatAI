@@ -14,6 +14,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import com.mikepenz.markdown.compose.elements.MarkdownCodeFence
+import com.zcw.chatai.ui.chat.CodePaint
+import com.zcw.chatai.ui.chat.InChatCenterReport
+import com.zcw.chatai.ui.chat.InChatHit
 import com.zcw.chatai.ui.theme.ChatTheme
 import dev.snipme.highlights.Highlights
 import org.intellij.markdown.MarkdownTokenTypes
@@ -34,6 +37,10 @@ fun PreviewableCodeFence(
     node: ASTNode,
     highlightsBuilder: Highlights.Builder,
     onPreview: ((PreviewTarget) -> Unit)?,
+    searchHits: List<InChatHit> = emptyList(),
+    activeHit: InChatHit? = null,
+    searchQuery: String = "",
+    onActiveCenter: InChatCenterReport? = null,
 ) {
     MarkdownCodeFence(content, node) { code, language, style ->
         // 空代码块不值得给预览入口（旧 PreviewBlockSplitter 同样跳过空白块）。
@@ -43,6 +50,13 @@ fun PreviewableCodeFence(
         } else {
             null
         }
+        // 与库同一对下标：有 FENCE_LANG 且子节点多于 3 时，内容终点往前让一格。
+        val span = fenceCodeSpan(node, hasLanguage = language != null)
+        val paint = if (span == null) {
+            CodePaint(emptyList(), null)
+        } else {
+            codePaint(content, span.first, span.second, code, searchQuery, searchHits, activeHit)
+        }
         Box {
             SafeMarkdownHighlightedCode(
                 code = code,
@@ -50,6 +64,10 @@ fun PreviewableCodeFence(
                 style = style,
                 highlightsBuilder = highlightsBuilder,
                 showHeader = true,
+                searchRanges = paint.ranges,
+                activeRange = paint.active,
+                activeHit = activeHit,
+                onActiveCenter = onActiveCenter,
             )
             if (target != null && onPreview != null) {
                 PreviewHeaderButton(

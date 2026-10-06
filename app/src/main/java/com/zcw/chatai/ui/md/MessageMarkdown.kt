@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -20,6 +21,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.key
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -32,8 +34,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.Placeholder
+import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
@@ -41,6 +47,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.mikepenz.markdown.compose.LocalReferenceLinkHandler
 import com.mikepenz.markdown.compose.components.MarkdownComponentModel
@@ -57,12 +64,18 @@ import com.mikepenz.markdown.model.MarkdownAnnotator
 import com.mikepenz.markdown.model.State
 import com.mikepenz.markdown.model.markdownAnnotator
 import com.mikepenz.markdown.model.markdownDimens
+import com.mikepenz.markdown.model.markdownInlineContent
 import com.mikepenz.markdown.model.parseMarkdown
 import com.mikepenz.markdown.model.rememberMarkdownState
 import com.mikepenz.markdown.utils.resolveImageAlt
 import com.mikepenz.markdown.utils.resolveImageLink
 import com.zcw.chatai.ui.chat.ChatMetrics
+import com.zcw.chatai.ui.chat.CodePaint
+import com.zcw.chatai.ui.chat.InChatCenterReport
+import com.zcw.chatai.ui.chat.InChatHit
+import com.zcw.chatai.ui.chat.InChatSearch
 import com.zcw.chatai.ui.chat.PreviewImage
+import com.zcw.chatai.ui.chat.appendHighlighted
 import com.zcw.chatai.ui.chat.RemoteImage
 import com.zcw.chatai.ui.chat.RemoteImagePreviewDialog
 import com.zcw.chatai.ui.md.latex.MathFormula
@@ -89,6 +102,10 @@ fun MessageMarkdown(
     modifier: Modifier = Modifier,
     cacheable: Boolean = true,
     allowRemoteImages: Boolean = true,
+    searchHits: List<InChatHit> = emptyList(),
+    activeHit: InChatHit? = null,
+    searchQuery: String = "",
+    onActiveCenter: InChatCenterReport? = null,
 ) {
     // 管线：图行 → LaTeX → markdown。svg/mermaid/html 围栏**不再**从正文里抽出来换卡片，
     // 而是由 MarkdownBlock 的 codeFence 槽统一渲染：外观与普通代码块一致，围栏闭合后
@@ -102,10 +119,21 @@ fun MessageMarkdown(
     }
     var previewAt by remember { mutableStateOf<Int?>(null) }
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        // 段号必须和 InChatSearch.textPieces 同一条走法：只给真正画成文字的段编号。
+        val pieceIndex = PieceIndex()
         var cursor = 0
         for (segment in segments) {
             when (segment) {
-                is ContentSegment.Markdown -> LatexContent(segment.text, cacheable, allowRemoteImages)
+                is ContentSegment.Markdown -> LatexContent(
+                    text = segment.text,
+                    cacheable = cacheable,
+                    allowRemoteImages = allowRemoteImages,
+                    searchHits = searchHits,
+                    activeHit = activeHit,
+                    searchQuery = searchQuery,
+                    onActiveCenter = onActiveCenter,
+                    pieceIndex = pieceIndex,
+                )
                 is ContentSegment.ImageRow -> {
                     val start = cursor
                     if (allowRemoteImages) {
@@ -130,13 +158,37 @@ fun MessageMarkdown(
     }
 }
 
-/** 块级公式仍在 Markdown 片段内部单独分段渲染。 */
+/** 一次组合里往下数文字段。不进状态：每次组合都从 0 重新走。 */
+private class PieceIndex(var value: Int = 0)
+
+/** 块级公式仍在 Markdown 片段内部单独分段渲染。公式本身不占搜索段号。 */
 @Composable
-private fun LatexContent(text: String, cacheable: Boolean, allowRemoteImages: Boolean) {
+private fun LatexContent(
+    text: String,
+    cacheable: Boolean,
+    allowRemoteImages: Boolean,
+    searchHits: List<InChatHit>,
+    activeHit: InChatHit?,
+    searchQuery: String,
+    onActiveCenter: InChatCenterReport?,
+    pieceIndex: PieceIndex,
+) {
     val segments = remember(text) { LatexSplitter.split(text) }
     for (segment in segments) {
         when (segment) {
-            is MdSegment.Markdown -> MarkdownBlock(segment.text, cacheable, allowRemoteImages)
+            is MdSegment.Markdown -> {
+                val index = pieceIndex.value
+                pieceIndex.value = index + 1
+                MarkdownBlock(
+                    text = segment.text,
+                    cacheable = cacheable,
+                    allowRemoteImages = allowRemoteImages,
+                    hits = searchHits.filter { it.segment == index },
+                    active = activeHit?.takeIf { it.segment == index },
+                    query = searchQuery,
+                    onActiveCenter = if (activeHit?.segment == index) onActiveCenter else null,
+                )
+            }
             is MdSegment.BlockMath -> BlockMathView(segment.latex)
         }
     }
@@ -208,7 +260,15 @@ private fun MarkdownSingleImage(image: MarkdownImageRef, onOpen: () -> Unit) {
 }
 
 @Composable
-private fun MarkdownBlock(text: String, cacheable: Boolean, allowRemoteImages: Boolean) {
+private fun MarkdownBlock(
+    text: String,
+    cacheable: Boolean,
+    allowRemoteImages: Boolean,
+    hits: List<InChatHit> = emptyList(),
+    active: InChatHit? = null,
+    query: String = "",
+    onActiveCenter: InChatCenterReport? = null,
+) {
     val scheme = MaterialTheme.colorScheme
     val colors = ChatTheme.colors
     val chatType = ChatTheme.typography
@@ -296,12 +356,22 @@ private fun MarkdownBlock(text: String, cacheable: Boolean, allowRemoteImages: B
                 // 自己渲染而不是用库的 MarkdownHighlightedCodeBlock：高亮区间要先夹回文本范围，
                 // 否则高亮库的反向/越界区间会在 AnnotatedString/无障碍转换里炸（见 SafeHighlightedCode）。
                 MarkdownCodeBlock(content = model.content, node = model.node) { code, language, style ->
+                    val span = indentedCodeSpan(model.node)
+                    val paint = if (span == null) {
+                        CodePaint(emptyList(), null)
+                    } else {
+                        codePaint(model.content, span.first, span.second, code, query, hits, active)
+                    }
                     SafeMarkdownHighlightedCode(
                         code = code,
                         language = language,
                         style = style,
                         highlightsBuilder = highlightsBuilder,
                         showHeader = true,
+                        searchRanges = paint.ranges,
+                        activeRange = paint.active,
+                        activeHit = active,
+                        onActiveCenter = onActiveCenter,
                     )
                 }
             },
@@ -313,6 +383,10 @@ private fun MarkdownBlock(text: String, cacheable: Boolean, allowRemoteImages: B
                     node = model.node,
                     highlightsBuilder = highlightsBuilder,
                     onPreview = previewOpener,
+                    searchHits = hits,
+                    activeHit = active,
+                    searchQuery = query,
+                    onActiveCenter = onActiveCenter,
                 )
             },
             // 正文里的网图（如文搜图返回的 markdown 图片）走统一的远程加载器。
@@ -321,13 +395,41 @@ private fun MarkdownBlock(text: String, cacheable: Boolean, allowRemoteImages: B
             image = { model -> MarkdownNetworkImage(model, allowRemoteImages) },
             inlineImage = { model -> MarkdownNetworkImage(model, allowRemoteImages) },
         )
+    val inline = if (active == null) {
+        markdownInlineContent()
+    } else {
+        val hit = active
+        markdownInlineContent(
+            mapOf(
+                InChatSearch.probeId(hit) to InlineTextContent(
+                    Placeholder(
+                        width = 0.sp,
+                        height = 1.em,
+                        placeholderVerticalAlign = PlaceholderVerticalAlign.TextCenter,
+                    ),
+                ) {
+                    key(hit.messageId, hit.segment, hit.start) {
+                        Box(
+                            Modifier.onGloballyPositioned { coords ->
+                                val center = coords.positionInWindow().y + coords.size.height / 2f
+                                onActiveCenter?.invoke(hit.messageId, hit.segment, hit.start, center)
+                            },
+                        )
+                    }
+                },
+            ),
+        )
+    }
     Markdown(
         state = rememberParsedMarkdown(prepared.text, cacheable),
         colors = markdownColors,
         typography = markdownType,
         modifier = Modifier.fillMaxWidth(),
         dimens = dimens,
-        annotator = remember(mathStrings) { inlineMathAnnotator(mathStrings) },
+        annotator = remember(mathStrings, hits, active) {
+            inlineMathAnnotator(mathStrings, hits, active)
+        },
+        inlineContent = inline,
         components = components,
         animations = NoTextSizeAnimation,
     )
@@ -418,24 +520,51 @@ private fun BlockMathView(latex: String) {
     }
 }
 
-private fun inlineMathAnnotator(mathStrings: List<AnnotatedString>): MarkdownAnnotator =
-    markdownAnnotator { content, child ->
-        if (child.type == MarkdownTokenTypes.TEXT) {
-            val raw = content.substring(child.startOffset, child.endOffset)
-            if (raw.indexOf(PLACEHOLDER_OPEN) < 0) {
-                false
-            } else {
-                for (piece in splitPlaceholders(raw)) {
-                    when (piece) {
-                        is InlinePiece.Text -> append(piece.text)
-                        is InlinePiece.Formula -> {
-                            mathStrings.getOrNull(piece.index)?.let { append(it) }
-                        }
-                    }
-                }
-                true
-            }
-        } else {
+private fun inlineMathAnnotator(
+    mathStrings: List<AnnotatedString>,
+    hits: List<InChatHit>,
+    active: InChatHit?,
+): MarkdownAnnotator = markdownAnnotator { content, child ->
+    if (child.type != MarkdownTokenTypes.TEXT) {
+        false
+    } else {
+        val raw = content.substring(child.startOffset, child.endOffset)
+        val overlapsHit = hits.any { it.start < child.endOffset && it.end > child.startOffset }
+        val activeHere = active != null && active.start >= child.startOffset && active.start < child.endOffset
+        if (raw.indexOf(PLACEHOLDER_OPEN) < 0 && !overlapsHit && !activeHere) {
             false
+        } else {
+            appendSearchNode(raw, child.startOffset, hits, active, mathStrings)
+            true
         }
     }
+}
+
+/** 行内公式照旧替换；命中铺在公式占位之外的原文上。定位点只插在当前命中的起点。 */
+private fun AnnotatedString.Builder.appendSearchNode(
+    raw: String,
+    nodeStart: Int,
+    hits: List<InChatHit>,
+    active: InChatHit?,
+    mathStrings: List<AnnotatedString>,
+) {
+    var local = 0
+    for (piece in splitPlaceholders(raw)) {
+        when (piece) {
+            is InlinePiece.Text -> {
+                appendHighlighted(
+                    text = piece.text,
+                    sourceStart = nodeStart + local,
+                    hits = hits,
+                    active = active,
+                    probe = true,
+                )
+                local += piece.text.length
+            }
+            is InlinePiece.Formula -> {
+                mathStrings.getOrNull(piece.index)?.let { append(it) }
+                local += 2 + piece.index.toString().length
+            }
+        }
+    }
+}

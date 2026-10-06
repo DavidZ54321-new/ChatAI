@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -153,15 +154,19 @@ fun ChatScreen(
     var outlineFor by remember { mutableStateOf<String?>(null) }
     var outlineEntryIndex by remember { mutableIntStateOf(0) }
     val outlineVisible = outlineFor != null && outlineFor == state.conversationId
+    // 开关提前放在这里：焦点门禁要比搜索会话更早读到它。锚点和滚动在 rememberInChatSearch。
+    val searchOpen = remember { mutableStateOf(false) }
+    fun nothingElseInFront() =
+        !outlineVisible && !attachOpen &&
+            messageOverlay == null &&
+            previewTarget == null && documentTarget == null && previewPage == null &&
+            editDraft == null && !confirmResend && branchTarget == null && deleteTarget == null
 
     // 只有聊天主界面可见、且没有被任何浮层遮挡时才允许唤键盘：
     // 设置页 / 会话列表 / 模型选择（上层标志）与附件面板 / 溢出菜单 / 消息操作 / 图片预览（本地浮层）一律不唤醒。
     // 编辑弹层也算浮层：从系统相册选完附件回来时不该把键盘飘到 Composer 上。
     val focusAllowedNow = rememberUpdatedState(
-        composerFocusAllowed && !outlineVisible && !attachOpen &&
-            messageOverlay == null &&
-            previewTarget == null && documentTarget == null && previewPage == null &&
-            editDraft == null && !confirmResend && branchTarget == null && deleteTarget == null,
+        composerFocusAllowed && !searchOpen.value && nothingElseInFront(),
     )
     // 聚焦成功才唤键盘：requestFocus 失败（节点已移除）时不弹，避免键盘飘到别的界面上。
     fun focusComposerIfAllowed() {
@@ -246,6 +251,18 @@ fun ChatScreen(
         messages = messages,
         isStreaming = state.isStreaming,
     )
+    val search = rememberInChatSearch(
+        openState = searchOpen,
+        messages = messages,
+        conversationId = state.conversationId,
+        listState = listState,
+        groups = groups,
+        hasBranchHeader = branchParent != null,
+        unpin = follow.unpin,
+    )
+    BackHandler(enabled = search.open && composerFocusAllowed && nothingElseInFront()) {
+        search.close()
+    }
     LaunchedEffect(state.conversationId) {
         messageOverlay = null
         deleteTarget = null
@@ -257,6 +274,7 @@ fun ChatScreen(
             }
         }
     }
+
 
     val pickImages = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(8),
@@ -439,13 +457,19 @@ fun ChatScreen(
                         }
                         val row: @Composable () -> Unit = {
                             when (group) {
-                                is MessageGroup.User -> UserMessageItem(
-                                    message = group.items.single(),
-                                    onLongPress = onUserLongPress,
-                                    // 点气泡进编辑弹层；能不能编辑（生成中/非用户消息）由 VM 判。
-                                    onClick = onItemClick,
-                                    onOpenImage = onItemOpenImage,
-                                )
+                                is MessageGroup.User -> {
+                                    val message = group.items.single()
+                                    UserMessageItem(
+                                        message = message,
+                                        onLongPress = onUserLongPress,
+                                        // 点气泡进编辑弹层；能不能编辑（生成中/非用户消息）由 VM 判。
+                                        onClick = onItemClick,
+                                        onOpenImage = onItemOpenImage,
+                                        searchHits = search.hitsByMessage[message.id].orEmpty(),
+                                        activeHit = search.active?.takeIf { it.messageId == message.id },
+                                        onActiveCenter = search.onCenter,
+                                    )
+                                }
 
                                 is MessageGroup.Assistant -> {
                                     val tail = MessageGroups.isTailGroup(groups, index)
@@ -465,6 +489,14 @@ fun ChatScreen(
                                         onBranch = onItemBranch,
                                         onContinue = if (tail) onItemContinue else null,
                                         onCancelledRegenerate = if (tail) onItemRetry else null,
+                                        searchHits = group.items.flatMap { item ->
+                                            search.hitsByMessage[item.id].orEmpty()
+                                        },
+                                        activeHit = search.active?.takeIf { hit ->
+                                            group.items.any { it.id == hit.messageId }
+                                        },
+                                        searchQuery = search.query,
+                                        onActiveCenter = search.onCenter,
                                     )
                                 }
                             }
@@ -526,17 +558,23 @@ fun ChatScreen(
                 onOpenConversations()
             },
             onNewConversation = onNewConversation,
+            onToggleSearch = search.toggle,
+            searchOpen = search.open,
             onOpenOutline = {
                 hideKeyboardForNavigation()
                 outlineEntryIndex = listState.firstVisibleItemIndex
                 outlineFor = state.conversationId
             },
-            modifier = Modifier.align(Alignment.TopCenter),
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .onGloballyPositioned { coords ->
+                    search.onControlsBottom(coords.positionInWindow().y + coords.size.height)
+                },
         )
         ChatScrollToBottomButton(
             follow = follow,
             listState = listState,
-            enabled = messages.isNotEmpty(),
+            enabled = messages.isNotEmpty() && !search.open,
             modifier = Modifier.align(Alignment.BottomEnd),
         )
         Box(
@@ -555,6 +593,23 @@ fun ChatScreen(
                         style = MaterialTheme.typography.labelMedium,
                         color = colors.accentAmber,
                         modifier = Modifier.padding(start = 4.dp),
+                    )
+                }
+                if (search.open) {
+                    InChatSearchBar(
+                        query = search.query,
+                        onQueryChange = search.onQuery,
+                        countLabel = search.countLabel,
+                        canPrevious = search.canPrevious,
+                        canNext = search.canNext,
+                        onPrevious = { search.step(-1) },
+                        onNext = { search.step(1) },
+                        onJumpToFirst = { search.step(-search.hitCount) },
+                        onJumpToLast = { search.step(search.hitCount) },
+                        focusRequester = search.focus,
+                        modifier = Modifier.onGloballyPositioned { coords ->
+                            search.onBarTop(coords.positionInWindow().y)
+                        },
                     )
                 }
                 Composer(

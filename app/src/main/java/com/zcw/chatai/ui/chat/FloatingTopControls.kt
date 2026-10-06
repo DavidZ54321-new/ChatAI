@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -19,6 +21,8 @@ import com.zcw.chatai.R
 fun FloatingTopControls(
     onOpenConversations: () -> Unit,
     onNewConversation: () -> Unit,
+    onToggleSearch: () -> Unit,
+    searchOpen: Boolean,
     onOpenOutline: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -39,6 +43,12 @@ fun FloatingTopControls(
             icon = Icons.Filled.Add,
             contentDescription = "新对话",
             onClick = onNewConversation,
+        )
+        IconBareButton(
+            icon = Icons.Filled.Search,
+            contentDescription = "搜索",
+            onClick = onToggleSearch,
+            tint = if (searchOpen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
         )
         IconBareButton(
             painter = painterResource(R.drawable.ic_track),

@@ -51,6 +51,9 @@ fun UserMessageItem(
     onLongPress: (ChatMessageItem) -> Unit,
     onClick: (ChatMessageItem) -> Unit,
     onOpenImage: (ChatMessageItem, MessageImage) -> Unit,
+    searchHits: List<InChatHit> = emptyList(),
+    activeHit: InChatHit? = null,
+    onActiveCenter: InChatCenterReport? = null,
     modifier: Modifier = Modifier,
 ) {
     val colors = ChatTheme.colors
@@ -79,10 +82,13 @@ fun UserMessageItem(
                         .combinedClickable(onClick = { onClick(message) }, onLongClick = { onLongPress(message) })
                         .padding(horizontal = 16.dp, vertical = 11.dp),
                 ) {
-                    Text(
+                    HighlightedPlainText(
                         text = message.content,
+                        hits = searchHits,
+                        active = activeHit,
                         style = MaterialTheme.typography.bodyLarge,
                         color = colors.bubbleUserText,
+                        onActiveCenter = onActiveCenter,
                     )
                 }
             }
@@ -111,6 +117,10 @@ fun AssistantTurnItem(
     onContinue: (() -> Unit)?,
     /** 尾轮的停止条才有。null 不画「重新生成」。 */
     onCancelledRegenerate: ((ChatMessageItem) -> Unit)?,
+    searchHits: List<InChatHit> = emptyList(),
+    activeHit: InChatHit? = null,
+    searchQuery: String = "",
+    onActiveCenter: InChatCenterReport? = null,
     modifier: Modifier = Modifier,
 ) {
     val lastAssistant = group.lastOrNull { it.role == Role.ASSISTANT } ?: return
@@ -134,6 +144,10 @@ fun AssistantTurnItem(
                         onCancelledRegenerate = onCancelledRegenerate?.let { regenerate ->
                             { regenerate(message) }
                         },
+                        searchHits = searchHits.filter { it.messageId == message.id },
+                        activeHit = activeHit?.takeIf { it.messageId == message.id },
+                        searchQuery = searchQuery,
+                        onActiveCenter = if (activeHit?.messageId == message.id) onActiveCenter else null,
                     )
                 }
             }
@@ -161,6 +175,10 @@ private fun AssistantStep(
     onRetry: () -> Unit,
     onContinue: (() -> Unit)?,
     onCancelledRegenerate: (() -> Unit)?,
+    searchHits: List<InChatHit>,
+    activeHit: InChatHit?,
+    searchQuery: String,
+    onActiveCenter: InChatCenterReport?,
 ) {
     val placed = remember(message.id) { PlacedMarkdown() }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -185,6 +203,10 @@ private fun AssistantStep(
             MessageMarkdown(
                 content = message.content,
                 cacheable = !isStreaming,
+                searchHits = searchHits,
+                activeHit = activeHit,
+                searchQuery = searchQuery,
+                onActiveCenter = onActiveCenter,
                 modifier = Modifier
                     .fillMaxWidth()
                     .onGloballyPositioned { placed.coordinates = it }
