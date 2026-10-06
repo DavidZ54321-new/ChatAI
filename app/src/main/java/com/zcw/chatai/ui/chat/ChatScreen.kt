@@ -46,11 +46,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -59,6 +61,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInParent
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.ClipboardManager
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -82,6 +85,7 @@ import com.zcw.chatai.ui.md.LocalPreviewOpener
 import com.zcw.chatai.ui.md.PreviewTarget
 import com.zcw.chatai.ui.theme.ChatTheme
 import java.io.File
+import kotlin.math.roundToInt
 
 /** 附件预览目标：这条用户消息里可预览的附件 + 起始下标（左右滑的整组）。 */
 private data class AttachmentPreviewTarget(val images: List<MessageImage>, val index: Int)
@@ -131,7 +135,8 @@ fun ChatScreen(
     val keyboardController = LocalSoftwareKeyboardController.current
     val composerFocus = remember { FocusRequester() }
 
-    var actionTarget by remember { mutableStateOf<ChatMessageItem?>(null) }
+    /** 用户操作、助手长按菜单、选字层三者互斥，打开一种即替换上一种。 */
+    var messageOverlay by remember { mutableStateOf<MessageOverlay?>(null) }
     var previewTarget by remember { mutableStateOf<AttachmentPreviewTarget?>(null) }
     var documentTarget by remember { mutableStateOf<MessageImage?>(null) }
     // SVG/HTML 全屏 viewer 目标：Dialog 随开随建、退出即销毁，列表里不驻留 WebView。
@@ -150,7 +155,8 @@ fun ChatScreen(
     // 编辑弹层也算浮层：从系统相册选完附件回来时不该把键盘飘到 Composer 上。
     val focusAllowedNow = rememberUpdatedState(
         composerFocusAllowed && !outlineVisible && !attachOpen &&
-            actionTarget == null && previewTarget == null && documentTarget == null && previewPage == null &&
+            messageOverlay == null &&
+            previewTarget == null && documentTarget == null && previewPage == null &&
             editDraft == null && !confirmResend && branchTarget == null,
     )
     // 聚焦成功才唤键盘：requestFocus 失败（节点已移除）时不弹，避免键盘飘到别的界面上。
@@ -206,6 +212,7 @@ fun ChatScreen(
         if (outlineVisible) hideKeyboardForNavigation()
     }
     val composerRect = remember { mutableStateOf(Rect.Zero) }
+    var rootWindowOrigin by remember { mutableStateOf(Offset.Zero) }
     val topInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
 
     // 底消散贴 Composer 上沿；顶消散在按钮行内实心，只在按钮下沿淡出。
@@ -235,6 +242,16 @@ fun ChatScreen(
         messages = messages,
         isStreaming = state.isStreaming,
     )
+    LaunchedEffect(state.conversationId) {
+        messageOverlay = null
+    }
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.isScrollInProgress }.collect { scrolling ->
+            if (scrolling && messageOverlay is MessageOverlay.AssistantMenu) {
+                messageOverlay = null
+            }
+        }
+    }
 
     val pickImages = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(8),
@@ -328,7 +345,14 @@ fun ChatScreen(
     val deleteAction = rememberUpdatedState<(String) -> Unit> { onDeleteMessage(it) }
     val editBegin = rememberUpdatedState<(String) -> Unit> { editActions.onBegin(it) }
     // 回调带上消息本身，身份在这次组合里固定。用户气泡和助手回合都接同一批引用。
-    val onItemLongPress = remember { { message: ChatMessageItem -> actionTarget = message } }
+    val onUserLongPress = remember {
+        { message: ChatMessageItem -> messageOverlay = MessageOverlay.UserSheet(message) }
+    }
+    val onAssistantLongPress = remember {
+        { message: ChatMessageItem, anchor: Offset ->
+            messageOverlay = MessageOverlay.AssistantMenu(message.id, anchor)
+        }
+    }
     val onItemClick = remember { { message: ChatMessageItem -> editBegin.value(message.id) } }
     val onItemOpenImage = remember { { message: ChatMessageItem, tapped: MessageImage ->
         if (tapped.kind == AttachmentKind.DOCUMENT) {
@@ -357,7 +381,8 @@ fun ChatScreen(
             .fillMaxSize()
             .background(colors.canvas)
             .imePadding()
-            .clearFocusOnTapOutside { composerRect.value },
+            .clearFocusOnTapOutside { composerRect.value }
+            .onGloballyPositioned { rootWindowOrigin = it.positionInWindow() },
     ) {
         // 用 remember 固定这个 lambda 的身份：每次重组新建的话，所有读该 local 的
         // 卡片（预览卡）都会跟着流式增量一起重组。
@@ -414,7 +439,7 @@ fun ChatScreen(
                             when (group) {
                                 is MessageGroup.User -> UserMessageItem(
                                     message = group.items.single(),
-                                    onLongPress = onItemLongPress,
+                                    onLongPress = onUserLongPress,
                                     // 点气泡进编辑弹层；能不能编辑（生成中/非用户消息）由 VM 判。
                                     onClick = onItemClick,
                                     onOpenImage = onItemOpenImage,
@@ -428,7 +453,7 @@ fun ChatScreen(
                                     meta = lastAssistant
                                         ?.takeIf { last -> group.items.any { it.id == last.id } }
                                         ?.let { lastAssistantMeta },
-                                    onLongPress = onItemLongPress,
+                                    onLongPress = onAssistantLongPress,
                                     onRetry = onItemRetry,
                                     onCopy = onItemCopy,
                                     onRegenerate = onItemRegenerate,
@@ -586,31 +611,66 @@ fun ChatScreen(
         )
     }
 
-    val target = actionTarget
-    if (target != null) {
-        MessageActionsSheet(
-            canRegenerate = target.role == Role.ASSISTANT || target.role == Role.USER,
-            onDismiss = { actionTarget = null },
-            onCopy = {
-                clipboard.copy(target.content)
-                actionTarget = null
-            },
-            onEdit = if (target.role == Role.USER) {
-                {
+    when (val overlay = messageOverlay) {
+        null -> Unit
+        is MessageOverlay.UserSheet -> {
+            val target = overlay.message
+            MessageActionsSheet(
+                canRegenerate = true,
+                onDismiss = { messageOverlay = null },
+                onCopy = {
+                    clipboard.copy(target.content)
+                    messageOverlay = null
+                },
+                onEdit = {
                     editActions.onBegin(target.id)
-                    actionTarget = null
-                }
+                    messageOverlay = null
+                },
+                onRegenerate = {
+                    regenerateKeepingAlive(target.id)
+                    messageOverlay = null
+                },
+                onDelete = {
+                    onDeleteMessage(target.id)
+                    messageOverlay = null
+                },
+            )
+        }
+        is MessageOverlay.AssistantMenu -> {
+            val latest = messages.firstOrNull { it.id == overlay.messageId }
+            if (latest == null) {
+                LaunchedEffect(overlay.messageId) { messageOverlay = null }
             } else {
-                null
-            },
-            onRegenerate = {
-                regenerateKeepingAlive(target.id)
-                actionTarget = null
-            },
-            onDelete = {
-                onDeleteMessage(target.id)
-                actionTarget = null
-            },
+                val statusBarBottom = with(LocalDensity.current) { topInset.roundToPx() }
+                val composerTop = if (composerHeight > 0 && composerRect.value.height > 0f) {
+                    (rootWindowOrigin.y + composerRect.value.top).roundToInt()
+                } else {
+                    null
+                }
+                AssistantContextMenu(
+                    anchorInWindow = overlay.anchorInWindow,
+                    statusBarBottomInWindow = statusBarBottom,
+                    composerTopInWindow = composerTop,
+                    canSelectText = latest.content.isNotEmpty() &&
+                        !(state.isStreaming && state.streamingMessageId == latest.id),
+                    onDismiss = { messageOverlay = null },
+                    onCopy = {
+                        clipboard.copy(latest.content)
+                        messageOverlay = null
+                    },
+                    onSelectText = {
+                        messageOverlay = MessageOverlay.SelectText(latest.content)
+                    },
+                    onRegenerate = {
+                        messageOverlay = null
+                        regenerateKeepingAlive(latest.id)
+                    },
+                )
+            }
+        }
+        is MessageOverlay.SelectText -> TextSelectionSheet(
+            text = overlay.text,
+            onDismiss = { messageOverlay = null },
         )
     }
 
@@ -854,4 +914,13 @@ private fun metaOf(message: ChatMessageItem): String? {
 
 private fun ClipboardManager.copy(text: String) {
     if (text.isNotEmpty()) setText(AnnotatedString(text))
+}
+
+private sealed interface MessageOverlay {
+    data class UserSheet(val message: ChatMessageItem) : MessageOverlay
+
+    data class AssistantMenu(val messageId: String, val anchorInWindow: Offset) : MessageOverlay
+
+    /** 打开那一刻的正文，选字期间不再跟着流式改写。 */
+    data class SelectText(val text: String) : MessageOverlay
 }

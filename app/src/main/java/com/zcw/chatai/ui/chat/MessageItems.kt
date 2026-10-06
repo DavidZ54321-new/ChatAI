@@ -9,6 +9,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -26,9 +27,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
@@ -85,7 +91,6 @@ fun UserMessageItem(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun AssistantTurnItem(
     group: List<ChatMessageItem>,
@@ -94,7 +99,8 @@ fun AssistantTurnItem(
     /** 用户展开工具/思考详情时回调：让列表临时松钉，别把内容拽走。 */
     onUserExpand: () -> Unit,
     meta: String?,
-    onLongPress: (ChatMessageItem) -> Unit,
+    /** 长按点的窗口坐标，悬浮菜单靠它定位。 */
+    onLongPress: (ChatMessageItem, Offset) -> Unit,
     onRetry: (ChatMessageItem) -> Unit,
     onCopy: (ChatMessageItem) -> Unit,
     onRegenerate: (ChatMessageItem) -> Unit,
@@ -119,7 +125,7 @@ fun AssistantTurnItem(
                         isStreaming = message.id == streamingMessageId,
                         isCurrentTurn = isCurrentTurn,
                         onUserExpand = onUserExpand,
-                        onLongPress = { onLongPress(message) },
+                        onLongPress = { offset -> onLongPress(message, offset) },
                         onRetry = { onRetry(message) },
                         onContinue = onContinue,
                     )
@@ -140,17 +146,17 @@ fun AssistantTurnItem(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun AssistantStep(
     message: ChatMessageItem,
     isStreaming: Boolean,
     isCurrentTurn: Boolean,
     onUserExpand: () -> Unit,
-    onLongPress: () -> Unit,
+    onLongPress: (Offset) -> Unit,
     onRetry: () -> Unit,
     onContinue: (() -> Unit)?,
 ) {
+    val placed = remember(message.id) { PlacedMarkdown() }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         val reasoning = message.reasoning.orEmpty()
         if (reasoning.isNotBlank()) {
@@ -175,7 +181,17 @@ private fun AssistantStep(
                 cacheable = !isStreaming,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .combinedClickable(onClick = {}, onLongClick = onLongPress),
+                    .onGloballyPositioned { placed.coordinates = it }
+                    .pointerInput(message.id) {
+                        detectTapGestures(
+                            onLongPress = { local ->
+                                val coords = placed.coordinates
+                                if (coords != null && coords.isAttached) {
+                                    onLongPress(coords.localToWindow(local))
+                                }
+                            },
+                        )
+                    },
             )
         }
         if (message.citations.isNotEmpty()) {
@@ -325,4 +341,9 @@ private fun CancelledRow(onRetry: () -> Unit, onContinue: (() -> Unit)? = null) 
             modifier = Modifier.clickable(onClick = onRetry),
         )
     }
+}
+
+/** 正文节点的布局坐标。长按回调里当场换成窗口坐标，节点已经卸掉就不弹菜单。 */
+private class PlacedMarkdown {
+    var coordinates: LayoutCoordinates? = null
 }
