@@ -52,7 +52,7 @@ class ToolTurnGroupingTest {
         assertEquals(emptySet<Long>(), ToolTurnGrouping.orphanAssistantSeqsBefore(nodes, 4))
     }
 
-    /** 删 assistant：连带它紧随的工具结果，但**不**碰后面的回合。 */
+    /** 删 assistant：连带它紧随的工具结果，不碰用户消息，也不碰后面的步骤。 */
     @Test
     fun deletingAssistantTakesItsOwnToolRowsOnly() {
         val nodes = listOf(
@@ -89,31 +89,96 @@ class ToolTurnGroupingTest {
     }
 
     /**
-     * 回归：`tool_call_id` 跨回合复用（或后来补了同名占位）时，不能让早先那个回合的删除
-     * 波及后面回合的 TOOL 行——那会让后面 assistant 的 tool_calls 失去配对（400）。
+     * 回归：tool_call_id 跨回合复用时，不能让早先那个回合的删除
+     * 波及后面回合的 TOOL 行。
      */
     @Test
     fun deletingAssistantDoesNotReachLaterTurnWithSameToolCallId() {
         val nodes = listOf(
             user(1),
-            assistant(2, "dup"),      // 回合 A
+            assistant(2, "dup"),
             tool(3, "dup"),
-            assistant(4, "other"),    // 回合 B，工具调用被复用同一 id
-            tool(5, "dup"),           // 属于回合 B，不能因为 id 相同被删
+            assistant(4, "other"),
+            tool(5, "dup"),
         )
         assertEquals(setOf(2L, 3L), ToolTurnGrouping.deletionSetFor(nodes, 2))
     }
 
-    /** 只带走连续的工具行：中间插了一行别的角色就断开。 */
+    /** 只带走连续的工具行：中间插了用户消息就断开。 */
     @Test
     fun onlyContiguousFollowingToolRowsAreTaken() {
         val nodes = listOf(
             user(1),
             assistant(2, "a"),
-            user(3),                  // 插在中间，断开连续性
+            user(3),
             tool(4, "a"),
         )
         assertEquals(setOf(2L), ToolTurnGrouping.deletionSetFor(nodes, 2))
+    }
+
+    /** 工具行和它的助手被用户消息隔开时，仍要带走助手，否则 tool_calls 没有应答。 */
+    @Test
+    fun deletingToolSeparatedByAUserStillRemovesItsAssistant() {
+        val nodes = listOf(
+            user(1),
+            assistant(2, "a"),
+            user(3),
+            tool(4, "a"),
+        )
+        assertEquals(setOf(2L, 4L), ToolTurnGrouping.deletionSetFor(nodes, 4))
+    }
+
+    /** 整轮：同一视觉回合里的助手步骤和工具行，加上紧邻的用户气泡。 */
+    @Test
+    fun turnSetTakesTheWholeRunAndThePrecedingUser() {
+        val nodes = listOf(
+            user(1),
+            assistant(2, "a"),
+            tool(3, "a"),
+            assistant(4, "b"),
+            tool(5, "b"),
+        )
+        assertEquals(setOf(1L, 2L, 3L, 4L, 5L), ToolTurnGrouping.turnSetFor(nodes, 4))
+    }
+
+    /** 从这条用户消息起算一轮，不往前并，也不跨过下一条用户消息。 */
+    @Test
+    fun turnSetFromAUserIncludesOnlyTheFollowingRun() {
+        val nodes = listOf(
+            user(1),
+            assistant(2, "a"),
+            tool(3, "a"),
+            user(4),
+            assistant(5, "b"),
+        )
+        assertEquals(setOf(1L, 2L, 3L), ToolTurnGrouping.turnSetFor(nodes, 1))
+    }
+
+    /** 下一条用户消息是整轮的边界，同名 tool_call_id 的后一轮留着。 */
+    @Test
+    fun turnSetStopsAtTheNextUser() {
+        val nodes = listOf(
+            user(1),
+            assistant(2, "dup"),
+            tool(3, "dup"),
+            user(4),
+            assistant(5, "other"),
+            tool(6, "dup"),
+        )
+        assertEquals(setOf(1L, 2L, 3L), ToolTurnGrouping.turnSetFor(nodes, 2))
+    }
+
+    /** 隔在用户消息后面的工具行是另一轮，整轮删除不回头修配对。 */
+    @Test
+    fun turnSetDoesNotReachAToolSeparatedByAUser() {
+        val nodes = listOf(
+            user(1),
+            assistant(2, "a"),
+            user(3),
+            tool(4, "a"),
+        )
+        assertEquals(setOf(1L, 2L), ToolTurnGrouping.turnSetFor(nodes, 2))
+        assertEquals(setOf(3L, 4L), ToolTurnGrouping.turnSetFor(nodes, 4))
     }
 
     @Test

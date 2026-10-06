@@ -100,6 +100,8 @@ fun ChatScreen(
     onRetry: (String) -> Unit,
     onRegenerate: (String) -> Unit,
     onDeleteMessage: (String) -> Unit,
+    /** 垃圾桶确认后删一整轮（用户气泡 + 助手总气泡）。 */
+    onDeleteTurn: (String) -> Unit,
     /** 从某条 AI 回复签出分支（复制该条及之前的消息到新会话）。 */
     onBranch: (String) -> Unit,
     /** 切到指定会话（分支横幅点回来源会话用）。 */
@@ -145,6 +147,8 @@ fun ChatScreen(
     var confirmResend by remember { mutableStateOf(false) }
     // 分支确认：点的是哪条 AI 回复，确认后才真的复制（破坏性小但不可逆，值得问一次）。
     var branchTarget by remember { mutableStateOf<ChatMessageItem?>(null) }
+    // 垃圾桶先问一句：确认后才删整轮（用户气泡 + 助手总气泡）。
+    var deleteTarget by remember { mutableStateOf<ChatMessageItem?>(null) }
     /** 打开链路时的会话。对不上当前会话就当关着，避免把上一份行号套到新会话上。 */
     var outlineFor by remember { mutableStateOf<String?>(null) }
     var outlineEntryIndex by remember { mutableIntStateOf(0) }
@@ -157,7 +161,7 @@ fun ChatScreen(
         composerFocusAllowed && !outlineVisible && !attachOpen &&
             messageOverlay == null &&
             previewTarget == null && documentTarget == null && previewPage == null &&
-            editDraft == null && !confirmResend && branchTarget == null,
+            editDraft == null && !confirmResend && branchTarget == null && deleteTarget == null,
     )
     // 聚焦成功才唤键盘：requestFocus 失败（节点已移除）时不弹，避免键盘飘到别的界面上。
     fun focusComposerIfAllowed() {
@@ -244,6 +248,7 @@ fun ChatScreen(
     )
     LaunchedEffect(state.conversationId) {
         messageOverlay = null
+        deleteTarget = null
     }
     LaunchedEffect(listState) {
         snapshotFlow { listState.isScrollInProgress }.collect { scrolling ->
@@ -340,9 +345,7 @@ fun ChatScreen(
     }
 
     val retryAction = rememberUpdatedState<(String) -> Unit> { retryKeepingAlive(it) }
-    val regenerateAction = rememberUpdatedState<(String) -> Unit> { regenerateKeepingAlive(it) }
     val continueAction = rememberUpdatedState { continueKeepingAlive() }
-    val deleteAction = rememberUpdatedState<(String) -> Unit> { onDeleteMessage(it) }
     val editBegin = rememberUpdatedState<(String) -> Unit> { editActions.onBegin(it) }
     // 回调带上消息本身，身份在这次组合里固定。用户气泡和助手回合都接同一批引用。
     val onUserLongPress = remember {
@@ -369,8 +372,7 @@ fun ChatScreen(
     } }
     val onItemRetry = remember { { message: ChatMessageItem -> retryAction.value(message.id) } }
     val onItemCopy = remember { { message: ChatMessageItem -> clipboard.copy(message.content) } }
-    val onItemRegenerate = remember { { message: ChatMessageItem -> regenerateAction.value(message.id) } }
-    val onItemDelete = remember { { message: ChatMessageItem -> deleteAction.value(message.id) } }
+    val onItemDelete = remember { { message: ChatMessageItem -> deleteTarget = message } }
     val onItemBranch = remember { { message: ChatMessageItem -> branchTarget = message } }
     val onItemContinue = remember { { continueAction.value() } }
     val lastAssistant = remember(messages) { messages.lastOrNull { it.role == Role.ASSISTANT } }
@@ -445,22 +447,26 @@ fun ChatScreen(
                                     onOpenImage = onItemOpenImage,
                                 )
 
-                                is MessageGroup.Assistant -> AssistantTurnItem(
-                                    group = group.items,
-                                    streamingMessageId = state.streamingMessageId,
-                                    isCurrentTurn = state.isTurnActive && index == groups.lastIndex,
-                                    onUserExpand = follow.unpin,
-                                    meta = lastAssistant
-                                        ?.takeIf { last -> group.items.any { it.id == last.id } }
-                                        ?.let { lastAssistantMeta },
-                                    onLongPress = onAssistantLongPress,
-                                    onRetry = onItemRetry,
-                                    onCopy = onItemCopy,
-                                    onRegenerate = onItemRegenerate,
-                                    onDelete = onItemDelete,
-                                    onBranch = onItemBranch,
-                                    onContinue = onItemContinue,
-                                )
+                                is MessageGroup.Assistant -> {
+                                    val tail = MessageGroups.isTailGroup(groups, index)
+                                    AssistantTurnItem(
+                                        group = group.items,
+                                        streamingMessageId = state.streamingMessageId,
+                                        isCurrentTurn = state.isTurnActive && tail,
+                                        onUserExpand = follow.unpin,
+                                        meta = lastAssistant
+                                            ?.takeIf { last -> group.items.any { it.id == last.id } }
+                                            ?.let { lastAssistantMeta },
+                                        onLongPress = onAssistantLongPress,
+                                        // 报错行的「重试」不看尾轮，历史回合也保留。
+                                        onRetry = onItemRetry,
+                                        onCopy = onItemCopy,
+                                        onDelete = if (tail) onItemDelete else null,
+                                        onBranch = onItemBranch,
+                                        onContinue = if (tail) onItemContinue else null,
+                                        onCancelledRegenerate = if (tail) onItemRetry else null,
+                                    )
+                                }
                             }
                         }
                         val tailConversation = state.conversationId
@@ -647,12 +653,14 @@ fun ChatScreen(
                 } else {
                     null
                 }
+                val turnIndex = groups.indexOfFirst { group -> group.items.any { it.id == latest.id } }
                 AssistantContextMenu(
                     anchorInWindow = overlay.anchorInWindow,
                     statusBarBottomInWindow = statusBarBottom,
                     composerTopInWindow = composerTop,
                     canSelectText = latest.content.isNotEmpty() &&
                         !(state.isStreaming && state.streamingMessageId == latest.id),
+                    canRegenerate = MessageGroups.isTailGroup(groups, turnIndex),
                     onDismiss = { messageOverlay = null },
                     onCopy = {
                         clipboard.copy(latest.content)
@@ -704,6 +712,28 @@ fun ChatScreen(
             },
             dismissButton = {
                 TextButton(onClick = { confirmResend = false }) { Text("取消") }
+            },
+        )
+    }
+
+    val pendingDelete = deleteTarget
+    if (pendingDelete != null) {
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text("删除这一轮？") },
+            text = { Text("这条用户消息和对应的 AI 回复会被一起删除，且无法恢复。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        deleteTarget = null
+                        onDeleteTurn(pendingDelete.id)
+                    },
+                ) {
+                    Text("删除", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteTarget = null }) { Text("取消") }
             },
         )
     }

@@ -331,7 +331,16 @@ class ChatRepository(
         }
     }
 
-    fun deleteMessage(messageId: String) {
+    /** 删一条。用户气泡长按走这里；工具配对见 [ToolTurnGrouping.deletionSetFor]。 */
+    fun deleteMessage(messageId: String) = removeMessages(messageId, ToolTurnGrouping::deletionSetFor)
+
+    /** 删一整轮（起始用户消息 + 连续的助手总气泡）。垃圾桶确认后走这里。 */
+    fun deleteTurn(messageId: String) = removeMessages(messageId, ToolTurnGrouping::turnSetFor)
+
+    private fun removeMessages(
+        messageId: String,
+        select: (List<ToolTurnGrouping.Node>, Long) -> Set<Long>,
+    ) {
         _streaming.value.values.firstOrNull { it.messageId == messageId }
             ?.let { stop(it.conversationId) }
         scope.launch {
@@ -341,8 +350,7 @@ class ChatRepository(
                 val message = entity.toModel()
                 conversationId = message.conversationId
                 val all = db.messageDao().getByConversation(message.conversationId)
-                // 分组规则见 ToolTurnGrouping：删一半会留下孤立的 tool_calls / TOOL 行 → 下次 400。
-                val victims = ToolTurnGrouping.deletionSetFor(all.map { it.toNode() }, message.seq)
+                val victims = select(all.map { it.toNode() }, message.seq)
                     .mapNotNull { seq -> all.firstOrNull { it.seq == seq } }
                 attachmentStore.delete(victims.flatMap { it.toModel().attachments })
                 db.messageDao().deleteByIds(victims.map { it.id })

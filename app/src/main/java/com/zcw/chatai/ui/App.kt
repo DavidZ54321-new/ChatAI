@@ -251,6 +251,7 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
                 onRetry = viewModel::retry,
                 onRegenerate = viewModel::regenerate,
                 onDeleteMessage = viewModel::deleteMessage,
+                onDeleteTurn = viewModel::deleteTurn,
                 onBranch = viewModel::branchConversation,
                 onSwitchConversation = viewModel::selectConversation,
                 onNewConversation = viewModel::newConversation,

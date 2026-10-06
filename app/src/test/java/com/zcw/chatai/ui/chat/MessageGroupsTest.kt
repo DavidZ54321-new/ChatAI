@@ -77,4 +77,20 @@ class MessageGroupsTest {
         assertEquals(before[1].key, after[1].key)
         assertEquals(3, after[1].items.size)
     }
+
+    @Test
+    fun onlyTheLastGroupIsTheTail() {
+        val groups = MessageGroups.of(
+            listOf(
+                message("u1", Role.USER, "一"),
+                message("a1", Role.ASSISTANT, "答"),
+                message("u2", Role.USER, "二"),
+            ),
+        )
+        assertEquals(false, MessageGroups.isTailGroup(groups, 0))
+        assertEquals(false, MessageGroups.isTailGroup(groups, 1))
+        assertEquals(true, MessageGroups.isTailGroup(groups, 2))
+        assertEquals(false, MessageGroups.isTailGroup(groups, -1))
+        assertEquals(false, MessageGroups.isTailGroup(emptyList(), -1))
+    }
 }

@@ -76,26 +76,55 @@ object ToolTurnGrouping {
         return plan
     }
 
-    /** 删除单条消息时要连带删除的 seq 集合（含自身）。 */
+    /**
+     * 删一条消息时要连带删掉的 seq（含自身）。只保证工具调用不成单：
+     * 助手带走紧随的应答，工具行带走发起它的助手（即使中间隔了用户消息）。
+     * 不按「一轮对话」扩。那是 [turnSetFor]。
+     */
     fun deletionSetFor(nodes: List<Node>, targetSeq: Long): Set<Long> {
         val target = nodes.firstOrNull { it.seq == targetSeq } ?: return emptySet()
         val ordered = nodes.sortedBy { it.seq }
         val ids = mutableSetOf(target.seq)
         val callIds = target.toolCalls.map { it.id }.toSet()
         if (target.role == Role.ASSISTANT && callIds.isNotEmpty()) {
-            // 只带走**紧随其后**的 TOOL 行：连续且 tool_call_id 属于本回合。
-            // 不能按「后面任意匹配」删——`tool_call_id` 跨回合复用时会误删后面回合的应答，
-            // 让那个 assistant 的 tool_calls 失去配对 → 下次请求 400。
+            // 只带走紧随其后的 TOOL 行。不能按后面任意匹配删：
+            // tool_call_id 跨轮复用时会拆掉后一轮的应答，那个助手的 tool_calls 就失去配对。
             ordered.asSequence()
                 .dropWhile { it.seq <= target.seq }
                 .takeWhile { it.role == Role.TOOL && it.toolCallId in callIds }
                 .forEach { ids += it.seq }
         } else if (target.role == Role.TOOL && target.toolCallId != null) {
-            // 删 TOOL 时把发起它的 assistant 一起删，避免 tool_calls 孤立
             ordered.asSequence()
                 .filter { it.seq < target.seq && it.role == Role.ASSISTANT }
                 .lastOrNull { assistant -> assistant.toolCalls.any { it.id == target.toolCallId } }
                 ?.let { ids += it.seq }
+        }
+        return ids
+    }
+
+    /**
+     * 目标所在的一整轮：起始用户消息，加上它后面连续的助手/工具行，直到下一条用户消息。
+     * 目标在助手段里时，起始就是这段紧前面的那一条用户消息；目标自己是用户消息时，从它算起。
+     * 用户消息是边界。隔在后面的工具行不收回来，配对修复交给 [deletionSetFor]。
+     */
+    fun turnSetFor(nodes: List<Node>, targetSeq: Long): Set<Long> {
+        val ordered = nodes.sortedBy { it.seq }
+        val index = ordered.indexOfFirst { it.seq == targetSeq }
+        if (index < 0) return emptySet()
+        var start = index
+        if (ordered[start].role != Role.USER) {
+            while (start > 0 && ordered[start - 1].role != Role.USER) start--
+            if (start > 0) start--
+        }
+        val ids = mutableSetOf<Long>()
+        var cursor = start
+        if (ordered[cursor].role == Role.USER) {
+            ids += ordered[cursor].seq
+            cursor++
+        }
+        while (cursor < ordered.size && ordered[cursor].role != Role.USER) {
+            ids += ordered[cursor].seq
+            cursor++
         }
         return ids
     }

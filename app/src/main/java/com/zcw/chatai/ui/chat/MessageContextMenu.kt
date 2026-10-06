@@ -56,6 +56,8 @@ internal fun AssistantContextMenu(
     statusBarBottomInWindow: Int,
     composerTopInWindow: Int?,
     canSelectText: Boolean,
+    /** 这条助手回合已不是最后一轮时不给重新生成，避免截掉后面的对话。 */
+    canRegenerate: Boolean,
     onDismiss: () -> Unit,
     onCopy: () -> Unit,
     onSelectText: () -> Unit,
@@ -83,6 +85,7 @@ internal fun AssistantContextMenu(
         Box(Modifier.padding(8.dp)) {
             MenuCard(
                 canSelectText = canSelectText,
+                canRegenerate = canRegenerate,
                 onCopy = onCopy,
                 onSelectText = onSelectText,
                 onRegenerate = onRegenerate,
@@ -94,6 +97,7 @@ internal fun AssistantContextMenu(
 @Composable
 private fun MenuCard(
     canSelectText: Boolean,
+    canRegenerate: Boolean,
     onCopy: () -> Unit,
     onSelectText: () -> Unit,
     onRegenerate: () -> Unit,
@@ -113,22 +117,24 @@ private fun MenuCard(
             tint = labelColor,
             onClick = onCopy,
         )
-        MenuDivider()
         if (canSelectText) {
+            MenuDivider()
             MenuRow(
                 label = "选择文本",
                 painter = painterResource(R.drawable.ic_select_text),
                 tint = labelColor,
                 onClick = onSelectText,
             )
-            MenuDivider()
         }
-        MenuRow(
-            label = "重新生成",
-            icon = Icons.Filled.Refresh,
-            tint = labelColor,
-            onClick = onRegenerate,
-        )
+        if (canRegenerate) {
+            MenuDivider()
+            MenuRow(
+                label = "重新生成",
+                icon = Icons.Filled.Refresh,
+                tint = labelColor,
+                onClick = onRegenerate,
+            )
+        }
     }
 }
 

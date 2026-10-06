@@ -384,6 +384,8 @@ class ChatViewModel(
 
     fun deleteMessage(messageId: String) = repository.deleteMessage(messageId)
 
+    fun deleteTurn(messageId: String) = repository.deleteTurn(messageId)
+
     // ---------- 分支 ----------
 
     /**

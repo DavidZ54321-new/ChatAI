@@ -22,7 +22,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -101,13 +100,17 @@ fun AssistantTurnItem(
     meta: String?,
     /** 长按点的窗口坐标，悬浮菜单靠它定位。 */
     onLongPress: (ChatMessageItem, Offset) -> Unit,
+    /** 报错行的「重试」。和尾轮无关，历史回合也保留。 */
     onRetry: (ChatMessageItem) -> Unit,
     onCopy: (ChatMessageItem) -> Unit,
-    onRegenerate: (ChatMessageItem) -> Unit,
-    onDelete: (ChatMessageItem) -> Unit,
+    /** 尾轮才有。null 不画垃圾桶。 */
+    onDelete: ((ChatMessageItem) -> Unit)?,
     /** 从这一条 AI 回复签出分支（复制该条及之前的消息到一个新会话）。 */
     onBranch: (ChatMessageItem) -> Unit,
+    /** 尾轮的停止条才有。null 不画「继续」。 */
     onContinue: (() -> Unit)?,
+    /** 尾轮的停止条才有。null 不画「重新生成」。 */
+    onCancelledRegenerate: ((ChatMessageItem) -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     val lastAssistant = group.lastOrNull { it.role == Role.ASSISTANT } ?: return
@@ -128,6 +131,9 @@ fun AssistantTurnItem(
                         onLongPress = { offset -> onLongPress(message, offset) },
                         onRetry = { onRetry(message) },
                         onContinue = onContinue,
+                        onCancelledRegenerate = onCancelledRegenerate?.let { regenerate ->
+                            { regenerate(message) }
+                        },
                     )
                 }
             }
@@ -136,9 +142,8 @@ fun AssistantTurnItem(
             if (!isCurrentTurn && lastAssistant.content.isNotEmpty()) {
                 MessageActions(
                     onCopy = { onCopy(lastAssistant) },
-                    onRegenerate = { onRegenerate(lastAssistant) },
                     onBranch = { onBranch(lastAssistant) },
-                    onDelete = { onDelete(lastAssistant) },
+                    onDelete = onDelete?.let { delete -> { delete(lastAssistant) } },
                     meta = meta,
                 )
             }
@@ -155,6 +160,7 @@ private fun AssistantStep(
     onLongPress: (Offset) -> Unit,
     onRetry: () -> Unit,
     onContinue: (() -> Unit)?,
+    onCancelledRegenerate: (() -> Unit)?,
 ) {
     val placed = remember(message.id) { PlacedMarkdown() }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -209,7 +215,10 @@ private fun AssistantStep(
         }
         when (message.status) {
             MessageStatus.ERROR -> ErrorRow(message.errorMessage, onRetry)
-            MessageStatus.CANCELLED -> CancelledRow(onRetry, onContinue)
+            MessageStatus.CANCELLED -> CancelledRow(
+                onRetry = onCancelledRegenerate,
+                onContinue = onContinue,
+            )
             else -> message.errorMessage?.let { WarningRow(it) }
         }
         if (isStreaming && message.content.isNotEmpty()) {
@@ -221,9 +230,8 @@ private fun AssistantStep(
 @Composable
 private fun MessageActions(
     onCopy: () -> Unit,
-    onRegenerate: () -> Unit,
     onBranch: () -> Unit,
-    onDelete: () -> Unit,
+    onDelete: (() -> Unit)?,
     meta: String?,
     modifier: Modifier = Modifier,
 ) {
@@ -238,16 +246,13 @@ private fun MessageActions(
             onClick = onBranch,
             painter = painterResource(R.drawable.ic_branch),
         )
-        IconActionButton(
-            contentDescription = "重新生成",
-            onClick = onRegenerate,
-            icon = Icons.Filled.Refresh,
-        )
-        IconActionButton(
-            contentDescription = "删除",
-            onClick = onDelete,
-            icon = Icons.Filled.Delete,
-        )
+        if (onDelete != null) {
+            IconActionButton(
+                contentDescription = "删除",
+                onClick = onDelete,
+                icon = Icons.Filled.Delete,
+            )
+        }
         Spacer(Modifier.weight(1f))
         if (meta != null) {
             Text(
@@ -315,7 +320,7 @@ private fun WarningRow(message: String) {
 }
 
 @Composable
-private fun CancelledRow(onRetry: () -> Unit, onContinue: (() -> Unit)? = null) {
+private fun CancelledRow(onRetry: (() -> Unit)?, onContinue: (() -> Unit)?) {
     val scheme = MaterialTheme.colorScheme
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -334,12 +339,14 @@ private fun CancelledRow(onRetry: () -> Unit, onContinue: (() -> Unit)? = null) 
                 modifier = Modifier.clickable(onClick = onContinue),
             )
         }
-        Text(
-            text = "重新生成",
-            style = MaterialTheme.typography.labelLarge,
-            color = scheme.primary,
-            modifier = Modifier.clickable(onClick = onRetry),
-        )
+        if (onRetry != null) {
+            Text(
+                text = "重新生成",
+                style = MaterialTheme.typography.labelLarge,
+                color = scheme.primary,
+                modifier = Modifier.clickable(onClick = onRetry),
+            )
+        }
     }
 }
 

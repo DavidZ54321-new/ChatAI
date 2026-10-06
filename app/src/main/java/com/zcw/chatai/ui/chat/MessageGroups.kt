@@ -47,4 +47,11 @@ object MessageGroups {
         flushRun()
         return groups
     }
+
+    /**
+     * 最后一组才是尾轮。助手组之间必有用户消息，所以不是最后一组就等于后面还有用户对话。
+     * 会截断后续对话的操作只给尾轮。空列表不是尾轮。
+     */
+    fun isTailGroup(groups: List<MessageGroup>, index: Int): Boolean =
+        groups.isNotEmpty() && index == groups.lastIndex
 }
