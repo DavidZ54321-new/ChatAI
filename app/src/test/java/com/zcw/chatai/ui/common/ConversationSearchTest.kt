@@ -1,14 +1,18 @@
 package com.zcw.chatai.ui.common
 
 import com.zcw.chatai.data.model.Conversation
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class ConversationSearchTest {
 
     @Test
@@ -29,6 +33,9 @@ class ConversationSearchTest {
         assertEquals(0, searches)
 
         search.setQuery("cat")
+        runCurrent()
+        assertEquals(0, searches)
+        advanceTimeBy(SEARCH_DEBOUNCE_MS)
         assertEquals(listOf("hit"), ids.first { it == listOf("hit") })
         assertEquals(1, searches)
 
@@ -39,6 +46,28 @@ class ConversationSearchTest {
         all.value = listOf(conversation("b"))
         assertEquals(listOf("b"), ids.first { it == listOf("b") })
         assertEquals(1, searches)
+    }
+
+    @Test
+    fun rapidTypingSearchesOnlyTheLastQuery() = runTest {
+        var queries = emptyList<String>()
+        val search = ConversationSearch(
+            all = MutableStateFlow(emptyList()),
+            search = { text ->
+                queries = queries + text
+                flowOf(listOf(conversation(text)))
+            },
+            scope = backgroundScope,
+        )
+        val ids = search.results.map { list -> list.map { it.id } }
+        ids.first { it.isEmpty() }
+
+        search.setQuery("老")
+        runCurrent()
+        search.setQuery("老黄")
+        advanceTimeBy(SEARCH_DEBOUNCE_MS)
+        assertEquals(listOf("老黄"), ids.first { it == listOf("老黄") })
+        assertEquals(listOf("老黄"), queries)
     }
 
     private fun conversation(id: String) = Conversation(

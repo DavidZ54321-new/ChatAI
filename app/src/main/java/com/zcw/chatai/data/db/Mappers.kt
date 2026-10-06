@@ -6,8 +6,11 @@ import com.zcw.chatai.data.model.Message
 import com.zcw.chatai.data.model.MessageStatus
 import com.zcw.chatai.data.model.MessageCitation
 import com.zcw.chatai.data.model.Role
+import com.zcw.chatai.data.model.SearchSnippet
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 
-fun ConversationEntity.toModel(): Conversation = Conversation(
+fun ConversationEntity.toModel(searchSnippet: String? = null): Conversation = Conversation(
     id = id,
     title = title,
     model = model,
@@ -22,7 +25,39 @@ fun ConversationEntity.toModel(): Conversation = Conversation(
     personaId = personaId,
     parentConversationId = parentConversationId,
     kind = kindFromString(kind),
+    searchSnippet = searchSnippet,
 )
+
+/**
+ * 按种类搜索会话。窗口宽度和命中片段的折叠都在这里，仓库只传种类和原文。
+ */
+fun ConversationDao.searchKind(kind: ConversationKind, query: String): Flow<List<Conversation>> {
+    val span = SearchSnippet.spanFor(query)
+    return search(
+        kind = kind.name,
+        pattern = LikePattern.contains(query),
+        needle = query,
+        pad = SearchSnippet.PAD,
+        span = span,
+    ).map { rows -> rows.map { it.toModel(query, span) } }
+}
+
+private fun ConversationSearchRow.toModel(query: String, span: Int): Conversation {
+    val window = matchSnippet
+    val start = snippetStart
+    val full = snippetFullLength
+    val text = if (window != null && start != null && full != null) {
+        SearchSnippet.present(
+            window = window,
+            query = query,
+            leadTrimmed = SearchSnippet.isLeadTrimmed(start),
+            tailTrimmed = SearchSnippet.isTailTrimmed(start, full, span),
+        )?.text
+    } else {
+        null
+    }
+    return conversation.toModel(searchSnippet = text)
+}
 
 fun Conversation.toEntity(): ConversationEntity = ConversationEntity(
     id = id,

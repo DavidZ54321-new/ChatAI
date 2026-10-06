@@ -25,4 +25,9 @@ data class Conversation(
     val parentConversationId: String = "",
     /** 会话种类；普通对话 / 生图 / 视频各自只在自己的列表里出现。 */
     val kind: ConversationKind = ConversationKind.CHAT,
+    /**
+     * 搜索命中后收好的一行预览（已折叠空白，两侧按需带省略号）。
+     * 只挂在搜索结果上，不落库。没在搜索、或只有标题命中时是 null。
+     */
+    val searchSnippet: String? = null,
 )

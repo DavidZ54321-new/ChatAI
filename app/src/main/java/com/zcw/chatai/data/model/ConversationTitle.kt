@@ -16,7 +16,7 @@ object ConversationTitle {
      * `Char.isWhitespace()` 基于 `Character.isWhitespace || Character.isSpaceChar`，
      * 两个平台行为一致。
      */
-    private fun collapse(text: String): String {
+    internal fun collapse(text: String): String {
         val builder = StringBuilder(text.length)
         var pendingSpace = false
         for (char in text) {

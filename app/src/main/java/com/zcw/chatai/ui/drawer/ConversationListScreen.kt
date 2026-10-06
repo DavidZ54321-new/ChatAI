@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -54,11 +55,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalWindowInfo
@@ -75,6 +85,7 @@ import com.zcw.chatai.R
 import com.zcw.chatai.data.ConversationLamp
 import com.zcw.chatai.data.model.Conversation
 import com.zcw.chatai.data.model.ConversationTitle
+import com.zcw.chatai.data.model.SearchSnippet
 import com.zcw.chatai.ui.chat.DarkSheet
 import com.zcw.chatai.ui.chat.SheetAction
 import com.zcw.chatai.ui.theme.ChatTheme
@@ -496,6 +507,7 @@ private fun RecentConversationList(
             ConversationRow(
                 conversation = conversation,
                 selected = conversation.id == selectedId,
+                searchQuery = searchQuery,
                 lamp = lamps[conversation.id],
                 onClick = { onSelect(conversation.id) },
                 onLongClick = { onLongClick(conversation) },
@@ -522,6 +534,7 @@ private fun RecentConversationList(
 private fun ConversationRow(
     conversation: Conversation,
     selected: Boolean,
+    searchQuery: String,
     lamp: ConversationLamp?,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
@@ -567,6 +580,7 @@ private fun ConversationRow(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
+            val highlight = ChatTheme.colors.accentAmber.copy(alpha = 0.45f)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (isBranch) {
                     Text(
@@ -580,8 +594,9 @@ private fun ConversationRow(
                     )
                     Spacer(Modifier.width(6.dp))
                 }
+                val title = conversation.title.ifBlank { ConversationTitle.FALLBACK }
                 Text(
-                    text = conversation.title.ifBlank { ConversationTitle.FALLBACK },
+                    text = highlighted(title, searchQuery, highlight),
                     style = MaterialTheme.typography.titleMedium,
                     color = scheme.onSurface,
                     maxLines = 1,
@@ -594,18 +609,118 @@ private fun ConversationRow(
                     color = scheme.onSurfaceVariant.copy(alpha = 0.8f),
                 )
             }
-            val preview = conversation.lastMessagePreview
-            if (preview.isNotBlank()) {
-                Text(
-                    text = preview,
+            val snippet = conversation.searchSnippet
+            val matchStart = remember(snippet, searchQuery) {
+                if (searchQuery.isNotBlank() && snippet != null) {
+                    SearchSnippet.findFirst(snippet, searchQuery)
+                } else {
+                    -1
+                }
+            }
+            if (snippet != null && matchStart >= 0) {
+                CenteredMatchLine(
+                    text = snippet,
+                    matchStart = matchStart,
+                    matchEnd = matchStart + searchQuery.length,
+                    highlight = highlight,
                     style = MaterialTheme.typography.bodySmall,
                     color = scheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                 )
+            } else {
+                val preview = conversation.lastMessagePreview
+                if (preview.isNotBlank()) {
+                    Text(
+                        text = preview,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = scheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
     }
+}
+
+/** 标题里的第一次命中铺一层底色。没命中或没在搜索时就是原标题。 */
+private fun highlighted(text: String, query: String, background: Color): AnnotatedString {
+    val start = if (query.isBlank()) -1 else SearchSnippet.findFirst(text, query)
+    if (start < 0) return AnnotatedString(text)
+    return buildAnnotatedString {
+        append(text)
+        addStyle(SpanStyle(background = background), start, (start + query.length).coerceAtMost(text.length))
+    }
+}
+
+/**
+ * 单行预览：先量出命中词的位置，再用真正的 [Text] 按这个位移摆放。
+ * 短于一行、或词就在开头时不留空。外层裁掉两侧溢出。
+ */
+@Composable
+private fun CenteredMatchLine(
+    text: String,
+    matchStart: Int,
+    matchEnd: Int,
+    highlight: Color,
+    style: TextStyle,
+    color: Color,
+    modifier: Modifier = Modifier,
+) {
+    val annotated = remember(text, matchStart, matchEnd, highlight) {
+        buildAnnotatedString {
+            append(text)
+            if (matchStart in 0 until matchEnd && matchEnd <= text.length) {
+                addStyle(SpanStyle(background = highlight), matchStart, matchEnd)
+            }
+        }
+    }
+    val measurer = rememberTextMeasurer()
+    val measured = remember(annotated, style, measurer) {
+        measurer.measure(
+            text = annotated,
+            style = style,
+            overflow = TextOverflow.Visible,
+            softWrap = false,
+            maxLines = 1,
+            constraints = Constraints(maxWidth = Constraints.Infinity),
+        )
+    }
+    BoxWithConstraints(modifier.fillMaxWidth().clipToBounds()) {
+        val edges = matchEdges(measured, matchStart, matchEnd)
+        val shift = SearchSnippet.matchShiftPx(
+            constraints.maxWidth,
+            measured.size.width,
+            edges.first,
+            edges.second,
+        )
+        Layout(
+            content = {
+                Text(
+                    text = annotated,
+                    style = style,
+                    color = color,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Visible,
+                )
+            },
+        ) { measurables, constraints ->
+            val placeable = measurables.first().measure(
+                Constraints(maxWidth = Constraints.Infinity),
+            )
+            val width = constraints.maxWidth.coerceAtLeast(0)
+            layout(width, placeable.height) {
+                placeable.place(shift, 0)
+            }
+        }
+    }
+}
+
+private fun matchEdges(layout: TextLayoutResult, start: Int, end: Int): Pair<Float, Float> {
+    val length = layout.layoutInput.text.length
+    if (length == 0 || start !in 0 until length) return 0f to 0f
+    val last = (end - 1).coerceIn(start, length - 1)
+    return layout.getBoundingBox(start).left to layout.getBoundingBox(last).right
 }
 
 @Composable
