@@ -24,9 +24,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -44,6 +46,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,6 +59,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
@@ -131,6 +136,8 @@ fun ConversationListScreen(
     onOpenImageStudio: () -> Unit,
     onOpenVideoStudio: () -> Unit,
     onClose: () -> Unit,
+    /** 本工作区的滚动与搜索展开。列表页拆掉后还在，三个工作区各一份。 */
+    scroll: ConversationListSlot,
     modifier: Modifier = Modifier,
 ) {
     val conversations = page.conversations
@@ -144,17 +151,31 @@ fun ConversationListScreen(
     val onDelete = page.onDelete
     val colors = ChatTheme.colors
     val scheme = MaterialTheme.colorScheme
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
     var actionTarget by remember { mutableStateOf<Conversation?>(null) }
     var renameTarget by remember { mutableStateOf<Conversation?>(null) }
-    var searching by remember { mutableStateOf(false) }
+    val searchVisible = searchFieldVisible(searchQuery, scroll.expanded)
     val searchFocus = remember { FocusRequester() }
+    // 只在用户刚刚点开搜索时聚焦。从别的页面回来时槽里的展开状态还在，但不能再弹键盘。
+    var pendingFocus by remember { mutableStateOf(false) }
     // 左滑收起：只跟随手指向左偏移（不右移），松手按位移/速度决定收起还是弹回。
     var offsetX by remember { mutableFloatStateOf(0f) }
     val windowWidth = LocalWindowInfo.current.containerSize.width.toFloat()
 
-    // 点「搜索」后自动聚焦并弹键盘。
-    LaunchedEffect(searching) {
-        if (searching) searchFocus.requestFocus()
+    LaunchedEffect(pendingFocus, searchVisible) {
+        if (pendingFocus && searchVisible) {
+            searchFocus.requestFocus()
+            pendingFocus = false
+        }
+    }
+
+    // 换了一个非空白搜索词才把筛选列表拉回顶部。同一个词再进来保持原位。
+    // scroll 也是 key：退出动画里 mode 会先换，搜索词碰巧相同时不能还抓着上一份槽。
+    LaunchedEffect(scroll, searchQuery) {
+        if (!shouldResetFilteredScroll(scroll.appliedQuery, searchQuery)) return@LaunchedEffect
+        scroll.filtered.scrollToItem(0)
+        scroll.appliedQuery = searchQuery
     }
 
     // 重新打开时归零左滑位移：退场动画期间若被再次打开，组合不会重建，remember 的偏移会残留。
@@ -231,14 +252,19 @@ fun ConversationListScreen(
                     icon = Icons.Filled.Search,
                     label = "搜索",
                     onClick = {
-                        // 收起搜索时一并清空关键词，避免「搜索框没了但列表还在过滤」。
-                        if (searching) onSearchQueryChange("")
-                        searching = !searching
+                        if (searchVisible) {
+                            // 这是主动收起，不是离开页面：清掉词，回到未筛选列表自己的滚动位置。
+                            scroll.expanded = false
+                            onSearchQueryChange("")
+                        } else {
+                            scroll.expanded = true
+                            pendingFocus = true
+                        }
                     },
                 )
             }
 
-            if (searching) {
+            if (searchVisible) {
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = onSearchQueryChange,
@@ -263,6 +289,14 @@ fun ConversationListScreen(
                         }
                     },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    // 列表随输入即时筛选，键盘上的「搜索」只负责收起输入法。
+                    // 只 hide 的话焦点还在框里，三星会把键盘立刻弹回来。
+                    keyboardActions = KeyboardActions(
+                        onSearch = {
+                            focusManager.clearFocus()
+                            keyboardController?.hide()
+                        },
+                    ),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 6.dp)
@@ -284,33 +318,19 @@ fun ConversationListScreen(
 
             // 平铺：不再按父子缩进（层级交给分支页逐层查看），但保留「分支」标签，
             // 并且父会话被删的孤儿分支也不会因此失去挂载点。
-            LazyColumn(
-                modifier = Modifier.weight(1f),
-                // 底部留出「新对话」胶囊的高度，最后一条不会被盖住。
-                contentPadding = PaddingValues(start = 8.dp, end = 8.dp, bottom = 96.dp),
-            ) {
-                items(conversations, key = { it.id }) { conversation ->
-                    ConversationRow(
-                        conversation = conversation,
-                        selected = conversation.id == selectedId,
-                        lamp = lamps[conversation.id],
-                        onClick = { onSelect(conversation.id) },
-                        onLongClick = { actionTarget = conversation },
-                    )
-                }
-                if (conversations.isEmpty()) {
-                    item {
-                        Text(
-                            text = if (searchQuery.isBlank()) "还没有对话" else "没有找到相关会话",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = scheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 40.dp),
-                        )
-                    }
-                }
+            // key 按工作区 + 未筛选/筛选拆开组合节点，退出动画里换 mode 也不会把两份滚动接到同一个列表上。
+            val pane = listPane(searchQuery)
+            key(mode, pane) {
+                RecentConversationList(
+                    conversations = conversations,
+                    selectedId = selectedId,
+                    searchQuery = searchQuery,
+                    lamps = lamps,
+                    listState = scroll.stateFor(searchQuery),
+                    onSelect = onSelect,
+                    onLongClick = { actionTarget = it },
+                    modifier = Modifier.weight(1f),
+                )
             }
         }
 
@@ -451,6 +471,49 @@ private fun NewChatButton(label: String, onClick: () -> Unit) {
             style = MaterialTheme.typography.titleMedium,
             color = scheme.inverseOnSurface,
         )
+    }
+}
+
+@Composable
+private fun RecentConversationList(
+    conversations: List<Conversation>,
+    selectedId: String?,
+    searchQuery: String,
+    lamps: Map<String, ConversationLamp>,
+    listState: LazyListState,
+    onSelect: (String) -> Unit,
+    onLongClick: (Conversation) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val scheme = MaterialTheme.colorScheme
+    LazyColumn(
+        modifier = modifier,
+        state = listState,
+        // 底部留出「新对话」胶囊的高度，最后一条不会被盖住。
+        contentPadding = PaddingValues(start = 8.dp, end = 8.dp, bottom = 96.dp),
+    ) {
+        items(conversations, key = { it.id }) { conversation ->
+            ConversationRow(
+                conversation = conversation,
+                selected = conversation.id == selectedId,
+                lamp = lamps[conversation.id],
+                onClick = { onSelect(conversation.id) },
+                onLongClick = { onLongClick(conversation) },
+            )
+        }
+        if (conversations.isEmpty()) {
+            item {
+                Text(
+                    text = if (searchQuery.isBlank()) "还没有对话" else "没有找到相关会话",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = scheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 40.dp),
+                )
+            }
+        }
     }
 }
 

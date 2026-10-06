@@ -25,6 +25,7 @@ import com.zcw.chatai.ui.chat.ChatScreen
 import com.zcw.chatai.ui.chat.ChatViewModel
 import com.zcw.chatai.ui.chat.MessageEditActions
 import com.zcw.chatai.ui.chat.ModelPickerSheet
+import com.zcw.chatai.ui.drawer.ConversationListMemoryViewModel
 import com.zcw.chatai.ui.drawer.ConversationListPage
 import com.zcw.chatai.ui.drawer.ConversationListScreen
 import com.zcw.chatai.ui.drawer.ConversationTree
@@ -85,6 +86,7 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
             .distinctUntilChanged()
     }
     val streamHaptic by streamHapticFlow.collectAsStateWithLifecycle(initialValue = true)
+    val listMemory: ConversationListMemoryViewModel = viewModel()
     var showSettings by remember { mutableStateOf(false) }
     var showConversations by remember { mutableStateOf(false) }
     var showModelPicker by remember { mutableStateOf(false) }
@@ -132,13 +134,9 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
         app.conversationLamps.setWatching(watchingId)
     }
 
-    // 关闭列表一律连搜索词一起清掉：否则下次打开会看到「没有搜索框却已被过滤」的列表。
-    val closeConversations = {
-        showConversations = false
-        viewModel.setSearchQuery("")
-        imageViewModel.setSearchQuery("")
-        videoViewModel.setSearchQuery("")
-    }
+    // 只隐藏列表。搜索词和滚动在各自工作区的槽里，离开页面、进会话、进设置都留着。
+    // 主动点「搜索」收起时才清词，见 ConversationListScreen。
+    val closeConversations = { showConversations = false }
 
     val listPage = when (mode) {
         WorkspaceMode.IMAGE -> ConversationListPage(
@@ -330,6 +328,7 @@ fun ChatAiRoot(modifier: Modifier = Modifier) {
                     mode = WorkspaceMode.VIDEO
                 },
                 onClose = closeConversations,
+                scroll = listMemory.slot(mode),
             )
         }
 
