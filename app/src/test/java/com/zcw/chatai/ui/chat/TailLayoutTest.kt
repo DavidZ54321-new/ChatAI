@@ -31,21 +31,33 @@ class TailLayoutTest {
     }
 
     @Test
-    fun shortMeasureKeepsTheReservationUntilContentCatchesUp() {
-        assertTrue(reserveTailHeight(cachedPx = 1800, measuredPx = 0, streaming = false))
-        assertTrue(reserveTailHeight(cachedPx = 1800, measuredPx = 200, streaming = false))
-        assertFalse(reserveTailHeight(cachedPx = 1800, measuredPx = 1790, streaming = false))
-        assertFalse(reserveTailHeight(cachedPx = 1800, measuredPx = 200, streaming = true))
-        assertFalse(reserveTailHeight(cachedPx = null, measuredPx = 0, streaming = false))
+    fun unsettledShortMeasureKeepsTheReservation() {
+        assertTrue(reserveTailHeight(cachedPx = 1800, measuredPx = 0, streaming = false, settled = false))
+        assertTrue(reserveTailHeight(cachedPx = 1800, measuredPx = 200, streaming = false, settled = false))
+        assertFalse(reserveTailHeight(cachedPx = 1800, measuredPx = 1790, streaming = false, settled = false))
+        assertFalse(reserveTailHeight(cachedPx = null, measuredPx = 0, streaming = false, settled = false))
     }
 
     @Test
-    fun recordWaitsUntilTheMeasureCatchesTheReservation() {
-        assertFalse(shouldRecordTailHeight(located = false, streaming = false, measuredPx = 1800, reservedPx = null))
-        assertFalse(shouldRecordTailHeight(located = true, streaming = true, measuredPx = 1800, reservedPx = null))
-        assertFalse(shouldRecordTailHeight(located = true, streaming = false, measuredPx = 200, reservedPx = 1800))
-        assertTrue(shouldRecordTailHeight(located = true, streaming = false, measuredPx = 1800, reservedPx = 1800))
-        assertTrue(shouldRecordTailHeight(located = true, streaming = false, measuredPx = 900, reservedPx = null))
+    fun settledMeasureDropsTheReservationEvenWhenShorter() {
+        assertFalse(reserveTailHeight(cachedPx = 1800, measuredPx = 200, streaming = false, settled = true))
+        assertFalse(reserveTailHeight(cachedPx = 1800, measuredPx = 1790, streaming = false, settled = true))
+        assertFalse(reserveTailHeight(cachedPx = 1800, measuredPx = 0, streaming = false, settled = true))
+    }
+
+    @Test
+    fun streamingNeverReserves() {
+        assertFalse(reserveTailHeight(cachedPx = 1800, measuredPx = 200, streaming = true, settled = false))
+        assertFalse(reserveTailHeight(cachedPx = 1800, measuredPx = 200, streaming = true, settled = true))
+    }
+
+    @Test
+    fun recordOnlyAPositiveSettledHeight() {
+        assertFalse(shouldRecordTailHeight(located = false, streaming = false, settledPx = 1800))
+        assertFalse(shouldRecordTailHeight(located = true, streaming = true, settledPx = 1800))
+        assertFalse(shouldRecordTailHeight(located = true, streaming = false, settledPx = 0))
+        assertTrue(shouldRecordTailHeight(located = true, streaming = false, settledPx = 200))
+        assertTrue(shouldRecordTailHeight(located = true, streaming = false, settledPx = 1800))
     }
 
     @Test

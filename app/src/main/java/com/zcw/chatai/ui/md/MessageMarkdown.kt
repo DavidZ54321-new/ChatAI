@@ -365,6 +365,7 @@ private fun rememberParsedMarkdown(content: String, cacheable: Boolean): State {
         if (result is State.Success) MarkdownParseCache.put(content, result)
         value = result
     }
+    TrackMarkdownLoading(parsed is State.Loading)
     return parsed
 }
 

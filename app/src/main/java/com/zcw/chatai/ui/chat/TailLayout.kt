@@ -31,24 +31,31 @@ data class TailLayout(
         this.dark == dark
 }
 
-/** 正文还比记录矮时，先占住上次的高度；追上了就撤掉占位。流式中不占。 */
-fun reserveTailHeight(cachedPx: Int?, measuredPx: Int, streaming: Boolean): Boolean {
-    if (streaming || cachedPx == null || cachedPx <= 0) return false
+/**
+ * 还没定稿时，正文比记录矮就先占住上次的高度（冷启动 markdown 仍在加载）。
+ * 定稿后以实测为准，不再占：展开收起、回合收尾变矮都要能收回，否则最小高度会粘成一块空白。
+ * 流式中不占。
+ */
+fun reserveTailHeight(
+    cachedPx: Int?,
+    measuredPx: Int,
+    streaming: Boolean,
+    settled: Boolean,
+): Boolean {
+    if (streaming || settled || cachedPx == null || cachedPx <= 0) return false
     if (measuredPx <= 0) return true
     return measuredPx + TAIL_HEIGHT_SLOP_PX < cachedPx
 }
 
-/** 贴底且这一轮不在流式时才把量到的高度写回去。占位还没被正文追上时不写，避免把半截高度存下去。 */
+/**
+ * 只写定稿后的高度。[settledPx] 为正表示这一帧已经摆好；0 表示还没定稿，不写。
+ * 比缓存矮也写，避免上一帧的高槽位粘住。
+ */
 fun shouldRecordTailHeight(
     located: Boolean,
     streaming: Boolean,
-    measuredPx: Int,
-    reservedPx: Int?,
-): Boolean {
-    if (!located || streaming || measuredPx <= 0) return false
-    if (reservedPx == null) return true
-    return measuredPx + TAIL_HEIGHT_SLOP_PX >= reservedPx
-}
+    settledPx: Int,
+): Boolean = located && !streaming && settledPx > 0
 
 fun tailContentChars(items: List<ChatMessageItem>): Int =
     items.sumOf { it.content.length + (it.reasoning?.length ?: 0) }
