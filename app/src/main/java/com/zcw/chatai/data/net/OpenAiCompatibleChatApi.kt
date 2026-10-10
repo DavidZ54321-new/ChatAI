@@ -141,7 +141,10 @@ class OpenAiCompatibleChatApi(
                     val encoded = if (message.toolCalls.isNotEmpty() && message.content.isEmpty()) {
                         null
                     } else {
-                        ChatRequestBody.content(message.content, images, videos, audios)
+                        ChatRequestBody.content(
+                            message.content, images, videos, audios,
+                            order = config.mediaContentOrder,
+                        )
                     }
                     if (encoded != null) inlineParts += encoded.inlineParts
                     add(
@@ -222,7 +225,8 @@ class OpenAiCompatibleChatApi(
     private fun messageOrNull(body: String?): String? {
         if (body.isNullOrBlank()) return null
         val envelope = try {
-            json.decodeFromString(ApiErrorEnvelope.serializer(), body).error.message
+            val error = json.decodeFromString(ApiErrorEnvelope.serializer(), body).error
+            ApiErrorMapper.fromEnvelope(error.message, error.param)
         } catch (t: Exception) {
             null
         }

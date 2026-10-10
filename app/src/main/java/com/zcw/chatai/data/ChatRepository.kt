@@ -1113,7 +1113,11 @@ class ChatRepository(
                 history = history,
                 imageTurns = config.historyImageTurns,
                 imageProvider = { attachment ->
-                    attachmentStore.toRequestImage(attachment, config.imageDetail)
+                    attachmentStore.toRequestImage(
+                        attachment,
+                        config.imageDetail,
+                        config.sendsImageDetail,
+                    )
                 },
                 videoProvider = { attachment -> resolvedVideos[attachment.id] },
                 documentProvider = { attachment -> attachmentStore.documentText(attachment) },

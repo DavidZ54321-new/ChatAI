@@ -82,6 +82,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.zcw.chatai.R
 import com.zcw.chatai.data.model.AttachmentKind
 import com.zcw.chatai.data.model.Role
+import com.zcw.chatai.ui.CapturePhotoContract
 import com.zcw.chatai.ui.md.LocalPreviewOpener
 import com.zcw.chatai.ui.md.PreviewTarget
 import com.zcw.chatai.ui.theme.ChatTheme
@@ -354,7 +355,7 @@ fun ChatScreen(
     // 只放在 remember 里会丢结果，表现为「确认后什么都没发生」。
     var captureUriText by rememberSaveable { mutableStateOf<String?>(null) }
     val takePicture = rememberLauncherForActivityResult(
-        ActivityResultContracts.TakePicture(),
+        CapturePhotoContract(),
     ) { success ->
         if (success) {
             captureUriText?.let { text -> runCatching { Uri.parse(text) }.getOrNull()?.let(onAddImage) }

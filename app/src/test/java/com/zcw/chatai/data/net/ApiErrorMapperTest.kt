@@ -125,6 +125,21 @@ class ApiErrorMapperTest {
     }
 
     @Test
+    fun joinsMessageAndParamWhenTheyDiffer() {
+        val detail = ApiErrorMapper.fromEnvelope(
+            "Param Incorrect",
+            "failed during process multi-modal data",
+        )
+        val message = ApiErrorMapper.httpError(400, detail)
+        assertTrue(message, message.contains("Param Incorrect"))
+        assertTrue(message, message.contains("failed during process multi-modal data"))
+        // 已经互相包含时不重复拼接。
+        assertEquals("Param Incorrect", ApiErrorMapper.fromEnvelope("Param Incorrect", "Incorrect"))
+        assertEquals("only message", ApiErrorMapper.fromEnvelope("only message", null))
+        assertEquals("only param", ApiErrorMapper.fromEnvelope(null, "only param"))
+    }
+
+    @Test
     fun detectsImageRelatedMessages() {
         assertTrue(ApiErrorMapper.isImageRelated("unsupported image"))
         assertTrue(ApiErrorMapper.isImageRelated("Image in system message is unsupported"))

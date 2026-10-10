@@ -464,7 +464,7 @@ private fun ChatWorkspaceSettings(
     SectionTitle("看图")
     ChoiceRow(
         label = "图片精度 (detail)",
-        hint = "省流档会把图片缩到 512×512，实测输入 token 约为标准档的 1/5",
+        hint = "只在省流档生效：认 detail 的由对方缩放；不认的（如 MiMo）发送前把长边缩到 512，聊天里的图不变",
         options = ImageDetail.entries.map { it to it.label() },
         selected = state.imageDetail,
         onSelect = { value -> viewModel.update { it.copy(imageDetail = value) } },

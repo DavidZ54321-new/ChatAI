@@ -139,6 +139,16 @@ class ChatSettingsTest {
             com.zcw.chatai.data.provider.ThinkingWire.MIMO_THINKING_OBJECT,
             config.thinkingWire,
         )
+        assertEquals(
+            com.zcw.chatai.data.provider.MediaContentOrder.MEDIA_THEN_TEXT,
+            config.mediaContentOrder,
+        )
+        assertEquals(
+            com.zcw.chatai.data.provider.MediaContentOrder.TEXT_THEN_MEDIA,
+            settings.toChatConfig(ProviderCatalog.DEEPSEEK).mediaContentOrder,
+        )
+        assertFalse(config.sendsImageDetail)
+        assertTrue(settings.toChatConfig(ProviderCatalog.DEEPSEEK).sendsImageDetail)
         // 其余供应商仍走标准 reasoning_effort。
         assertEquals(
             com.zcw.chatai.data.provider.ThinkingWire.STANDARD_REASONING_EFFORT,

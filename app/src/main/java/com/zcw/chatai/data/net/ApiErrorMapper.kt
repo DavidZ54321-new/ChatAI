@@ -9,6 +9,22 @@ object ApiErrorMapper {
 
     private const val MAX_DETAIL = 300
 
+    /**
+     * 把错误体的 `message` 和 `param` 合成一条可读原因。
+     * 两边都有、且互不包含时才拼接，避免把同一句话写两遍。
+     */
+    fun fromEnvelope(message: String?, param: String?): String? {
+        val msg = message?.trim()?.takeIf { it.isNotEmpty() }
+        val par = param?.trim()?.takeIf { it.isNotEmpty() }
+        return when {
+            msg == null -> par
+            par == null -> msg
+            msg.contains(par, ignoreCase = true) -> msg
+            par.contains(msg, ignoreCase = true) -> par
+            else -> "$msg：$par"
+        }
+    }
+
     fun httpError(status: Int, serverMessage: String?): String {
         val detail = serverMessage?.trim()?.takeIf { it.isNotEmpty() }?.take(MAX_DETAIL)
         return when {

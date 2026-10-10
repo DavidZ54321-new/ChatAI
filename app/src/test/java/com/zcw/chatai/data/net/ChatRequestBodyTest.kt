@@ -5,6 +5,7 @@ import com.zcw.chatai.data.net.dto.ChatRequestBody
 import com.zcw.chatai.data.net.dto.RequestMessage
 import java.io.File
 import com.zcw.chatai.data.net.dto.chatJson
+import com.zcw.chatai.data.provider.MediaContentOrder
 import com.zcw.chatai.data.provider.ThinkingWire
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -212,6 +213,56 @@ class ChatRequestBodyTest {
             "enabled",
             overridden.getValue("thinking").jsonObject.getValue("type").jsonPrimitive.content,
         )
+    }
+
+    @Test
+    fun mimoOrderPutsImagesFirstAndFoldsLabelsIntoOneText() {
+        val parts = ChatRequestBody.content(
+            text = "这是什么",
+            images = listOf(
+                ChatRequestImage(
+                    dataUrl = "data:image/jpeg;base64,AAAA",
+                    detail = "low",
+                    label = "[Image 1 | turn 1 1/2]",
+                ),
+                ChatRequestImage(
+                    dataUrl = "data:image/png;base64,BBBB",
+                    detail = "high",
+                    label = "[Image 2 | turn 1 2/2]",
+                ),
+            ),
+            order = MediaContentOrder.MEDIA_THEN_TEXT,
+        ).element.jsonArray
+        assertEquals(3, parts.size)
+        assertEquals("image_url", parts[0].jsonObject.getValue("type").jsonPrimitive.content)
+        assertEquals("image_url", parts[1].jsonObject.getValue("type").jsonPrimitive.content)
+        val firstUrl = parts[0].jsonObject.getValue("image_url").jsonObject
+        assertEquals("data:image/jpeg;base64,AAAA", firstUrl.getValue("url").jsonPrimitive.content)
+        assertEquals("low", firstUrl.getValue("detail").jsonPrimitive.content)
+        assertEquals(
+            "high",
+            parts[1].jsonObject.getValue("image_url").jsonObject.getValue("detail").jsonPrimitive.content,
+        )
+        val text = parts[2].jsonObject
+        assertEquals("text", text.getValue("type").jsonPrimitive.content)
+        val body = text.getValue("text").jsonPrimitive.content
+        assertTrue(body, body.contains("[Image 1 | turn 1 1/2]"))
+        assertTrue(body, body.contains("[Image 2 | turn 1 2/2]"))
+        assertTrue(body, body.contains("这是什么"))
+        assertTrue(body.indexOf("[Image 1") < body.indexOf("这是什么"))
+    }
+
+    @Test
+    fun mimoOrderOmitsEmptyCaption() {
+        val parts = ChatRequestBody.content(
+            text = "",
+            images = listOf(ChatRequestImage(dataUrl = "data:image/png;base64,BBBB")),
+            order = MediaContentOrder.MEDIA_THEN_TEXT,
+        ).element.jsonArray
+        assertEquals(1, parts.size)
+        val imageUrl = parts[0].jsonObject.getValue("image_url").jsonObject
+        assertEquals("image_url", parts[0].jsonObject.getValue("type").jsonPrimitive.content)
+        assertFalse(imageUrl.toString(), imageUrl.containsKey("detail"))
     }
 
     @Test

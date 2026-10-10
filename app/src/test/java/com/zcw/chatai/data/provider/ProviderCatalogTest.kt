@@ -54,6 +54,17 @@ class ProviderCatalogTest {
         assertEquals(35L * 1024 * 1024, mimo.videoInlineMaxBytes)
         assertFalse("无 DashScope 上传路由", mimo.videoUploadViaDashScope)
         assertEquals(ThinkingWire.MIMO_THINKING_OBJECT, mimo.thinkingWire)
+        assertEquals(MediaContentOrder.MEDIA_THEN_TEXT, mimo.mediaContentOrder)
+        assertFalse(mimo.sendsImageDetail)
+        assertTrue(ProviderCatalog.byId(ProviderCatalog.DEEPSEEK)!!.sendsImageDetail)
+        assertEquals(
+            listOf(ProviderCatalog.MIMO),
+            ProviderCatalog.presets.filter { !it.sendsImageDetail }.map { it.id },
+        )
+        assertEquals(
+            listOf(ProviderCatalog.MIMO),
+            ProviderCatalog.presets.filter { it.mediaContentOrder == MediaContentOrder.MEDIA_THEN_TEXT }.map { it.id },
+        )
         assertFalse(mimo.sendSessionHeader)
     }
 

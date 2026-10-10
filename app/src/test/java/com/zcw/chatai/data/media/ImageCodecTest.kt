@@ -10,6 +10,21 @@ import org.junit.Test
 class ImageCodecTest {
 
     @Test
+    fun outboundEdgeShrinksLocallyOnlyWhenDetailIsUnsupported() {
+        assertNull(ImageCodec.outboundEdge("low", sendsImageDetail = true))
+        assertNull(ImageCodec.outboundEdge("high", sendsImageDetail = true))
+        assertNull(ImageCodec.outboundEdge(null, sendsImageDetail = false))
+        assertNull(ImageCodec.outboundEdge("high", sendsImageDetail = false))
+        assertEquals(ImageCodec.LOW_EDGE, ImageCodec.outboundEdge("low", sendsImageDetail = false))
+        assertEquals(1, ImageCodec.sampleSize(400, 300, ImageCodec.LOW_EDGE))
+        assertEquals(2, ImageCodec.sampleSize(1568, 1176, ImageCodec.LOW_EDGE))
+        assertEquals(8, ImageCodec.sampleSize(4096, 3072, ImageCodec.LOW_EDGE))
+        val low = ImageCodec.computeTargetSize(1568, 1176, maxEdge = ImageCodec.LOW_EDGE)
+        assertTrue(maxOf(low.width, low.height) <= ImageCodec.LOW_EDGE)
+        assertTrue(low.width < 1568 && low.height < 1176)
+    }
+
+    @Test
     fun scalesDownKeepingAspectRatio() {
         val size = ImageCodec.computeTargetSize(4000, 3000, maxEdge = 1568)
         assertEquals(1568, size.width)

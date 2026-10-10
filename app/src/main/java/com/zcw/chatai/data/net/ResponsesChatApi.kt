@@ -203,7 +203,8 @@ class ResponsesChatApi(
     private fun errorMessage(body: String?): String? {
         if (body.isNullOrBlank()) return null
         val envelope = try {
-            json.decodeFromString(ApiErrorEnvelope.serializer(), body).error.message
+            val error = json.decodeFromString(ApiErrorEnvelope.serializer(), body).error
+            ApiErrorMapper.fromEnvelope(error.message, error.param)
         } catch (t: Exception) {
             null
         }

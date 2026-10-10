@@ -5,6 +5,7 @@ import com.zcw.chatai.data.net.ChatRequestImage
 import com.zcw.chatai.data.net.ChatRequestVideo
 import com.zcw.chatai.data.net.InlineMedia
 import com.zcw.chatai.data.net.InlinePart
+import com.zcw.chatai.data.provider.MediaContentOrder
 import com.zcw.chatai.data.provider.ThinkingWire
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -88,81 +89,87 @@ object ChatRequestBody {
     /**
      * 组一条消息的 `content`。内联视频/音频的占位符和 [EncodedContent.inlineParts]
      * 在同一次遍历里产生，顺序就是 JSON 里的出现顺序。
+     *
+     * [order] 只决定块顺序：[MediaContentOrder.TEXT_THEN_MEDIA] 先正文、再逐图标注；
+     * [MediaContentOrder.MEDIA_THEN_TEXT] 先媒体、最后一条 text（标注并进这条）。
+     * `image_url.detail` 有没有，只看 [ChatRequestImage.detail]，与顺序无关。
      */
     fun content(
         text: String,
         images: List<ChatRequestImage>,
         videos: List<ChatRequestVideo> = emptyList(),
         audios: List<ChatRequestAudio> = emptyList(),
+        order: MediaContentOrder = MediaContentOrder.TEXT_THEN_MEDIA,
     ): EncodedContent {
         if (images.isEmpty() && videos.isEmpty() && audios.isEmpty()) {
             return EncodedContent(JsonPrimitive(text))
         }
         val inlineParts = mutableListOf<InlinePart>()
+        val mediaThenText = order == MediaContentOrder.MEDIA_THEN_TEXT
         val element = buildJsonArray {
-            if (text.isNotEmpty()) {
-                add(
-                    buildJsonObject {
-                        put("type", "text")
-                        put("text", text)
-                    },
-                )
-            }
+            if (!mediaThenText && text.isNotEmpty()) add(textPart(text))
             images.forEach { image ->
-                // 每张图前插一段来源标注（"第几张 / 哪一轮"），避免历史图与本轮图混淆。
-                image.label?.takeIf { it.isNotBlank() }?.let { label ->
-                    add(
-                        buildJsonObject {
-                            put("type", "text")
-                            put("text", label)
-                        },
-                    )
+                if (!mediaThenText) {
+                    image.label?.takeIf { it.isNotBlank() }?.let { add(textPart(it)) }
                 }
-                add(
-                    buildJsonObject {
-                        put("type", "image_url")
-                        putJsonObject("image_url") {
-                            put("url", image.dataUrl)
-                            image.detail?.takeIf { it.isNotBlank() }?.let { put("detail", it) }
-                        }
-                    },
-                )
+                add(imagePart(image))
             }
-            videos.forEach { video ->
-                val url = when (video) {
-                    is ChatRequestVideo.Remote -> video.url
-                    is ChatRequestVideo.Inline -> InlineMedia.placeholder(video.id).also { token ->
-                        inlineParts += InlinePart(token, video.file, video.mime)
-                    }
-                }
-                add(
-                    buildJsonObject {
-                        put("type", "video_url")
-                        putJsonObject("video_url") {
-                            put("url", url)
-                        }
-                    },
-                )
-            }
-            audios.forEach { audio ->
-                // MiMo 形状：input_audio 只有一个 data 字段（URL 或 data URI），不是 OpenAI 的 {data,format}。
-                val data = when (audio) {
-                    is ChatRequestAudio.Remote -> audio.dataUrl
-                    is ChatRequestAudio.Inline -> InlineMedia.placeholder(audio.id).also { token ->
-                        inlineParts += InlinePart(token, audio.file, audio.mime)
-                    }
-                }
-                add(
-                    buildJsonObject {
-                        put("type", "input_audio")
-                        putJsonObject("input_audio") {
-                            put("data", data)
-                        }
-                    },
-                )
+            videos.forEach { video -> add(videoPart(video, inlineParts)) }
+            audios.forEach { audio -> add(audioPart(audio, inlineParts)) }
+            if (mediaThenText) {
+                val caption = mediaCaption(text, images)
+                if (caption.isNotEmpty()) add(textPart(caption))
             }
         }
         return EncodedContent(element, inlineParts)
+    }
+
+    /** 来源标注和用户正文合成一条，避免在图片之间再插文本块。 */
+    private fun mediaCaption(text: String, images: List<ChatRequestImage>): String {
+        val labels = images.mapNotNull { it.label?.takeIf { label -> label.isNotBlank() } }
+        return buildString {
+            if (labels.isNotEmpty()) append(labels.joinToString("\n"))
+            if (text.isNotEmpty()) {
+                if (isNotEmpty()) append("\n\n")
+                append(text)
+            }
+        }
+    }
+
+    private fun textPart(text: String) = buildJsonObject {
+        put("type", "text")
+        put("text", text)
+    }
+
+    private fun imagePart(image: ChatRequestImage) = buildJsonObject {
+        put("type", "image_url")
+        putJsonObject("image_url") {
+            put("url", image.dataUrl)
+            image.detail?.takeIf { it.isNotBlank() }?.let { put("detail", it) }
+        }
+    }
+
+    private fun videoPart(video: ChatRequestVideo, inlineParts: MutableList<InlinePart>) = buildJsonObject {
+        val url = when (video) {
+            is ChatRequestVideo.Remote -> video.url
+            is ChatRequestVideo.Inline -> InlineMedia.placeholder(video.id).also { token ->
+                inlineParts += InlinePart(token, video.file, video.mime)
+            }
+        }
+        put("type", "video_url")
+        putJsonObject("video_url") { put("url", url) }
+    }
+
+    private fun audioPart(audio: ChatRequestAudio, inlineParts: MutableList<InlinePart>) = buildJsonObject {
+        // MiMo 形状：input_audio 只有一个 data 字段（URL 或 data URI），不是 OpenAI 的 {data,format}。
+        val data = when (audio) {
+            is ChatRequestAudio.Remote -> audio.dataUrl
+            is ChatRequestAudio.Inline -> InlineMedia.placeholder(audio.id).also { token ->
+                inlineParts += InlinePart(token, audio.file, audio.mime)
+            }
+        }
+        put("type", "input_audio")
+        putJsonObject("input_audio") { put("data", data) }
     }
 
     private fun parseExtra(raw: String?): JsonObject? {

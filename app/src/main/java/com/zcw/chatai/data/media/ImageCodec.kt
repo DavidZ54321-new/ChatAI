@@ -6,6 +6,9 @@ object ImageCodec {
     /** 出站图片长边上限。服务端会把图缩到 ~1300×1300，客户端再大就是白花流量。 */
     const val MAX_EDGE = 1568
 
+    /** 省流档在本地缩小的长边。对齐 OpenAI / DeepSeek `detail=low` 的约 512。 */
+    const val LOW_EDGE = 512
+
     /** 列表缩略图长边。 */
     const val THUMB_EDGE = 360
 
@@ -15,6 +18,27 @@ object ImageCodec {
     const val MIME_PNG = "image/png"
 
     data class ImageSize(val width: Int, val height: Int)
+
+    /**
+     * 对方不认 `image_url.detail` 时，省流要在本地缩到的长边。
+     * 认 detail、或档位不是 `low` 时返回 null：沿用已存文件，交给对方或保持 1568。
+     */
+    fun outboundEdge(detail: String?, sendsImageDetail: Boolean): Int? {
+        if (sendsImageDetail) return null
+        return if (detail == "low") LOW_EDGE else null
+    }
+
+    /**
+     * `BitmapFactory.inSampleSize`：2 的幂。采样后的长边仍不小于 [maxEdge]，剩下的交给精确缩放。
+     * 边长无效、或已经不超过 [maxEdge] 时为 1。
+     */
+    fun sampleSize(width: Int, height: Int, maxEdge: Int): Int {
+        if (width <= 0 || height <= 0 || maxEdge <= 0) return 1
+        val longEdge = maxOf(width, height).toLong()
+        var sample = 1
+        while (sample <= 1 shl 29 && longEdge / (sample.toLong() * 2) >= maxEdge) sample *= 2
+        return sample
+    }
 
     /** 等比缩放到长边不超过 [maxEdge]；已经足够小则原样返回（不放大）。 */
     fun computeTargetSize(width: Int, height: Int, maxEdge: Int = MAX_EDGE): ImageSize {

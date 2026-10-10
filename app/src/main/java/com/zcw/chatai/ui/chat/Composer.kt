@@ -107,6 +107,8 @@ fun Composer(
                 pending = pending,
                 onRemove = onRemoveAttachment,
                 onOpen = onOpenAttachment,
+                // 已有附件时，缩略图右侧直接再打开类型菜单，不必回到左下角回形针。
+                onAdd = onAttachClick,
             )
         }
         BasicTextField(

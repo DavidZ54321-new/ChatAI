@@ -129,4 +129,6 @@ data class ApiErrorPayload(
     val message: String? = null,
     val type: String? = null,
     val code: String? = null,
+    /** 部分网关把真正的原因放在这里（例如 MiMo 的 `failed during process multi-modal data`）。 */
+    val param: String? = null,
 )

@@ -59,6 +59,7 @@ import com.zcw.chatai.data.image.qwen.QwenImageOptions
 import com.zcw.chatai.data.model.AttachmentKind
 import com.zcw.chatai.data.model.MessageStatus
 import com.zcw.chatai.data.model.Role
+import com.zcw.chatai.ui.CapturePhotoContract
 import com.zcw.chatai.ui.chat.AttachmentPreview
 import com.zcw.chatai.ui.chat.AttachmentPreviewDialog
 import com.zcw.chatai.ui.chat.ChatMessageItem
@@ -134,7 +135,7 @@ fun ImageStudioScreen(
 
     var captureUriText by rememberSaveable { mutableStateOf<String?>(null) }
     val takePicture = rememberLauncherForActivityResult(
-        ActivityResultContracts.TakePicture(),
+        CapturePhotoContract(),
     ) { success ->
         if (success) {
             captureUriText?.let { text -> runCatching { Uri.parse(text) }.getOrNull()?.let(onAddImage) }

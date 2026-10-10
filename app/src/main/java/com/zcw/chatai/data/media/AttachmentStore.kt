@@ -460,8 +460,17 @@ class AttachmentStore(private val context: Context) {
 
     fun thumbnailOf(attachment: Attachment): File = thumbnailOf(attachment.relativePath)
 
-    /** 读文件并内联成 data URL。调用方保证在 IO 线程上（组上下文时统一切过一次线程）。 */
-    fun toRequestImage(attachment: Attachment, detail: String?): ChatRequestImage? {
+    /**
+     * 读文件并内联成 data URL。调用方保证在 IO 线程上（组上下文时统一切过一次线程）。
+     *
+     * [sendsImageDetail] 为 false 且 [detail] 是 `low` 时，只把这次请求的字节缩到长边 512，
+     * 不改磁盘上的附件。缩失败就发原文件，仍然不带 `detail`。
+     */
+    fun toRequestImage(
+        attachment: Attachment,
+        detail: String?,
+        sendsImageDetail: Boolean = true,
+    ): ChatRequestImage? {
         val file = fileOf(attachment)
         if (!file.isFile) return null
         val bytes = try {
@@ -471,7 +480,16 @@ class AttachmentStore(private val context: Context) {
         }
         if (bytes.isEmpty()) return null
         val mime = ImageCodec.sniffMime(bytes) ?: attachment.mimeType
-        return ChatRequestImage(dataUrl = ImageCodec.toDataUrl(mime, bytes), detail = detail)
+        val edge = ImageCodec.outboundEdge(detail, sendsImageDetail)
+        val prepared = if (edge == null) {
+            bytes to mime
+        } else {
+            ImageCompressor.shrink(bytes, mime, edge) ?: (bytes to mime)
+        }
+        return ChatRequestImage(
+            dataUrl = ImageCodec.toDataUrl(prepared.second, prepared.first),
+            detail = if (sendsImageDetail) detail else null,
+        )
     }
 
     private fun queryDisplayName(uri: Uri): String? = runCatching {

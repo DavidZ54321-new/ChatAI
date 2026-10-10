@@ -54,6 +54,19 @@ enum class ResponsesRequestWire {
     REASONING_OBJECT,
 }
 
+/**
+ * 带媒体的用户消息里，正文和媒体块谁在前。
+ *
+ * - [TEXT_THEN_MEDIA]：先正文，再每张图前插来源标注（DeepSeek / Qwen 实测可用）。
+ * - [MEDIA_THEN_TEXT]：媒体块在前，全文只留最后一条 text。
+ *   MiMo 图片理解只认这种形状；图和文字交错会 400。
+ *   发不发 `image_url.detail` 由 [ProviderPreset.sendsImageDetail] 决定，与顺序无关。
+ */
+enum class MediaContentOrder {
+    TEXT_THEN_MEDIA,
+    MEDIA_THEN_TEXT,
+}
+
 data class ProviderPreset(
     val id: String,
     val displayName: String,
@@ -77,6 +90,12 @@ data class ProviderPreset(
     val videoUploadViaDashScope: Boolean = false,
     /** 思考字段上行风格，决定网络层怎么序列化思考开关。 */
     val thinkingWire: ThinkingWire = ThinkingWire.STANDARD_REASONING_EFFORT,
+    /** 带媒体的用户消息里，正文和媒体块的顺序。见 [MediaContentOrder]。 */
+    val mediaContentOrder: MediaContentOrder = MediaContentOrder.TEXT_THEN_MEDIA,
+    /**
+     * 是否发送 `image_url.detail`。不认的供应商（MiMo）在省流档改为本地把长边缩到 512 再发。
+     */
+    val sendsImageDetail: Boolean = true,
     /** Responses 面的思考/温度线型。见 [ResponsesRequestWire]。 */
     val responsesWire: ResponsesRequestWire = ResponsesRequestWire.OMIT_REASONING,
     /**
@@ -163,6 +182,9 @@ object ProviderCatalog {
             videoInlineMaxBytes = 35L * 1024 * 1024,
             videoUploadViaDashScope = false,
             thinkingWire = ThinkingWire.MIMO_THINKING_OBJECT,
+            // 官方图片示例：image_url 在前，最后一条 text；不认 detail，交错文本块会 400。
+            mediaContentOrder = MediaContentOrder.MEDIA_THEN_TEXT,
+            sendsImageDetail = false,
         ),
         ProviderPreset(
             id = OPENAI,
@@ -217,6 +239,13 @@ object ProviderCatalog {
     /** 该供应商思考字段的上行风格。 */
     fun thinkingWireFor(id: String): ThinkingWire =
         byId(id)?.thinkingWire ?: ThinkingWire.STANDARD_REASONING_EFFORT
+
+    fun mediaContentOrderFor(id: String): MediaContentOrder =
+        byId(id)?.mediaContentOrder ?: MediaContentOrder.TEXT_THEN_MEDIA
+
+    /** 未入表的供应商默认会发 `detail`（标准 OpenAI 字段）。 */
+    fun sendsImageDetailFor(id: String): Boolean =
+        byId(id)?.sendsImageDetail ?: true
 
     /** 由基址推断供应商（旧单配置懒迁移用）；命中不了归 custom。 */
     fun matchByBaseUrl(baseUrl: String): String {

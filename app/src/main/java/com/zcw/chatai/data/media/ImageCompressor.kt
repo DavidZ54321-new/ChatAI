@@ -2,10 +2,13 @@ package com.zcw.chatai.data.media
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
 import android.net.Uri
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.OutputStream
 
 /** 解码（自动应用 EXIF 方向）→ 等比缩放 → 重新编码。HEIC 等格式也被归一化成 JPEG/PNG。 */
 object ImageCompressor {
@@ -35,9 +38,7 @@ object ImageCompressor {
         target.parentFile?.mkdirs()
         return try {
             FileOutputStream(target).use { out ->
-                if (!bitmap.compress(outputFormat(bitmap, sourceMime), ImageCodec.JPEG_QUALITY, out)) {
-                    return null
-                }
+                if (!compress(bitmap, sourceMime, out)) return null
             }
             target.length()
         } catch (t: Exception) {
@@ -45,6 +46,56 @@ object ImageCompressor {
             null
         }
     }
+
+    /**
+     * 把已在内存中的图片缩到长边不超过 [maxEdge]，编码成新字节。不改调用方持有的原数组。
+     * 已经不超过、或解码/编码失败时返回 null，调用方继续用原字节。
+     * 先只读边界；需要缩时按 [ImageCodec.sampleSize] 采样，避免把生成图的整张位图解进内存。
+     */
+    fun shrink(bytes: ByteArray, sourceMime: String, maxEdge: Int): Pair<ByteArray, String>? {
+        if (bytes.isEmpty() || maxEdge <= 0) return null
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        val width = bounds.outWidth
+        val height = bounds.outHeight
+        if (width <= 0 || height <= 0) return null
+        if (maxOf(width, height) <= maxEdge) return null
+        val bitmap = try {
+            val options = BitmapFactory.Options().apply {
+                inSampleSize = ImageCodec.sampleSize(width, height, maxEdge)
+            }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+        } catch (t: Exception) {
+            null
+        } ?: return null
+        try {
+            val size = ImageCodec.computeTargetSize(bitmap.width, bitmap.height, maxEdge)
+            val scaled = if (size.width == bitmap.width && size.height == bitmap.height) {
+                bitmap
+            } else {
+                Bitmap.createScaledBitmap(bitmap, size.width, size.height, true)
+            }
+            try {
+                val encoded = encode(scaled, sourceMime)?.takeIf { it.isNotEmpty() } ?: return null
+                val outMime = ImageCodec.sniffMime(encoded) ?: outputMime(scaled, sourceMime)
+                return encoded to outMime
+            } finally {
+                if (scaled !== bitmap) scaled.recycle()
+            }
+        } finally {
+            bitmap.recycle()
+        }
+    }
+
+    private fun encode(bitmap: Bitmap, sourceMime: String): ByteArray? = try {
+        val out = ByteArrayOutputStream()
+        if (!compress(bitmap, sourceMime, out)) null else out.toByteArray()
+    } catch (t: Exception) {
+        null
+    }
+
+    private fun compress(bitmap: Bitmap, sourceMime: String, out: OutputStream): Boolean =
+        bitmap.compress(outputFormat(bitmap, sourceMime), ImageCodec.JPEG_QUALITY, out)
 
     fun outputMime(bitmap: Bitmap, sourceMime: String): String =
         if (keepAlpha(bitmap, sourceMime)) ImageCodec.MIME_PNG else ImageCodec.MIME_JPEG

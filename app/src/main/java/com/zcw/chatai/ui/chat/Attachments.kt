@@ -229,7 +229,7 @@ fun PendingAttachmentStrip(
     pending: List<PendingAttachment>,
     onRemove: (String) -> Unit,
     modifier: Modifier = Modifier,
-    /** 非空时在末尾追加一个「＋」方块（编辑弹层用它直达系统选择器）。 */
+    /** 非空时在末尾追加一个「＋」方块。聊天输入栏用它再打开附件类型菜单；编辑弹层用它直达系统选择器。 */
     onAdd: (() -> Unit)? = null,
     onOpen: (PendingAttachment) -> Unit = {},
 ) {

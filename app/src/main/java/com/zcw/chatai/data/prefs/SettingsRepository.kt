@@ -258,6 +258,8 @@ fun ChatSettings.toChatConfig(
         sendSessionHeader = preset?.sendSessionHeader == true,
         webSearchEnabled = false,
         thinkingWire = ProviderCatalog.thinkingWireFor(providerId),
+        mediaContentOrder = ProviderCatalog.mediaContentOrderFor(providerId),
+        sendsImageDetail = ProviderCatalog.sendsImageDetailFor(providerId),
         supportsVideo = ProviderCatalog.supportsVideo(providerId, entry),
         supportsAudio = ProviderCatalog.supportsAudio(providerId, entry),
         responsesWire = preset?.responsesWire ?: ResponsesRequestWire.OMIT_REASONING,

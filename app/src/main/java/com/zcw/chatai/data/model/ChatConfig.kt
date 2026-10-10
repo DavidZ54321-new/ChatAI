@@ -1,5 +1,6 @@
 package com.zcw.chatai.data.model
 
+import com.zcw.chatai.data.provider.MediaContentOrder
 import com.zcw.chatai.data.provider.ProviderCatalog
 import com.zcw.chatai.data.provider.ResponsesRequestWire
 import com.zcw.chatai.data.provider.ThinkingWire
@@ -12,7 +13,8 @@ import com.zcw.chatai.data.provider.ThinkingWire
  * - [thinkingWire] 决定思考开关的**上行序列化风格**（由供应商预设提供）：
  *   标准面发 `reasoning_effort`，MiMo 发非标准 `thinking:{type}` 对象——差异走数据，不是 if-vendor。
  * - [maxTokens] 为 null 时不发送，让服务端用默认值（思考模式下默认 64K，设小了会被思维链吃光）。
- * - [imageDetail] 对应标准 `image_url.detail`（low/high/original/auto），null 时不发送。
+ * - [imageDetail] 对应标准 `image_url.detail`（low/high），null 时不发送。
+ *   供应商不认该字段时（[sendsImageDetail] = false）省流改为本地缩小，不把字段发出去。
  * - [extraParams] 是兼容逃生口：一段 JSON 对象，顶层键深度合并进请求体
  *   （`model`/`messages`/`stream` 三个键受保护，不允许被覆盖）。
  * - [historyImageTurns] 历史图片按**轮次**重发：-1 全部，0 只发当前轮，N = 当前轮 + 最近 N 轮；
@@ -53,6 +55,10 @@ data class ChatConfig(
     val responsesBaseUrl: String = "",
     /** 思考字段上行风格（由供应商预设决定，见 `ProviderPreset.thinkingWire`）。 */
     val thinkingWire: ThinkingWire = ThinkingWire.STANDARD_REASONING_EFFORT,
+    /** 媒体与正文的块顺序（由供应商预设决定，见 `ProviderPreset.mediaContentOrder`）。 */
+    val mediaContentOrder: MediaContentOrder = MediaContentOrder.TEXT_THEN_MEDIA,
+    /** 是否发送 `image_url.detail`。false 时省流改为本地缩小，见 `ImageCodec.outboundEdge`。 */
+    val sendsImageDetail: Boolean = true,
     val supportsVideo: Boolean = false,
     val supportsAudio: Boolean = false,
     /** Responses 面的思考/温度线型（预设数据，见 [ResponsesRequestWire]）。 */
