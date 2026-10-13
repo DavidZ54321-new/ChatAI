@@ -51,6 +51,7 @@ class SettingsViewModel(
         val imageDetail: ImageDetail = ImageDetail.FOLLOW_DEFAULT,
         val includeUsage: Boolean = true,
         val includeEnvTime: Boolean = true,
+        val includeReasoning: Boolean = true,
         val streamHaptic: Boolean = true,
         val historyImageTurns: Int = ChatSettings.DEFAULT_HISTORY_IMAGE_TURNS,
         /** 图搜模型链（逗号分隔的原始输入）；空 = 用内置默认。 */
@@ -135,6 +136,7 @@ class SettingsViewModel(
                 imageDetail = settings.imageDetail,
                 includeUsage = settings.includeUsage,
                 includeEnvTime = settings.includeEnvTime,
+                includeReasoning = settings.includeReasoning,
                 streamHaptic = settings.streamHaptic,
                 historyImageTurns = settings.historyImageTurns,
                 imageSearchModels = settings.imageSearchModelsRaw,
@@ -287,6 +289,7 @@ class SettingsViewModel(
             imageDetail = state.imageDetail,
             includeUsage = state.includeUsage,
             includeEnvTime = state.includeEnvTime,
+            includeReasoning = state.includeReasoning,
             historyImageTurns = state.historyImageTurns,
             imageSearchModelsRaw = state.imageSearchModels.trim(),
             imageGenModelRaw = state.imageGenModel.trim(),

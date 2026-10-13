@@ -206,14 +206,19 @@ class OpenAiCompatibleChatApi(
             .build()
     }
 
-    private fun httpErrorMessage(response: Response): String {
+    private fun httpFailure(response: Response): ChatApiException {
         val body = try {
             response.body.string()
         } catch (t: Exception) {
             null
         }
         val detail = body?.let { messageOrNull(it) } ?: body
-        return ApiErrorMapper.httpError(response.code, detail)
+        return ChatApiException(
+            ApiErrorMapper.httpError(response.code, detail),
+            audioFormatRejected = response.code == 400 &&
+                detail != null &&
+                ApiErrorMapper.isRejectedAudioFormat(detail),
+        )
     }
 
     /**
@@ -224,15 +229,19 @@ class OpenAiCompatibleChatApi(
 
     private fun messageOrNull(body: String?): String? {
         if (body.isNullOrBlank()) return null
+        val jsonBody = body.trim().let { raw ->
+            val start = raw.indexOf('{')
+            if (start >= 0) raw.substring(start) else raw
+        }
         val envelope = try {
-            val error = json.decodeFromString(ApiErrorEnvelope.serializer(), body).error
+            val error = json.decodeFromString(ApiErrorEnvelope.serializer(), jsonBody).error
             ApiErrorMapper.fromEnvelope(error.message, error.param)
         } catch (t: Exception) {
             null
         }
         if (!envelope.isNullOrBlank()) return envelope
         return try {
-            val root = json.parseToJsonElement(body).jsonObject
+            val root = json.parseToJsonElement(jsonBody).jsonObject
             (root["message"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
         } catch (t: Exception) {
             null
@@ -300,7 +309,7 @@ class OpenAiCompatibleChatApi(
 
         override fun onFailure(eventSource: EventSource, t: Throwable?, response: Response?) {
             if (response != null && !response.isSuccessful) {
-                scope.close(ChatApiException(httpErrorMessage(response)))
+                scope.close(httpFailure(response))
             } else {
                 scope.close(ChatApiException("网络异常：${t?.message ?: "未知错误"}", t))
             }

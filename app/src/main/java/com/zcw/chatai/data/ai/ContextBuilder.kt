@@ -43,7 +43,8 @@ object ContextBuilder {
         .filter { it.role == Role.USER || it.role == Role.ASSISTANT || it.role == Role.TOOL }
         .filter { it.status != MessageStatus.STREAMING }
         .filter {
-            it.content.isNotBlank() || it.attachments.isNotEmpty() ||
+            it.content.isNotBlank() || it.reasoningContent?.isNotBlank() == true ||
+                it.attachments.isNotEmpty() ||
                 it.toolCalls.isNotEmpty() || it.toolCallId != null
         }
 
@@ -63,6 +64,17 @@ object ContextBuilder {
         videoProvider: (Attachment) -> ChatRequestVideo? = { null },
         documentProvider: (Attachment) -> String? = { null },
         audioProvider: (Attachment) -> ChatRequestAudio? = { null },
+        /**
+         * 普通助手回合是否回传思考。带 tool_calls 的回合始终回传，不受此开关影响。
+         */
+        includeReasoning: Boolean = true,
+        /**
+         * 音频解读的第二跳：不重发图片、视频、音频，也不加「已省略 / 不可用」。
+         * 文档原文仍出站。
+         */
+        omitMedia: Boolean = false,
+        /** 只存在于这次请求末尾的用户说明，不入库。 */
+        trailingUserNote: String? = null,
         /**
          * 上下文尾条的环境注记（当前时间等），以 `system` 身份追加在**最后**：
          * 在窗口截断之后加，永远占末位；图片编号只认 USER 行附件，不受影响；
@@ -92,7 +104,12 @@ object ContextBuilder {
         }
 
         val wire = ArrayList<ChatRequestMessage>(usable.size)
-        for (message in usable) {
+        for (raw in usable) {
+            val message = if (omitMedia) {
+                raw.copy(attachments = raw.attachments.filter { it.kind == AttachmentKind.DOCUMENT })
+            } else {
+                raw
+            }
             when (message.role) {
                 // TOOL 行只在对应 assistant 的分支里按 tool_calls 顺序取出，这里跳过。
                 Role.TOOL -> Unit
@@ -101,6 +118,7 @@ object ContextBuilder {
                     wire += toWire(
                         message, keepAttachments, labels,
                         imageProvider, videoProvider, documentProvider, audioProvider,
+                        includeReasoning,
                     )
                     for (call in message.toolCalls) {
                         val answer = answers[call.id]?.removeFirstOrNull()
@@ -108,6 +126,7 @@ object ContextBuilder {
                             toWire(
                                 answer, keepAttachments, labels,
                                 imageProvider, videoProvider, documentProvider, audioProvider,
+                                includeReasoning,
                             )
                         } else {
                             // assistant 已落 tool_calls 但应答行缺失（崩溃窗口）：
@@ -124,8 +143,12 @@ object ContextBuilder {
                 else -> wire += toWire(
                     message, keepAttachments, labels,
                     imageProvider, videoProvider, documentProvider, audioProvider,
+                    includeReasoning,
                 )
             }
+        }
+        trailingUserNote?.takeIf { it.isNotBlank() }?.let { note ->
+            wire += ChatRequestMessage(role = Role.USER.wire, content = note)
         }
         envNote?.takeIf { it.isNotBlank() }?.let { note ->
             wire += ChatRequestMessage(role = Role.SYSTEM.wire, content = note)
@@ -141,6 +164,7 @@ object ContextBuilder {
         videoProvider: (Attachment) -> ChatRequestVideo?,
         documentProvider: (Attachment) -> String?,
         audioProvider: (Attachment) -> ChatRequestAudio?,
+        includeReasoning: Boolean,
     ): ChatRequestMessage {
         if (message.role == Role.TOOL) {
             // 空白工具结果也必须保留：它对应的 assistant tool_calls 需要被应答，
@@ -158,12 +182,9 @@ object ContextBuilder {
         if (message.attachments.isEmpty()) {
             return ChatRequestMessage(
                 role = message.role.wire,
-                content = message.content,
+                content = outboundContent(message),
                 toolCalls = message.toolCalls,
-                // 只有带 tool_calls 的回合必须回传思考内容，否则思考模式 400。
-                reasoning = message.reasoningContent?.takeIf {
-                    it.isNotBlank() && message.toolCalls.isNotEmpty()
-                },
+                reasoning = echoedReasoning(message, includeReasoning),
             )
         }
         val keep = message.id in keepAttachments
@@ -212,11 +233,32 @@ object ContextBuilder {
         }
         return ChatRequestMessage(
             role = message.role.wire,
-            content = withNote(withNote(message.content, docText.ifBlank { null }), note),
+            content = withNote(withNote(outboundContent(message), docText.ifBlank { null }), note),
             images = images,
             videos = videos,
             audios = audios,
+            reasoning = echoedReasoning(message, includeReasoning),
         )
+    }
+
+    private fun outboundContent(message: Message): String {
+        if (message.role != Role.ASSISTANT) return message.content
+        return AssistantVisible.text(
+            message.content,
+            message.reasoningContent,
+            message.toolCalls.isNotEmpty(),
+        )
+    }
+
+    /**
+     * 带 tool_calls 的回合必须回传思考，否则思考模式 400。
+     * 其余助手回合看 [includeReasoning]。
+     */
+    private fun echoedReasoning(message: Message, includeReasoning: Boolean): String? {
+        val text = message.reasoningContent?.takeIf { it.isNotBlank() } ?: return null
+        if (message.role != Role.ASSISTANT) return null
+        if (message.toolCalls.isNotEmpty() || includeReasoning) return text
+        return null
     }
 
     private fun withNote(content: String, note: String?): String = when {

@@ -10,6 +10,7 @@ import com.zcw.chatai.data.model.Message
 import com.zcw.chatai.data.model.Role
 import com.zcw.chatai.data.model.ToolResult
 import com.zcw.chatai.data.doc.DocumentLabel
+import com.zcw.chatai.data.ai.AssistantVisible
 import com.zcw.chatai.data.media.AttachmentStore
 import java.io.File
 
@@ -111,9 +112,19 @@ data class ChatMessageItem(
     /** `role=TOOL` 行的结构化结果；其余行为 null。 */
     val toolResult: ToolResult? = null,
     val citations: List<MessageCitation> = emptyList(),
+    /** 这条助手消息带了工具调用。空正文时不能把思考当成回答。 */
+    val hasToolCalls: Boolean = false,
     /** 消息落库时间（毫秒）。链路页用它标每一轮；0 只出现在没填时间的测试数据里。 */
     val createdAt: Long = 0,
-)
+) {
+    /** 气泡和复制用的正文。流式过程中不把思考顶上去。 */
+    fun visibleAnswer(streaming: Boolean = false): String =
+        if (streaming) {
+            content
+        } else {
+            AssistantVisible.text(content, reasoning, hasToolCalls)
+        }
+}
 
 data class ChatUiState(
     val conversationId: String? = null,
@@ -142,6 +153,8 @@ data class ChatUiState(
     val audioInputAvailable: Boolean = false,
     /** 视频上传/解析中的一行提示；null 表示没有进行中的视频处理。 */
     val videoUploadNotice: String? = null,
+    /** 音频被拒后正在重打包等，和视频上传分开。 */
+    val turnNotice: String? = null,
 ) {
     val canSend: Boolean
         get() = (input.isNotBlank() || pending.isNotEmpty()) && !isTurnActive
@@ -208,5 +221,6 @@ internal fun Message.toChatMessageItem(attachmentStore: AttachmentStore): ChatMe
     attachments = attachments,
     toolResult = toolResult,
     citations = citations,
+    hasToolCalls = toolCalls.isNotEmpty(),
     createdAt = createdAt,
 )

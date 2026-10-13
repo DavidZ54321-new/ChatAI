@@ -195,10 +195,67 @@ class ContextBuilderTest {
     }
 
     @Test
-    fun plainAssistantDoesNotEchoReasoning() {
+    fun plainAssistantDoesNotEchoReasoningWhenSwitchIsOff() {
+        val messages = listOf(message(id = "a1", role = Role.ASSISTANT, content = "答案", reasoningContent = "想"))
+        val built = ContextBuilder.build(
+            messages,
+            imageTurns = 0,
+            imageProvider = { null },
+            includeReasoning = false,
+        )
+        assertEquals("答案", built.single().content)
+        assertNull(built.single().reasoning)
+    }
+
+    @Test
+    fun plainAssistantEchoesReasoningByDefault() {
         val messages = listOf(message(id = "a1", role = Role.ASSISTANT, content = "答案", reasoningContent = "想"))
         val built = ContextBuilder.build(messages, imageTurns = 0, imageProvider = { null })
-        assertNull(built.single().reasoning)
+        assertEquals("答案", built.single().content)
+        assertEquals("想", built.single().reasoning)
+    }
+
+    @Test
+    fun reasoningOnlyAssistantStaysInTheWindow() {
+        val chorus = "0:10.70-0:26.60 [Chorus]"
+        val messages = listOf(
+            message(id = "u1", role = Role.USER, content = "帮我分别解读这些文件"),
+            message(id = "a1", role = Role.ASSISTANT, content = "", reasoningContent = chorus),
+            message(id = "u2", role = Role.USER, content = "你怎么都不思考了？"),
+        )
+        val on = ContextBuilder.build(messages, imageTurns = 0, imageProvider = { null })
+        assertEquals(listOf("user", "assistant", "user"), on.map { it.role })
+        assertEquals(chorus, on[1].content)
+        assertEquals(chorus, on[1].reasoning)
+
+        val off = ContextBuilder.build(
+            messages,
+            imageTurns = 0,
+            imageProvider = { null },
+            includeReasoning = false,
+        )
+        assertEquals(chorus, off[1].content)
+        assertNull(off[1].reasoning)
+    }
+
+    @Test
+    fun toolCallTurnEchoesReasoningEitherWay() {
+        val calls = listOf(ToolCall("call_1", "web_search", "{\"query\":\"x\"}"))
+        val messages = listOf(
+            message(id = "a1", role = Role.ASSISTANT, content = "", toolCalls = calls, reasoningContent = "想"),
+            message(id = "t1", role = Role.TOOL, content = "结果", toolCallId = "call_1"),
+        )
+        for (include in listOf(true, false)) {
+            val built = ContextBuilder.build(
+                messages,
+                imageTurns = 0,
+                imageProvider = { null },
+                includeReasoning = include,
+            )
+            assertEquals("", built[0].content)
+            assertEquals("想", built[0].reasoning)
+            assertEquals(calls, built[0].toolCalls)
+        }
     }
 
     @Test
@@ -460,6 +517,46 @@ class ContextBuilderTest {
         assertTrue(built.single().images.isEmpty())
         assertTrue(built.single().videos.isEmpty())
         assertEquals("听这个", built.single().content)
+    }
+
+    @Test
+    fun omitMediaDropsAudioWithoutPlaceholderAndAppendsNote() {
+        val doc = Attachment(
+            id = "d1",
+            kind = AttachmentKind.DOCUMENT,
+            relativePath = "attachments/c/d1.pdf",
+            mimeType = "application/pdf",
+            width = 0,
+            height = 0,
+            sizeBytes = 1000,
+            extractedPath = "attachments/c/d1.txt",
+            displayName = "report.pdf",
+        )
+        val history = listOf(
+            message(
+                "u1",
+                Role.USER,
+                "帮我分别解读这些文件",
+                attachments = listOf(audioAttachment("au1"), doc),
+            ),
+            message("a1", Role.ASSISTANT, "识别稿"),
+        )
+        val built = ContextBuilder.build(
+            history,
+            imageTurns = 1,
+            imageProvider = { null },
+            documentProvider = { "第一章" },
+            audioProvider = { audio },
+            omitMedia = true,
+            trailingUserNote = AudioTurn.FOLLOW_UP,
+        )
+        assertEquals(listOf("user", "assistant", "user"), built.map { it.role })
+        assertTrue(built[0].audios.isEmpty())
+        assertFalse(built[0].content.contains("省略"))
+        assertFalse(built[0].content.contains("不可用"))
+        assertTrue(built[0].content.contains("【文档：report.pdf】"))
+        assertTrue(built[0].content.contains("第一章"))
+        assertEquals(AudioTurn.FOLLOW_UP, built[2].content)
     }
 
     @Test

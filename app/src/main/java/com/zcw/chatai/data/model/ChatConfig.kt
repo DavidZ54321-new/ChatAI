@@ -32,6 +32,11 @@ data class ChatConfig(
     val includeUsage: Boolean = true,
     /** 上下文末尾是否追加当前时间尾条（设置开关，默认开；取值失败时不追加）。 */
     val includeEnvTime: Boolean = true,
+    /**
+     * 是否把历史助手消息的思考回传进下一轮（设置开关，默认开）。
+     * 带 tool_calls 的回合不受此开关影响，始终回传，否则思考模式 400。
+     */
+    val includeReasoning: Boolean = true,
     val historyImageTurns: Int = 1,
     val extraParams: String? = null,
     /** 本回合是否注入 web_search/web_fetch 工具。 */

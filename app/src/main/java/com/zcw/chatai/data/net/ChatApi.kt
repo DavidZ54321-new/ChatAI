@@ -29,7 +29,10 @@ data class ChatRequestMessage(
     val toolCalls: List<ToolCall> = emptyList(),
     /** `role=tool` 结果消息对应的调用 id。 */
     val toolCallId: String? = null,
-    /** 仅带 tool_calls 的 assistant 回合需要回传（否则思考模式 400）。 */
+    /**
+     * 回传给模型的思考。带 tool_calls 的回合必须带，否则思考模式 400。
+     * 其余助手回合由设置「上下文带上思考过程」决定。
+     */
     val reasoning: String? = null,
 )
 
@@ -84,7 +87,12 @@ sealed interface ChatStreamEvent {
     data object Completed : ChatStreamEvent
 }
 
-class ChatApiException(message: String, cause: Throwable? = null) : Exception(message, cause)
+class ChatApiException(
+    message: String,
+    cause: Throwable? = null,
+    /** 映射成中文之前就定下：这次 400 是音频格式被拒，可以重打包再发一次。 */
+    val audioFormatRejected: Boolean = false,
+) : Exception(message, cause)
 
 /** 发送路径上的内存耗尽。只认 [OutOfMemoryError] 本身，不靠堆栈原文猜原因。 */
 const val SEND_OUT_OF_MEMORY = "手机内存不足，没法完成发送，请稍后再试"

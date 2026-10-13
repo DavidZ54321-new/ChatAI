@@ -34,6 +34,9 @@ object ApiErrorMapper {
             status == 400 && detail != null && isVideoRelated(detail) ->
                 "该模型可能不支持视频输入，或视频格式/大小不受支持：$detail"
 
+            status == 400 && detail != null && isRejectedAudioFormat(detail) ->
+                "这个音频格式发不出去，服务端只接受 mp3、flac、m4a、wav、ogg"
+
             // 历史里工具应答缺失/错序导致的 400。组装层已能自动修复，重试即可。
             status == 400 && detail != null && isToolPairingRelated(detail) ->
                 "对话记录里的工具调用缺少应答（已自动修复），请重试：$detail"
@@ -69,6 +72,13 @@ object ApiErrorMapper {
         val lower = detail.lowercase()
         return "image" in lower || "图片" in detail || "vision" in lower
     }
+
+    /**
+     * 音频容器被拒。只认服务端原文里的 `invalid audio format`，
+     * 不认映射之后的中文提示，避免展示文案一改就带着重试一起变。
+     */
+    fun isRejectedAudioFormat(detail: String): Boolean =
+        "invalid audio format" in detail.lowercase()
 
     /** 视频相关的 400（例如 `video format is not supported` / 「不支持视频输入」）。 */
     fun isVideoRelated(detail: String): Boolean {

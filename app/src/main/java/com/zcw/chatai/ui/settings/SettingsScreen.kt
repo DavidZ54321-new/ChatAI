@@ -460,6 +460,16 @@ private fun ChatWorkspaceSettings(
         style = MaterialTheme.typography.bodySmall,
         color = scheme.onSurfaceVariant,
     )
+    SwitchRow(
+        label = "上下文带上思考过程",
+        checked = state.includeReasoning,
+        onCheckedChange = { value -> viewModel.update { it.copy(includeReasoning = value) } },
+    )
+    Text(
+        text = "每次发消息时，历史助手消息的思考一并回传。工具调用和结果始终带上，不在这个开关里。",
+        style = MaterialTheme.typography.bodySmall,
+        color = scheme.onSurfaceVariant,
+    )
 
     SectionTitle("看图")
     ChoiceRow(

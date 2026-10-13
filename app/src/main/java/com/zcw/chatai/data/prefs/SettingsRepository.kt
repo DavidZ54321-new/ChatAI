@@ -91,6 +91,11 @@ data class ChatSettings(
     val includeUsage: Boolean,
     /** 上下文末尾是否追加当前时间尾条（默认开；取值失败时不追加，主流程不受影响）。 */
     val includeEnvTime: Boolean,
+    /**
+     * 发消息时是否把历史助手的思考一并回传（默认开）。
+     * 工具调用和结果不归这个开关：少回传会 400。
+     */
+    val includeReasoning: Boolean = true,
     /** 流式正文吐字时轻震（默认开）。只影响界面，不进请求。 */
     val streamHaptic: Boolean = true,
     /** 历史图片重发轮次：-1 全部、0 只发当前轮、N = 当前轮 + 最近 N 轮。 */
@@ -215,6 +220,7 @@ data class ChatSettings(
             imageDetail = ImageDetail.FOLLOW_DEFAULT,
             includeUsage = true,
             includeEnvTime = true,
+            includeReasoning = true,
             streamHaptic = true,
             historyImageTurns = DEFAULT_HISTORY_IMAGE_TURNS,
             imageSearchModelsRaw = "",
@@ -252,6 +258,7 @@ fun ChatSettings.toChatConfig(
         imageDetail = imageDetail.wire,
         includeUsage = includeUsage,
         includeEnvTime = includeEnvTime,
+        includeReasoning = includeReasoning,
         historyImageTurns = historyImageTurns,
         extraParams = persona.extraParams.ifBlank { null },
         providerId = providerId,
@@ -333,6 +340,7 @@ class SettingsRepository(context: Context) {
         imageDetail: ImageDetail,
         includeUsage: Boolean,
         includeEnvTime: Boolean,
+        includeReasoning: Boolean,
         historyImageTurns: Int,
         imageSearchModelsRaw: String,
         imageGenModelRaw: String,
@@ -349,6 +357,7 @@ class SettingsRepository(context: Context) {
             prefs[KEY_IMAGE_DETAIL] = imageDetail.name
             prefs[KEY_INCLUDE_USAGE] = includeUsage
             prefs[KEY_INCLUDE_ENV_TIME] = includeEnvTime
+            prefs[KEY_INCLUDE_REASONING] = includeReasoning
             prefs[KEY_HISTORY_IMAGE_TURNS] = historyImageTurns
             if (imageSearchModelsRaw.isBlank()) prefs.remove(KEY_IMAGE_SEARCH_MODELS) else prefs[KEY_IMAGE_SEARCH_MODELS] = imageSearchModelsRaw
             if (imageGenModelRaw.isBlank()) prefs.remove(KEY_IMAGE_GEN_MODEL) else prefs[KEY_IMAGE_GEN_MODEL] = imageGenModelRaw
@@ -385,6 +394,7 @@ class SettingsRepository(context: Context) {
             prefs[KEY_IMAGE_DETAIL] = settings.imageDetail.name
             prefs[KEY_INCLUDE_USAGE] = settings.includeUsage
             prefs[KEY_INCLUDE_ENV_TIME] = settings.includeEnvTime
+            prefs[KEY_INCLUDE_REASONING] = settings.includeReasoning
             prefs[KEY_STREAM_HAPTIC] = settings.streamHaptic
             prefs[KEY_HISTORY_IMAGE_TURNS] = settings.historyImageTurns
             if (settings.imageSearchModelsRaw.isBlank()) {
@@ -519,6 +529,7 @@ class SettingsRepository(context: Context) {
             imageDetail = this[KEY_IMAGE_DETAIL].toEnum(ImageDetail.FOLLOW_DEFAULT),
             includeUsage = this[KEY_INCLUDE_USAGE] ?: true,
             includeEnvTime = this[KEY_INCLUDE_ENV_TIME] ?: true,
+            includeReasoning = this[KEY_INCLUDE_REASONING] ?: true,
             streamHaptic = this[KEY_STREAM_HAPTIC] ?: true,
             // 轮次单位是 v6 引入的；旧 key（消息条数）按约定统一归一到默认 1 轮。
             historyImageTurns = this[KEY_HISTORY_IMAGE_TURNS] ?: ChatSettings.DEFAULT_HISTORY_IMAGE_TURNS,
@@ -630,6 +641,8 @@ class SettingsRepository(context: Context) {
         val KEY_INCLUDE_USAGE = booleanPreferencesKey("include_usage")
         /** 上下文末尾追加当前时间（默认开；老版本无此 key 时回落 true）。 */
         val KEY_INCLUDE_ENV_TIME = booleanPreferencesKey("include_env_time")
+        /** 历史思考是否回传（默认开；老版本无此 key 时回落 true）。 */
+        val KEY_INCLUDE_REASONING = booleanPreferencesKey("include_reasoning")
         /** 流式正文轻震（默认开；老版本无此 key 时回落 true）。 */
         val KEY_STREAM_HAPTIC = booleanPreferencesKey("stream_haptic")
         /** 轮次单位（v6）：历史图片重发轮次。旧 key `history_image_limit` 已废弃。 */

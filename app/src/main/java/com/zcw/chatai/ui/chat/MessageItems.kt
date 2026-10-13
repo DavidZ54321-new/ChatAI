@@ -153,7 +153,7 @@ fun AssistantTurnItem(
             }
             // 整回合只挂一次操作行，放在所有步骤（含工具块）之后；
             // 最后一步没有正文（纯报错回合）时不挂，避免出现复制空白。
-            if (!isCurrentTurn && lastAssistant.content.isNotEmpty()) {
+            if (!isCurrentTurn && lastAssistant.visibleAnswer().isNotEmpty()) {
                 MessageActions(
                     onCopy = { onCopy(lastAssistant) },
                     onBranch = { onBranch(lastAssistant) },
@@ -181,13 +181,14 @@ private fun AssistantStep(
     onActiveCenter: InChatCenterReport?,
 ) {
     val placed = remember(message.id) { PlacedMarkdown() }
+    val body = message.visibleAnswer(streaming = isStreaming)
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         val reasoning = message.reasoning.orEmpty()
         if (reasoning.isNotBlank()) {
             ReasoningBlock(
                 reasoning = reasoning,
                 isStreaming = isStreaming,
-                answerStarted = message.content.isNotEmpty(),
+                answerStarted = body.isNotEmpty(),
                 reasoningMs = message.reasoningMs,
                 onUserExpand = onUserExpand,
             )
@@ -199,9 +200,9 @@ private fun AssistantStep(
             // 限定 isCurrentTurn：崩溃遗留的 STREAMING 行不是当前回合，不挂永久转圈。
             StreamingIndicator()
         }
-        if (message.content.isNotEmpty()) {
+        if (body.isNotEmpty()) {
             MessageMarkdown(
-                content = message.content,
+                content = body,
                 cacheable = !isStreaming,
                 searchHits = searchHits,
                 activeHit = activeHit,

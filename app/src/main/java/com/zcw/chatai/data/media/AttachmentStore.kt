@@ -382,8 +382,29 @@ class AttachmentStore(private val context: Context) {
     }
 
     /**
-     * 导入音频：原样复制（不转码），用 `MediaMetadataRetriever` 读时长。
-     * 无位图缩略图（用字母牌呈现）；只收 MiMo 支持的格式，超限/不可读给出可读错误。
+     * 仅当这次音频被服务端以格式错误拒掉时调用。
+     * 收成普通 m4a（不转 WAV）。已经是重打包结果，或打包失败，返回 null。
+     */
+    fun repackRejectedAudio(attachment: Attachment): Attachment? {
+        if (attachment.kind != AttachmentKind.AUDIO) return null
+        if (attachment.relativePath.endsWith(".send.m4a")) return null
+        val file = fileOf(attachment)
+        val relative = attachment.relativePath.substringBeforeLast('.') + ".send.m4a"
+        val dest = File(context.filesDir, relative)
+        if (!AudioRepack.repack(file, dest)) return null
+        if (dest.length() > AttachmentLimits.MAX_AUDIO_BYTES) {
+            dest.delete()
+            return null
+        }
+        return attachment.copy(
+            relativePath = relative,
+            mimeType = "audio/mp4",
+            sizeBytes = dest.length(),
+        )
+    }
+
+    /**
+     * 导入音频：原样复制，立刻能进输入框。
      */
     suspend fun importAudio(
         conversationId: String,

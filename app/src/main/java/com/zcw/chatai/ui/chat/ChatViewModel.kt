@@ -61,6 +61,12 @@ class ChatViewModel(
 
     private val input = MutableStateFlow("")
     private val pending = MutableStateFlow<List<PendingAttachment>>(emptyList())
+
+    /**
+     * 导入是异步的。发送或切会话会加一，进行中的导入回来时对不上就丢弃，
+     * 避免转码迟到后把附件塞回已经清空的输入框。
+     */
+    private var attachmentImportEpoch = 0
     private val notice = MutableStateFlow<String?>(null)
     private val conversationId = MutableStateFlow<String?>(null)
 
@@ -164,8 +170,14 @@ class ChatViewModel(
         repository.streaming,
         repository.busyConversations,
         repository.videoUploads,
-    ) { streaming, busy, uploads ->
-        TurnSnapshot(streaming = streaming, busy = busy, videoUploads = uploads)
+        repository.turnNotices,
+    ) { streaming, busy, uploads, notices ->
+        TurnSnapshot(
+            streaming = streaming,
+            busy = busy,
+            videoUploads = uploads,
+            turnNotices = notices,
+        )
     }
 
     val state: StateFlow<ChatUiState> = combine(
@@ -305,9 +317,14 @@ class ChatViewModel(
                 notice.value = "最多只能发送 ${AttachmentLimits.MAX_AUDIOS} 个音频"
                 return@launch
             }
+            val epoch = attachmentImportEpoch
             val id = ensureConversation()
             runCatching { attachmentStore.importAudio(id, uri) }
                 .onSuccess { attachment ->
+                    if (!acceptImported(epoch, id)) {
+                        attachmentStore.delete(listOf(attachment))
+                        return@onSuccess
+                    }
                     pending.value = pending.value + PendingAttachment(
                         id = attachment.id,
                         // 音频没有位图缩略图：传空路径，缩略图组件显示字母牌（见前端）。
@@ -343,6 +360,7 @@ class ChatViewModel(
         when (val result = repository.send(id, text, attachments)) {
             SendResult.Started -> {
                 input.value = ""
+                attachmentImportEpoch++
                 pending.value = emptyList()
             }
 
@@ -784,10 +802,15 @@ class ChatViewModel(
     }
 
     private fun discardPending() {
+        attachmentImportEpoch++
         val attachments = pending.value.map { it.attachment }
         if (attachments.isNotEmpty()) attachmentStore.delete(attachments)
         pending.value = emptyList()
     }
+
+    /** 导入开始后如果已经发送或切走，这份文件不能再进输入框。 */
+    private fun acceptImported(epoch: Int, conversationId: String): Boolean =
+        epoch == attachmentImportEpoch && this.conversationId.value == conversationId
 
     /**
      * 流式幽灵：`clearStreaming` 落在 Room 发射定稿内容之前时，用最后一帧流式内容顶住那一帧，
@@ -879,6 +902,7 @@ class ChatViewModel(
             videoInputAvailable = ProviderCatalog.supportsVideo(providerId, providerEntry),
             audioInputAvailable = ProviderCatalog.supportsAudio(providerId, providerEntry),
             videoUploadNotice = id?.let { turn.videoUploads[it] },
+            turnNotice = id?.let { turn.turnNotices[it] },
         )
     }
 
@@ -888,6 +912,7 @@ class ChatViewModel(
         val streaming: Map<String, StreamingMessage>,
         val busy: Set<String>,
         val videoUploads: Map<String, String>,
+        val turnNotices: Map<String, String>,
     )
 
     private data class ComposerSnapshot(

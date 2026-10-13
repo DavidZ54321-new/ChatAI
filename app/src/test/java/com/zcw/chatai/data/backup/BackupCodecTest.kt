@@ -95,6 +95,7 @@ class BackupCodecTest {
         imageDetail = ImageDetail.LOW,
         includeUsage = false,
         includeEnvTime = false,
+        includeReasoning = false,
         streamHaptic = false,
         historyImageTurns = 3,
         imageSearchModelsRaw = "qwen3.8-27b,qwen3.8-max",
@@ -227,8 +228,9 @@ class BackupCodecTest {
         assertEquals(ChatSettings.Default.providers.keys, restored.providers.keys)
         assertEquals(ChatSettings.Default.personas.keys, restored.personas.keys)
         assertEquals(restored.providers.keys.first(), restored.activeProviderId)
-        // 旧备份没有这个字段：缺省开，不把震动关掉。
+        // 旧备份没有这些字段：缺省开。
         assertEquals(true, restored.streamHaptic)
+        assertEquals(true, restored.includeReasoning)
     }
 
     @Test

@@ -2,6 +2,9 @@ package com.zcw.chatai.data
 
 import androidx.room.withTransaction
 import com.zcw.chatai.data.ai.AgentLoop
+import com.zcw.chatai.data.ai.AssistantVisible
+import com.zcw.chatai.data.ai.AudioTurn
+import com.zcw.chatai.data.ai.OutboundPlan
 import com.zcw.chatai.data.ai.AttachmentPrompt
 import com.zcw.chatai.data.ai.AttachmentRetention
 import com.zcw.chatai.data.ai.BranchCopy
@@ -174,6 +177,11 @@ class ChatRepository(
     private val _videoUploads = MutableStateFlow<Map<String, String>>(emptyMap())
 
     val videoUploads: StateFlow<Map<String, String>> = _videoUploads.asStateFlow()
+
+    /** 回合里的非视频提示（会话 → 一行），例如音频被拒后正在重打包。 */
+    private val _turnNotices = MutableStateFlow<Map<String, String>>(emptyMap())
+
+    val turnNotices: StateFlow<Map<String, String>> = _turnNotices.asStateFlow()
 
     fun consumeError() {
         _errors.value = null
@@ -1037,29 +1045,16 @@ class ChatRepository(
         toolContexts: ToolBackendContexts,
     ): MessageStatus {
         reconcileUnansweredToolCalls(conversationId)
+        val pending = db.messageDao().getByConversation(conversationId).map { it.toModel() }
+        when (AudioTurn.phase(pending)) {
+            AudioTurn.Phase.RecognizeThenInterpret -> return runAudioTurn(conversationId, config, resolvedVideos, interpretOnly = false)
+            AudioTurn.Phase.InterpretOnly -> return runAudioTurn(conversationId, config, resolvedVideos, interpretOnly = true)
+            AudioTurn.Phase.Normal -> Unit
+        }
         var steps = 0
         while (true) {
             val forceFinal = steps >= config.maxAgentSteps
-            val messageId = newId()
-            val timestamp = nowMs()
-            db.messageDao().upsert(
-                MessageEntity(
-                    id = messageId,
-                    conversationId = conversationId,
-                    role = Role.ASSISTANT.name,
-                    content = "",
-                    status = MessageStatus.STREAMING.name,
-                    errorMessage = null,
-                    reasoningContent = null,
-                    seq = db.messageDao().nextSeq(conversationId),
-                    model = config.model,
-                    promptTokens = null,
-                    completionTokens = null,
-                    createdAt = timestamp,
-                    updatedAt = timestamp,
-                ),
-            )
-            refreshSummary(conversationId)
+            val messageId = insertStreamingAssistant(conversationId, config.model)
             val history = db.messageDao().getByConversation(conversationId).map { it.toModel() }
             val outcome = streamOnce(
                 conversationId = conversationId,
@@ -1094,12 +1089,86 @@ class ChatRepository(
         }
     }
 
+    /**
+     * 音频回合不走工具循环。思考和工具在这两次请求里关掉，设置本身不改。
+     * 第一跳识别进正文；第二跳只在请求末尾加一句说明，界面上看不到这条用户消息。
+     */
+    private suspend fun runAudioTurn(
+        conversationId: String,
+        config: ChatConfig,
+        resolvedVideos: Map<String, ChatRequestVideo>,
+        interpretOnly: Boolean,
+    ): MessageStatus {
+        val plain = config.copy(reasoningEffort = "none", enabledTools = emptyList())
+        if (!interpretOnly) {
+            val recognitionId = insertStreamingAssistant(conversationId, plain.model)
+            val recognized = streamOnce(
+                conversationId = conversationId,
+                messageId = recognitionId,
+                config = plain,
+                history = db.messageDao().getByConversation(conversationId).map { it.toModel() },
+                resolvedVideos = resolvedVideos,
+                plan = AudioTurn.recognize,
+            )
+            if (recognized.failed || recognized.status != MessageStatus.COMPLETE) return recognized.status
+            if (!hasVisibleAnswer(recognitionId)) return recognized.status
+        }
+        val answerId = insertStreamingAssistant(conversationId, plain.model)
+        val interpreted = streamOnce(
+            conversationId = conversationId,
+            messageId = answerId,
+            config = plain,
+            history = db.messageDao().getByConversation(conversationId).map { it.toModel() },
+            resolvedVideos = resolvedVideos,
+            plan = AudioTurn.interpret,
+        )
+        if (interpreted.status == MessageStatus.COMPLETE && !hasVisibleAnswer(answerId)) {
+            db.messageDao().deleteById(answerId)
+            refreshSummary(conversationId)
+        }
+        return interpreted.status
+    }
+
+    private suspend fun hasVisibleAnswer(messageId: String): Boolean {
+        val row = db.messageDao().getById(messageId)?.toModel() ?: return false
+        return AssistantVisible.text(
+            row.content,
+            row.reasoningContent,
+            row.toolCalls.isNotEmpty(),
+        ).isNotBlank()
+    }
+
+    private suspend fun insertStreamingAssistant(conversationId: String, model: String?): String {
+        val messageId = newId()
+        val timestamp = nowMs()
+        db.messageDao().upsert(
+            MessageEntity(
+                id = messageId,
+                conversationId = conversationId,
+                role = Role.ASSISTANT.name,
+                content = "",
+                status = MessageStatus.STREAMING.name,
+                errorMessage = null,
+                reasoningContent = null,
+                seq = db.messageDao().nextSeq(conversationId),
+                model = model,
+                promptTokens = null,
+                completionTokens = null,
+                createdAt = timestamp,
+                updatedAt = timestamp,
+            ),
+        )
+        refreshSummary(conversationId)
+        return messageId
+    }
+
     private suspend fun streamOnce(
         conversationId: String,
         messageId: String,
         config: ChatConfig,
         history: List<Message>,
         resolvedVideos: Map<String, ChatRequestVideo>,
+        plan: OutboundPlan = OutboundPlan(),
     ): TurnOutcome {
         // 时间尾条在本机组装：任何异常都吞掉 → 不追加，主请求不受影响。
         // 走可注入的 nowMs（与其它落库时间戳同一时钟），别直调 System。
@@ -1108,63 +1177,90 @@ class ChatRepository(
         } else {
             null
         }
-        val messages = withContext(Dispatchers.IO) {
-            ContextBuilder.build(
-                history = history,
-                imageTurns = config.historyImageTurns,
-                imageProvider = { attachment ->
-                    attachmentStore.toRequestImage(
-                        attachment,
-                        config.imageDetail,
-                        config.sendsImageDetail,
-                    )
-                },
-                videoProvider = { attachment -> resolvedVideos[attachment.id] },
-                documentProvider = { attachment -> attachmentStore.documentText(attachment) },
-                audioProvider = { attachment -> attachmentStore.toRequestAudio(attachment) },
-                envNote = envNote,
-            )
-        }
         // 计时从这里开始（含首 token 延迟），和 UI 上「已深度思考」的口径一致。
-        val accumulator = StreamAccumulator(startedAt = elapsedMs())
-        val toolCalls = ToolCallAccumulator()
+        var requestHistory = history
+        var audioRetried = false
+        var accumulator = StreamAccumulator(startedAt = elapsedMs())
+        var toolCalls = ToolCallAccumulator()
         var status = MessageStatus.COMPLETE
         var resolvedStatus = status
         var errorMessage: String? = null
 
         publishStreaming(StreamingMessage(conversationId, messageId, "", ""))
         try {
-            api.stream(config, messages).collect { event ->
-                if (event is ChatStreamEvent.ToolCallDelta) toolCalls.accept(event)
-                val update = accumulator.accept(event, elapsedMs())
-                if (update.publish) {
-                    publishStreaming(
-                        StreamingMessage(
-                            conversationId = conversationId,
-                            messageId = messageId,
-                            content = DsmlStrip.strip(accumulator.content),
-                            reasoning = accumulator.reasoning,
-                            citations = accumulator.citations,
-                            reasoningMs = accumulator.reasoningMs,
-                        ),
+            while (true) {
+                val messages = withContext(Dispatchers.IO) {
+                    ContextBuilder.build(
+                        history = requestHistory,
+                        imageTurns = config.historyImageTurns,
+                        imageProvider = { attachment ->
+                            attachmentStore.toRequestImage(
+                                attachment,
+                                config.imageDetail,
+                                config.sendsImageDetail,
+                            )
+                        },
+                        videoProvider = { attachment -> resolvedVideos[attachment.id] },
+                        documentProvider = { attachment -> attachmentStore.documentText(attachment) },
+                        audioProvider = { attachment -> attachmentStore.toRequestAudio(attachment) },
+                        includeReasoning = config.includeReasoning,
+                        omitMedia = plan.omitMedia,
+                        trailingUserNote = plan.trailingUserNote,
+                        envNote = envNote,
                     )
                 }
-                if (update.checkpoint) {
-                    db.messageDao().updateContent(
-                        id = messageId,
-                        content = DsmlStrip.strip(accumulator.content),
-                        reasoning = accumulator.reasoning,
-                        reasoningMs = accumulator.reasoningMs,
-                        updatedAt = nowMs(),
-                    )
+                accumulator = StreamAccumulator(startedAt = elapsedMs())
+                toolCalls = ToolCallAccumulator()
+                try {
+                    api.stream(config, messages).collect { event ->
+                        if (event is ChatStreamEvent.ToolCallDelta) toolCalls.accept(event)
+                        val update = accumulator.accept(event, elapsedMs())
+                        if (update.publish) {
+                            publishStreaming(
+                                StreamingMessage(
+                                    conversationId = conversationId,
+                                    messageId = messageId,
+                                    content = DsmlStrip.strip(accumulator.content),
+                                    reasoning = accumulator.reasoning,
+                                    citations = accumulator.citations,
+                                    reasoningMs = accumulator.reasoningMs,
+                                ),
+                            )
+                        }
+                        if (update.checkpoint) {
+                            db.messageDao().updateContent(
+                                id = messageId,
+                                content = DsmlStrip.strip(accumulator.content),
+                                reasoning = accumulator.reasoning,
+                                reasoningMs = accumulator.reasoningMs,
+                                updatedAt = nowMs(),
+                            )
+                        }
+                    }
+                    break
+                } catch (t: ChatApiException) {
+                    val converted = if (!audioRetried && t.audioFormatRejected) {
+                        audioRetried = true
+                        _turnNotices.update { it + (conversationId to "正在把音频整理成可发送的格式…") }
+                        try {
+                            convertRejectedAudio(requestHistory)
+                        } finally {
+                            _turnNotices.update { it - conversationId }
+                        }
+                    } else {
+                        null
+                    }
+                    if (converted == null) {
+                        status = MessageStatus.ERROR
+                        errorMessage = t.userFacingSendError("请求失败")
+                        break
+                    }
+                    requestHistory = converted
                 }
             }
         } catch (cancelled: CancellationException) {
             status = MessageStatus.CANCELLED
             throw cancelled
-        } catch (t: ChatApiException) {
-            status = MessageStatus.ERROR
-            errorMessage = t.userFacingSendError("请求失败")
         } catch (t: Throwable) {
             status = MessageStatus.ERROR
             errorMessage = t.userFacingSendError("请求失败")
@@ -1190,6 +1286,31 @@ class ChatRepository(
             failed = status == MessageStatus.ERROR,
             status = resolvedStatus,
         )
+    }
+
+    /**
+     * 把历史里被拒的音频收成普通 m4a，并写回那条用户消息。没有可转的文件时返回 null。
+     */
+    private suspend fun convertRejectedAudio(history: List<Message>): List<Message>? {
+        var changed = false
+        val updated = history.map { message ->
+            if (message.attachments.none { it.kind == AttachmentKind.AUDIO }) return@map message
+            val next = message.attachments.map { attachment ->
+                if (attachment.kind != AttachmentKind.AUDIO) {
+                    attachment
+                } else {
+                    attachmentStore.repackRejectedAudio(attachment) ?: attachment
+                }
+            }
+            if (next == message.attachments) {
+                message
+            } else {
+                changed = true
+                db.messageDao().updateAttachments(message.id, AttachmentCodec.encode(next), nowMs())
+                message.copy(attachments = next)
+            }
+        }
+        return if (changed) updated else null
     }
 
     private suspend fun executeTools(

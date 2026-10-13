@@ -390,7 +390,7 @@ fun ChatScreen(
         }
     } }
     val onItemRetry = remember { { message: ChatMessageItem -> retryAction.value(message.id) } }
-    val onItemCopy = remember { { message: ChatMessageItem -> clipboard.copy(message.content) } }
+    val onItemCopy = remember { { message: ChatMessageItem -> clipboard.copy(message.visibleAnswer()) } }
     val onItemDelete = remember { { message: ChatMessageItem -> deleteTarget = message } }
     val onItemBranch = remember { { message: ChatMessageItem -> branchTarget = message } }
     val onItemContinue = remember { { continueAction.value() } }
@@ -588,7 +588,7 @@ fun ChatScreen(
                 .onSizeChanged { composerHeight = it.height },
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                state.videoUploadNotice?.let { uploading ->
+                listOfNotNull(state.videoUploadNotice, state.turnNotice).forEach { uploading ->
                     Text(
                         text = uploading,
                         style = MaterialTheme.typography.labelMedium,
@@ -681,7 +681,7 @@ fun ChatScreen(
                 canRegenerate = true,
                 onDismiss = { messageOverlay = null },
                 onCopy = {
-                    clipboard.copy(target.content)
+                    clipboard.copy(target.visibleAnswer())
                     messageOverlay = null
                 },
                 onEdit = {
@@ -714,16 +714,18 @@ fun ChatScreen(
                     anchorInWindow = overlay.anchorInWindow,
                     statusBarBottomInWindow = statusBarBottom,
                     composerTopInWindow = composerTop,
-                    canSelectText = latest.content.isNotEmpty() &&
+                    canSelectText = latest.visibleAnswer(
+                        streaming = state.isStreaming && state.streamingMessageId == latest.id,
+                    ).isNotEmpty() &&
                         !(state.isStreaming && state.streamingMessageId == latest.id),
                     canRegenerate = MessageGroups.isTailGroup(groups, turnIndex),
                     onDismiss = { messageOverlay = null },
                     onCopy = {
-                        clipboard.copy(latest.content)
+                        clipboard.copy(latest.visibleAnswer())
                         messageOverlay = null
                     },
                     onSelectText = {
-                        messageOverlay = MessageOverlay.SelectText(latest.content)
+                        messageOverlay = MessageOverlay.SelectText(latest.visibleAnswer())
                     },
                     onRegenerate = {
                         messageOverlay = null

@@ -148,6 +148,19 @@ class ApiErrorMapperTest {
     }
 
     @Test
+    fun flagsRejectedAudioFormatInChinese() {
+        val message = ApiErrorMapper.httpError(
+            400,
+            "Param Incorrect：invalid audio format, only mp3/flac/m4a/wav/ogg are supported",
+        )
+        assertTrue(message, message.contains("只接受"))
+        assertFalse(message.contains("data:"))
+        assertFalse(message.contains("{"))
+        assertTrue(ApiErrorMapper.isRejectedAudioFormat("invalid audio format, only mp3/flac/m4a/wav/ogg are supported"))
+        assertFalse(ApiErrorMapper.isRejectedAudioFormat(message))
+    }
+
+    @Test
     fun flagsVideoRelatedBadRequest() {
         val message = ApiErrorMapper.httpError(400, "The video format is not supported for this model")
         assertTrue(message, message.contains("不支持视频"))
