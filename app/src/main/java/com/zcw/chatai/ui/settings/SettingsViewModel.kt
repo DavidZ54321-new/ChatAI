@@ -18,6 +18,7 @@ import com.zcw.chatai.data.provider.AnthropicBaseLayout
 import com.zcw.chatai.data.provider.ProviderCatalog
 import com.zcw.chatai.data.provider.ProviderEntry
 import com.zcw.chatai.data.provider.ToolModels
+import com.zcw.chatai.data.provider.ToolPolicy
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -66,6 +67,7 @@ class SettingsViewModel(
         val videoPromptExtend: Boolean = true,
         val themeMode: ThemeMode = ThemeMode.SYSTEM,
         val themeFamily: ThemeFamily = ThemeFamily.CLAUDE,
+        val toolPolicy: ToolPolicy = ToolPolicy(),
         val loaded: Boolean = false,
         val models: List<String> = emptyList(),
         val busy: Boolean = false,
@@ -146,6 +148,7 @@ class SettingsViewModel(
                 videoPromptExtend = settings.videoPromptExtend,
                 themeMode = settings.themeMode,
                 themeFamily = settings.themeFamily,
+                toolPolicy = settings.toolPolicy,
                 loaded = true,
             )
         }
@@ -296,6 +299,7 @@ class SettingsViewModel(
             imagePromptExtend = state.imagePromptExtend,
             videoGenModelRaw = state.videoGenModel.trim(),
             videoPromptExtend = state.videoPromptExtend,
+            toolPolicy = state.toolPolicy,
         )
     }
 

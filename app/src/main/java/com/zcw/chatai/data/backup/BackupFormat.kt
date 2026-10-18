@@ -14,7 +14,10 @@ import com.zcw.chatai.data.prefs.WorkspaceMemory
 import com.zcw.chatai.data.prefs.ReasoningEffort
 import com.zcw.chatai.data.prefs.ThemeFamily
 import com.zcw.chatai.data.prefs.ThemeMode
+import com.zcw.chatai.data.provider.FetchBackend
 import com.zcw.chatai.data.provider.ProviderCatalog
+import com.zcw.chatai.data.provider.ToolFollow
+import com.zcw.chatai.data.provider.ToolPolicy
 import com.zcw.chatai.data.provider.ProviderEntry
 import java.time.Instant
 import java.time.ZoneId
@@ -157,6 +160,12 @@ data class SettingsDto(
     val textWorkspace: WorkspaceMemory = WorkspaceMemory(),
     val themeMode: String = ThemeMode.SYSTEM.name,
     val themeFamily: String = ThemeFamily.CLAUDE.name,
+    /** 旧备份没有这些字段时：四类都跟随联网，抓取用本机。 */
+    val toolGateSearch: String = ToolFollow.FOLLOW.name,
+    val toolGateFetch: String = ToolFollow.FOLLOW.name,
+    val toolGateImageSearch: String = ToolFollow.FOLLOW.name,
+    val toolGateImageSimilar: String = ToolFollow.FOLLOW.name,
+    val fetchBackend: String = FetchBackend.LOCAL.name,
 ) {
     /** 转回设置模型；表意外为空时回落到默认值，绝不让导入把连接配置变成空的。 */
     fun toModel(): ChatSettings {
@@ -186,6 +195,13 @@ data class SettingsDto(
             textWorkspace = textWorkspace,
             themeMode = enumOrDefault(themeMode, ThemeMode.SYSTEM),
             themeFamily = enumOrDefault(themeFamily, ThemeFamily.CLAUDE),
+            toolPolicy = ToolPolicy(
+                search = enumOrDefault(toolGateSearch, ToolFollow.FOLLOW),
+                fetch = enumOrDefault(toolGateFetch, ToolFollow.FOLLOW),
+                imageSearch = enumOrDefault(toolGateImageSearch, ToolFollow.FOLLOW),
+                imageSimilar = enumOrDefault(toolGateImageSimilar, ToolFollow.FOLLOW),
+                fetchBackend = enumOrDefault(fetchBackend, FetchBackend.LOCAL),
+            ),
         )
     }
 
@@ -212,6 +228,11 @@ data class SettingsDto(
             textWorkspace = settings.textWorkspace,
             themeMode = settings.themeMode.name,
             themeFamily = settings.themeFamily.name,
+            toolGateSearch = settings.toolPolicy.search.name,
+            toolGateFetch = settings.toolPolicy.fetch.name,
+            toolGateImageSearch = settings.toolPolicy.imageSearch.name,
+            toolGateImageSimilar = settings.toolPolicy.imageSimilar.name,
+            fetchBackend = settings.toolPolicy.fetchBackend.name,
         )
     }
 }

@@ -51,8 +51,11 @@ import com.zcw.chatai.data.net.userFacingSendError
 import com.zcw.chatai.data.prefs.ChatSettings
 import com.zcw.chatai.data.prefs.SettingsRepository
 import com.zcw.chatai.data.prefs.toChatConfig
+import com.zcw.chatai.data.provider.FetchBackend
 import com.zcw.chatai.data.provider.ProviderCatalog
 import com.zcw.chatai.data.provider.ToolBackendResolver
+import com.zcw.chatai.data.provider.ToolGates
+import com.zcw.chatai.data.web.deepseek.DeepSeekFetchProvider
 import com.zcw.chatai.data.web.HttpWebFetcher
 import com.zcw.chatai.data.web.ImageSearchOutcome
 import com.zcw.chatai.data.web.ImageSearchProvider
@@ -153,6 +156,7 @@ class ChatRepository(
     /** 视频附件解析器（内联/上传/崩溃恢复）；未注入时视频消息会给出可读错误。 */
     private val videoUploadCoordinator: VideoUploadCoordinator? = null,
     private val webFetcher: WebFetcher = HttpWebFetcher(),
+    private val deepSeekFetcher: DeepSeekFetchProvider = DeepSeekFetchProvider(),
     private val turnForeground: TurnForeground = TurnForeground.NoOp,
     /** 与生图共用。一轮开始/结束时上报，不在单条消息定稿时写灯。 */
     private val lamps: ConversationLamps = ConversationLamps(),
@@ -773,7 +777,7 @@ class ChatRepository(
         try {
             return runAgentTurn(
                 conversationId = conversationId,
-                config = config.copy(enabledTools = resolveEnabledTools(config, toolContexts)),
+                config = config.copy(enabledTools = resolveEnabledTools(settings, config, toolContexts)),
                 resolvedVideos = resolvedVideos,
                 toolContexts = toolContexts,
             )
@@ -788,6 +792,9 @@ class ChatRepository(
         /** 文本搜索候选后端（有序）：会话/显式优先，失败逐个借道。 */
         val text: List<ToolBackend>,
         val image: ToolBackend?,
+        /** 本回合开始时就定下来的抓取实现，中途改设置不影响这一轮。 */
+        val pageFetcher: WebFetcher,
+        val fetchBackendId: String,
     ) {
         data class ToolBackend(
             val providerId: String,
@@ -816,42 +823,47 @@ class ChatRepository(
         val image = backend(ids.imageProviderId)?.let { backend ->
             backend.copy(models = settings.imageSearchModels)
         }
-        return ToolBackendContexts(text = ids.textProviderIds.mapNotNull(::backend), image = image)
+        val (pageFetcher, fetchBackendId) = pageFetcherFor(settings)
+        return ToolBackendContexts(
+            text = ids.textProviderIds.mapNotNull(::backend),
+            image = image,
+            pageFetcher = pageFetcher,
+            fetchBackendId = fetchBackendId,
+        )
+    }
+
+    /** DeepSeek 抓取没配 Key 时用本机。选定后这一轮不再重读设置。 */
+    private fun pageFetcherFor(settings: ChatSettings): Pair<WebFetcher, String> {
+        if (settings.toolPolicy.fetchBackend == FetchBackend.DEEPSEEK) {
+            val entry = settings.providers[ProviderCatalog.DEEPSEEK]
+            if (entry != null && deepSeekFetcher.available(entry.baseUrl, entry.apiKey)) {
+                return deepSeekFetcher.bound(entry.baseUrl, entry.apiKey) to "deepseek-fetch"
+            }
+        }
+        return webFetcher to "local"
     }
 
     /**
-     * 本回合注入哪些工具：🌐 开着才注入；按**工具后端**（不是会话供应商）的可用性拼名单。
-     * 文本搜索有多个候选后端，任一可用即可注入（运行时逐个回退）；图搜/抓取独立判定。
+     * 本回合注入哪些工具。联网按钮关着则空；开着时再按每类工具的全局策略和后端可用性过滤。
+     * 托管 web_search 算文本搜索可用，同样吃「网页搜索」那一档。
      */
-    private fun resolveEnabledTools(config: ChatConfig, contexts: ToolBackendContexts): List<String> {
-        if (!config.webSearchEnabled) return emptyList()
+    private fun resolveEnabledTools(
+        settings: ChatSettings,
+        config: ChatConfig,
+        contexts: ToolBackendContexts,
+    ): List<String> {
         val imageAvailable = contexts.image?.let { backend ->
             imageProviders[backend.providerId]?.available(backend.config.baseUrl, backend.config.apiKey) == true
         } == true
-        // 托管 web_search 挂在同一次 Responses 请求上，不依赖另配的搜索后端。
-        if (config.hostedWebSearch) {
-            return buildList {
-                add(WebTools.SEARCH)
-                if (imageAvailable) {
-                    add(WebTools.SEARCH_IMAGES)
-                    add(WebTools.FIND_SIMILAR_IMAGES)
-                }
-                add(WebTools.FETCH)
-            }
-        }
-        val textAvailable = contexts.text.any { backend ->
+        val textAvailable = config.hostedWebSearch || contexts.text.any { backend ->
             searchProviders[backend.providerId]?.available(backend.config.baseUrl, backend.config.apiKey) == true
         }
-        if (!textAvailable && !imageAvailable) return emptyList()
-        return buildList {
-            if (textAvailable) add(WebTools.SEARCH)
-            if (imageAvailable) {
-                add(WebTools.SEARCH_IMAGES)
-                add(WebTools.FIND_SIMILAR_IMAGES)
-            }
-            // 抓取是纯客户端实现：既然已经开了联网工具，就一并提供。
-            add(WebTools.FETCH)
-        }
+        return ToolGates.enabledNames(
+            webSearchOn = config.webSearchEnabled,
+            policy = settings.toolPolicy,
+            textAvailable = textAvailable,
+            imageAvailable = imageAvailable,
+        )
     }
 
     /**
@@ -1429,12 +1441,13 @@ class ChatRepository(
         WebTools.FETCH -> {
             val url = WebTools.urlOf(call.arguments)
                 ?: return ToolResult(ToolStatus.FAILED, call.name, text = "缺少 URL", kind = ToolKind.FETCH)
-            val result = webFetcher.fetch(url)
+            val result = toolContexts.pageFetcher.fetch(url)
             ToolResult(
                 status = if (result.statusCode in 200..299) ToolStatus.OK else ToolStatus.FAILED,
                 detail = url,
                 text = WebTools.formatFetchResult(result),
                 kind = ToolKind.FETCH,
+                backendId = toolContexts.fetchBackendId,
             )
         }
 

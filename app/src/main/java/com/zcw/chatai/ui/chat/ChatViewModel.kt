@@ -27,6 +27,7 @@ import com.zcw.chatai.data.prefs.resolveBlankComposer
 import com.zcw.chatai.data.prefs.WorkspaceSlot
 import com.zcw.chatai.data.provider.ProviderCatalog
 import com.zcw.chatai.data.provider.ToolBackendResolver
+import com.zcw.chatai.data.provider.ToolGates
 import com.zcw.chatai.data.web.ImageSearchProvider
 import com.zcw.chatai.data.web.WebSearchProvider
 import com.zcw.chatai.ui.common.ConversationSearch
@@ -153,7 +154,11 @@ class ChatViewModel(
             pending = pend,
             notice = note,
             defaultModel = entry.model,
-            webSearchAvailable = textAvailable || imageAvailable,
+            webSearchAvailable = ToolGates.anyAvailable(
+                policy = settings.toolPolicy,
+                textAvailable = textAvailable,
+                imageAvailable = imageAvailable,
+            ),
             pendingWebSearch = binding?.webSearchEnabled == true,
             providers = settings.providers,
             pendingModel = binding?.model,

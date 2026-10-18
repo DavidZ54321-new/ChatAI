@@ -55,8 +55,10 @@ import com.zcw.chatai.data.image.ImageModels
 import com.zcw.chatai.data.video.VideoModels
 import com.zcw.chatai.data.prefs.ImageDetail
 import com.zcw.chatai.data.prefs.ThemeMode
+import com.zcw.chatai.data.provider.FetchBackend
 import com.zcw.chatai.data.provider.ProviderCatalog
 import com.zcw.chatai.data.provider.ProviderEntry
+import com.zcw.chatai.data.provider.ToolFollow
 import com.zcw.chatai.ui.common.ModelAutocompleteField
 import com.zcw.chatai.ui.drawer.WorkspaceMode
 import com.zcw.chatai.ui.persona.PersonasScreen
@@ -388,7 +390,7 @@ private fun ChatWorkspaceSettings(
             keyboardType = KeyboardType.Uri,
         )
         Text(
-            text = "留空或改回推导值即跟随 Chat Base URL。DeepSeek 搜索走 Anthropic，" +
+            text = "留空或改回推导值即跟随 Chat Base URL。DeepSeek 的搜索与抓取走官方 /v1/tools/*（与 Chat 同源），" +
                 "通义千问搜索/图搜走 Responses，OpenCode Go 搜索走同一 v1 根的 /messages。",
             style = MaterialTheme.typography.bodySmall,
             color = scheme.onSurfaceVariant,
@@ -397,9 +399,17 @@ private fun ChatWorkspaceSettings(
 
     SectionTitle("工具")
     ChoiceRow(
+        label = "网页搜索",
+        hint = null,
+        options = toolFollowOptions(),
+        selected = state.toolPolicy.search,
+        onSelect = { value -> viewModel.update { it.copy(toolPolicy = it.toolPolicy.copy(search = value)) } },
+    )
+    ChoiceRow(
         label = "联网搜索后端",
         hint = "这些工具经对应供应商的 API 执行，与当前对话模型无关（借道），按次计费；" +
-            "选中项只是首选，失败（空结果或报错）会自动借道其它已配置的后端",
+            "选中项只是首选，失败（空结果或报错）会自动借道其它已配置的后端。" +
+            "DeepSeek 这一档走官方 Search 接口（约 ¥5/千次成功请求），不再调用对话模型。",
         options = buildList {
             add(null to "跟随会话")
             ProviderCatalog.presets
@@ -408,6 +418,37 @@ private fun ChatWorkspaceSettings(
         },
         selected = state.searchProviderId,
         onSelect = { value -> viewModel.update { it.copy(searchProviderId = value) } },
+    )
+    ChoiceRow(
+        label = "网页抓取",
+        hint = null,
+        options = toolFollowOptions(),
+        selected = state.toolPolicy.fetch,
+        onSelect = { value -> viewModel.update { it.copy(toolPolicy = it.toolPolicy.copy(fetch = value)) } },
+    )
+    ChoiceRow(
+        label = "抓取实现",
+        hint = fetchBackendHint(state),
+        options = listOf(
+            FetchBackend.LOCAL to "本机抓取",
+            FetchBackend.DEEPSEEK to "DeepSeek",
+        ),
+        selected = state.toolPolicy.fetchBackend,
+        onSelect = { value -> viewModel.update { it.copy(toolPolicy = it.toolPolicy.copy(fetchBackend = value)) } },
+    )
+    ChoiceRow(
+        label = "文搜图",
+        hint = null,
+        options = toolFollowOptions(),
+        selected = state.toolPolicy.imageSearch,
+        onSelect = { value -> viewModel.update { it.copy(toolPolicy = it.toolPolicy.copy(imageSearch = value)) } },
+    )
+    ChoiceRow(
+        label = "图搜图",
+        hint = null,
+        options = toolFollowOptions(),
+        selected = state.toolPolicy.imageSimilar,
+        onSelect = { value -> viewModel.update { it.copy(toolPolicy = it.toolPolicy.copy(imageSimilar = value)) } },
     )
     Field(
         label = "图搜模型（按优先级）",
@@ -664,13 +705,14 @@ private fun ProviderNote(providerId: String, entry: ProviderEntry?) {
             "通义千问：联网搜索/文搜图/图搜图走 Responses API（搜索 4 元/千次、文搜图 24 元/千次、" +
                 "图搜图 48 元/千次）；视频 ≤5MB 内联发送，更大的自动走免费临时上传（48 小时有效）。"
         ProviderCatalog.DEEPSEEK ->
-            "DeepSeek：联网搜索走 Anthropic 兼容面（web_search_20260209），暂不支持视频。抓取由本机完成。"
+            "DeepSeek：联网搜索走官方 Search 接口（约 ¥5/千次成功请求），暂不支持视频。" +
+                "网页抓取可在「工具」里改用官方 Fetch，同样按次计费。"
         ProviderCatalog.OPENCODE_GO ->
             "OpenCode Go：主对话走 Chat 兼容面；联网搜索借道同一 v1 根的 Anthropic /messages。" +
-                "Grok/GPT/Muse 仅支持 Responses 面，本应用主对话暂不可用；不支持视频。抓取由本机完成。"
+                "Grok/GPT/Muse 仅支持 Responses 面，本应用主对话暂不可用；不支持视频。"
         ProviderCatalog.MIMO ->
             "MiMo：联网搜索走 Chat 面 web_search 插件（需在控制台启用插件，约 ¥16/千次 + 输入 token）；" +
-                "支持图片/视频（≤35MiB 内联发送）与音频理解；思考字段为 thinking:{type}。抓取由本机完成。"
+                "支持图片/视频（≤35MiB 内联发送）与音频理解；思考字段为 thinking:{type}。"
         ProviderCatalog.OPENAI ->
             "OpenAI 官方：主对话走 Responses API；🌐 使用托管 web_search 并显示来源链接。"
         else ->
@@ -688,7 +730,7 @@ private fun ImageSearchStatus(providers: Map<String, ProviderEntry>) {
     val qwenConfigured = providers.containsKey(ProviderCatalog.QWEN)
     Text(
         text = if (qwenConfigured) {
-            "文搜图 / 图搜图：通义千问（已配置，自动随 🌐 开关可用）"
+            "文搜图 / 图搜图：通义千问（已配置）。设为「跟随联网」时随 🌐 可用。"
         } else {
             "文搜图 / 图搜图：未配置通义千问，暂不可用（去「服务商」添加）"
         },
@@ -723,6 +765,27 @@ private fun VideoGenStatus(providers: Map<String, ProviderEntry>) {
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
     )
+}
+
+private fun toolFollowOptions(): List<Pair<ToolFollow, String>> = listOf(
+    ToolFollow.FOLLOW to "跟随联网",
+    ToolFollow.OFF to "永远关闭",
+)
+
+private fun fetchBackendHint(state: SettingsViewModel.FormState): String {
+    if (state.toolPolicy.fetchBackend == FetchBackend.LOCAL) {
+        return "本机直接抓取网页，不另计搜索费用。只接受公网 http(s)。"
+    }
+    val key = if (state.activeProviderId == ProviderCatalog.DEEPSEEK) {
+        state.apiKey
+    } else {
+        state.providers[ProviderCatalog.DEEPSEEK]?.apiKey
+    }
+    return if (key?.isNotBlank() == true) {
+        "DeepSeek Fetch 按次计费（约 ¥5/千次成功请求）。失败或不返回正文不计费。用的是 DeepSeek 条目里的 Key。"
+    } else {
+        "未配置 DeepSeek 的 API Key，抓取会退回本机。"
+    }
 }
 
 private fun ThemeMode.label(): String = when (this) {

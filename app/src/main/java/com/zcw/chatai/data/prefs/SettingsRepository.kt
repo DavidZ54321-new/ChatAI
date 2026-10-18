@@ -23,7 +23,10 @@ import com.zcw.chatai.data.provider.ProviderCatalog
 import com.zcw.chatai.data.provider.ProviderConfigCodec
 import com.zcw.chatai.data.provider.ProviderEntry
 import com.zcw.chatai.data.provider.ResponsesRequestWire
+import com.zcw.chatai.data.provider.FetchBackend
+import com.zcw.chatai.data.provider.ToolFollow
 import com.zcw.chatai.data.provider.ToolModels
+import com.zcw.chatai.data.provider.ToolPolicy
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -123,6 +126,8 @@ data class ChatSettings(
     val themeMode: ThemeMode,
     /** 品牌配色族（与 [themeMode] 正交：Claude / ChatGPT …）。 */
     val themeFamily: ThemeFamily,
+    /** 四类联网工具的开关，以及抓取走本机还是 DeepSeek。 */
+    val toolPolicy: ToolPolicy = ToolPolicy(),
 ) {
     /** 生效的图搜模型链：用户覆盖优先，空则用 Qwen 预设默认（27b → max）。 */
     val imageSearchModels: List<String>
@@ -347,11 +352,13 @@ class SettingsRepository(context: Context) {
         imagePromptExtend: Boolean,
         videoGenModelRaw: String,
         videoPromptExtend: Boolean,
+        toolPolicy: ToolPolicy,
     ) {
         store.edit { prefs ->
             prefs[KEY_PROVIDERS] = ProviderConfigCodec.encode(providers)
             prefs[KEY_ACTIVE_PROVIDER] = activeProviderId
             if (searchProviderId.isNullOrBlank()) prefs.remove(KEY_SEARCH_PROVIDER) else prefs[KEY_SEARCH_PROVIDER] = searchProviderId
+            prefs.writeToolPolicy(toolPolicy)
             prefs[KEY_PERSONAS] = PersonaConfigCodec.encode(personas)
             prefs[KEY_ACTIVE_PERSONA] = activePersonaId
             prefs[KEY_IMAGE_DETAIL] = imageDetail.name
@@ -421,6 +428,7 @@ class SettingsRepository(context: Context) {
             prefs.writeWorkspace(WorkspaceSlot.Text, settings.textWorkspace)
             prefs[KEY_THEME_MODE] = settings.themeMode.name
             prefs[KEY_THEME_FAMILY] = settings.themeFamily.name
+            prefs.writeToolPolicy(settings.toolPolicy)
         }
     }
 
@@ -564,7 +572,22 @@ class SettingsRepository(context: Context) {
             videoPromptExtend = this[KEY_VIDEO_PROMPT_EXTEND] ?: true,
             themeMode = this[KEY_THEME_MODE].toEnum(ThemeMode.SYSTEM),
             themeFamily = this[KEY_THEME_FAMILY].toEnum(ThemeFamily.CLAUDE),
+            toolPolicy = ToolPolicy(
+                search = this[KEY_TOOL_GATE_SEARCH].toEnum(ToolFollow.FOLLOW),
+                fetch = this[KEY_TOOL_GATE_FETCH].toEnum(ToolFollow.FOLLOW),
+                imageSearch = this[KEY_TOOL_GATE_IMAGE_SEARCH].toEnum(ToolFollow.FOLLOW),
+                imageSimilar = this[KEY_TOOL_GATE_IMAGE_SIMILAR].toEnum(ToolFollow.FOLLOW),
+                fetchBackend = this[KEY_FETCH_BACKEND].toEnum(FetchBackend.LOCAL),
+            ),
         )
+    }
+
+    private fun MutablePreferences.writeToolPolicy(policy: ToolPolicy) {
+        this[KEY_TOOL_GATE_SEARCH] = policy.search.name
+        this[KEY_TOOL_GATE_FETCH] = policy.fetch.name
+        this[KEY_TOOL_GATE_IMAGE_SEARCH] = policy.imageSearch.name
+        this[KEY_TOOL_GATE_IMAGE_SIMILAR] = policy.imageSimilar.name
+        this[KEY_FETCH_BACKEND] = policy.fetchBackend.name
     }
 
     private fun Preferences.readWorkspace(slot: WorkspaceSlot): WorkspaceMemory {
@@ -630,6 +653,13 @@ class SettingsRepository(context: Context) {
         val KEY_PROVIDERS = stringPreferencesKey("providers_json")
         val KEY_ACTIVE_PROVIDER = stringPreferencesKey("active_provider")
         val KEY_SEARCH_PROVIDER = stringPreferencesKey("search_provider")
+        /** 四类工具相对联网按钮的策略；缺省 FOLLOW。 */
+        val KEY_TOOL_GATE_SEARCH = stringPreferencesKey("tool_gate_search")
+        val KEY_TOOL_GATE_FETCH = stringPreferencesKey("tool_gate_fetch")
+        val KEY_TOOL_GATE_IMAGE_SEARCH = stringPreferencesKey("tool_gate_image_search")
+        val KEY_TOOL_GATE_IMAGE_SIMILAR = stringPreferencesKey("tool_gate_image_similar")
+        /** 抓取实现：LOCAL 或 DEEPSEEK。缺省本机。 */
+        val KEY_FETCH_BACKEND = stringPreferencesKey("fetch_backend")
         val KEY_PERSONAS = stringPreferencesKey("personas_json")
         val KEY_ACTIVE_PERSONA = stringPreferencesKey("active_persona")
         /** 旧全局提示词 key：只在懒迁移成默认角色时读，不再写入。 */

@@ -3,8 +3,10 @@ package com.zcw.chatai.data.prefs
 import com.zcw.chatai.data.persona.PersonaConfigCodec
 import com.zcw.chatai.data.persona.PersonaEntry
 import com.zcw.chatai.data.net.ChatApiException
+import com.zcw.chatai.data.provider.FetchBackend
 import com.zcw.chatai.data.provider.ProviderCatalog
 import com.zcw.chatai.data.provider.ProviderEntry
+import com.zcw.chatai.data.provider.ToolFollow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -161,6 +163,8 @@ class ChatSettingsTest {
         val configured = settings.copy(searchProviderId = ProviderCatalog.QWEN)
         assertEquals(ProviderCatalog.QWEN, configured.searchProviderId)
         assertEquals(null, settings.searchProviderId)
+        assertEquals(ToolFollow.FOLLOW, settings.toolPolicy.search)
+        assertEquals(FetchBackend.LOCAL, settings.toolPolicy.fetchBackend)
     }
 
     @Test

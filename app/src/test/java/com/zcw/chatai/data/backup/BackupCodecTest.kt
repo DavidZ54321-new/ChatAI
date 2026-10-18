@@ -12,7 +12,10 @@ import com.zcw.chatai.data.prefs.ImageDetail
 import com.zcw.chatai.data.prefs.ReasoningEffort
 import com.zcw.chatai.data.prefs.ThemeFamily
 import com.zcw.chatai.data.prefs.ThemeMode
+import com.zcw.chatai.data.provider.FetchBackend
 import com.zcw.chatai.data.provider.ProviderCatalog
+import com.zcw.chatai.data.provider.ToolFollow
+import com.zcw.chatai.data.provider.ToolPolicy
 import com.zcw.chatai.data.provider.ProviderEntry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -101,6 +104,13 @@ class BackupCodecTest {
         imageSearchModelsRaw = "qwen3.8-27b,qwen3.8-max",
         themeMode = ThemeMode.DARK,
         themeFamily = ThemeFamily.CHATGPT,
+        toolPolicy = ToolPolicy(
+            search = ToolFollow.OFF,
+            fetch = ToolFollow.FOLLOW,
+            imageSearch = ToolFollow.OFF,
+            imageSimilar = ToolFollow.FOLLOW,
+            fetchBackend = FetchBackend.DEEPSEEK,
+        ),
     )
 
     private fun attachmentJson(vararg ids: String): String = AttachmentCodec.encode(
@@ -228,9 +238,12 @@ class BackupCodecTest {
         assertEquals(ChatSettings.Default.providers.keys, restored.providers.keys)
         assertEquals(ChatSettings.Default.personas.keys, restored.personas.keys)
         assertEquals(restored.providers.keys.first(), restored.activeProviderId)
-        // 旧备份没有这些字段：缺省开。
+        // 旧备份没有这些字段：缺省开，工具跟随联网，抓取用本机。
         assertEquals(true, restored.streamHaptic)
         assertEquals(true, restored.includeReasoning)
+        assertEquals(ToolFollow.FOLLOW, restored.toolPolicy.search)
+        assertEquals(ToolFollow.FOLLOW, restored.toolPolicy.imageSearch)
+        assertEquals(FetchBackend.LOCAL, restored.toolPolicy.fetchBackend)
     }
 
     @Test

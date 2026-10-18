@@ -25,6 +25,7 @@ import com.zcw.chatai.data.provider.ProviderCatalog
 import com.zcw.chatai.data.video.VideoRepository
 import com.zcw.chatai.data.video.WorkManagerVideoScheduler
 import com.zcw.chatai.data.web.deepseek.DeepSeekNativeSearchProvider
+import com.zcw.chatai.data.web.deepseek.DeepSeekSearchApiProvider
 import com.zcw.chatai.data.web.HttpWebFetcher
 import com.zcw.chatai.data.web.ImageSearchProvider
 import com.zcw.chatai.data.web.mimo.MiMoWebSearchProvider
@@ -62,12 +63,14 @@ class ChatAiApp : Application() {
         TailLayoutStore(File(filesDir, "tail-layout.txt"), appScope)
     }
 
-    /** 按供应商选搜索后端：DeepSeek 走 Anthropic 面，Qwen 走 Responses，Go 按模型路由两面，MiMo 走 Chat 面插件。 */
+    /**
+     * 按供应商选搜索后端：DeepSeek 走官方 Search，Qwen 走 Responses，
+     * Go 按模型路由 Anthropic / Responses，MiMo 走 Chat 面插件。
+     */
     val webSearchProviders: Map<String, WebSearchProvider> by lazy {
-        val anthropicSearch = DeepSeekNativeSearchProvider()
         mapOf(
-            ProviderCatalog.DEEPSEEK to anthropicSearch,
-            ProviderCatalog.OPENCODE_GO to OpenCodeGoSearchRouter(messages = anthropicSearch),
+            ProviderCatalog.DEEPSEEK to DeepSeekSearchApiProvider(),
+            ProviderCatalog.OPENCODE_GO to OpenCodeGoSearchRouter(messages = DeepSeekNativeSearchProvider()),
             ProviderCatalog.QWEN to QwenWebSearchProvider(),
             ProviderCatalog.MIMO to MiMoWebSearchProvider(),
         )
