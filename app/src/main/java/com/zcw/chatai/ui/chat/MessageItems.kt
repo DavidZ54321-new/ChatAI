@@ -1,10 +1,5 @@
 package com.zcw.chatai.ui.chat
 
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -25,7 +20,6 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,7 +36,6 @@ import com.zcw.chatai.data.model.MessageStatus
 import com.zcw.chatai.data.model.Role
 import com.zcw.chatai.ui.md.MessageMarkdown
 import com.zcw.chatai.ui.theme.ChatTheme
-import com.zcw.chatai.ui.theme.SpikeMark
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -101,8 +94,8 @@ fun AssistantTurnItem(
     group: List<ChatMessageItem>,
     streamingMessageId: String?,
     isCurrentTurn: Boolean,
-    /** 用户展开工具/思考详情时回调：让列表临时松钉，别把内容拽走。 */
-    onUserExpand: () -> Unit,
+    /** 打开这一段活动的摘要。参数是这段活动的 key。 */
+    onOpenActivity: (String) -> Unit,
     meta: String?,
     /** 长按点的窗口坐标，悬浮菜单靠它定位。 */
     onLongPress: (ChatMessageItem, Offset) -> Unit,
@@ -123,32 +116,47 @@ fun AssistantTurnItem(
     onActiveCenter: InChatCenterReport? = null,
     modifier: Modifier = Modifier,
 ) {
+    val pieces = remember(group, streamingMessageId) {
+        ActivityLog.pieces(group, streamingMessageId)
+    }
     val lastAssistant = group.lastOrNull { it.role == Role.ASSISTANT } ?: return
     Box(modifier.fillMaxWidth().padding(vertical = 4.dp), contentAlignment = Alignment.Center) {
         Column(
             modifier = Modifier.fillMaxWidth(0.9f),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            group.forEach { message ->
-                if (message.role == Role.TOOL) {
-                    message.toolResult?.let { ToolCallBlock(it, onUserExpand = onUserExpand) }
-                } else {
-                    AssistantStep(
-                        message = message,
-                        isStreaming = message.id == streamingMessageId,
-                        isCurrentTurn = isCurrentTurn,
-                        onUserExpand = onUserExpand,
-                        onLongPress = { offset -> onLongPress(message, offset) },
-                        onRetry = { onRetry(message) },
-                        onContinue = onContinue,
-                        onCancelledRegenerate = onCancelledRegenerate?.let { regenerate ->
-                            { regenerate(message) }
-                        },
-                        searchHits = searchHits.filter { it.messageId == message.id },
-                        activeHit = activeHit?.takeIf { it.messageId == message.id },
-                        searchQuery = searchQuery,
-                        onActiveCenter = if (activeHit?.messageId == message.id) onActiveCenter else null,
-                    )
+            if (isCurrentTurn && pieces.isEmpty()) {
+                ActivityLog.latestLabel(emptyList(), turnActive = true)?.let { label ->
+                    ActivityRow(label = label, onClick = {})
+                }
+            }
+            pieces.forEachIndexed { index, piece ->
+                when (piece) {
+                    is TurnPiece.Body -> {
+                        val message = group.firstOrNull { it.id == piece.messageId } ?: return@forEachIndexed
+                        val streaming = message.id == streamingMessageId
+                        if (!message.hasAssistantBody(streaming)) return@forEachIndexed
+                        AssistantStep(
+                            message = message,
+                            isStreaming = streaming,
+                            onLongPress = { offset -> onLongPress(message, offset) },
+                            onRetry = { onRetry(message) },
+                            onContinue = onContinue,
+                            onCancelledRegenerate = onCancelledRegenerate?.let { regenerate ->
+                                { regenerate(message) }
+                            },
+                            searchHits = searchHits.filter { it.messageId == message.id },
+                            activeHit = activeHit?.takeIf { it.messageId == message.id },
+                            searchQuery = searchQuery,
+                            onActiveCenter = if (activeHit?.messageId == message.id) onActiveCenter else null,
+                        )
+                    }
+                    is TurnPiece.Activity -> {
+                        val label = ActivityLog.rowLabel(pieces, index, isCurrentTurn, streamingMessageId)
+                        if (label != null) {
+                            ActivityRow(label = label, onClick = { onOpenActivity(piece.key) })
+                        }
+                    }
                 }
             }
             // 整回合只挂一次操作行，放在所有步骤（含工具块）之后；
@@ -169,8 +177,6 @@ fun AssistantTurnItem(
 private fun AssistantStep(
     message: ChatMessageItem,
     isStreaming: Boolean,
-    isCurrentTurn: Boolean,
-    onUserExpand: () -> Unit,
     onLongPress: (Offset) -> Unit,
     onRetry: () -> Unit,
     onContinue: (() -> Unit)?,
@@ -183,23 +189,6 @@ private fun AssistantStep(
     val placed = remember(message.id) { PlacedMarkdown() }
     val body = message.visibleAnswer(streaming = isStreaming)
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        val reasoning = message.reasoning.orEmpty()
-        if (reasoning.isNotBlank()) {
-            ReasoningBlock(
-                reasoning = reasoning,
-                isStreaming = isStreaming,
-                answerStarted = body.isNotEmpty(),
-                reasoningMs = message.reasoningMs,
-                onUserExpand = onUserExpand,
-            )
-        } else if (message.content.isEmpty() &&
-            (isStreaming || (isCurrentTurn && message.status == MessageStatus.STREAMING))
-        ) {
-            // 兜底：当前回合的 DB 行还是 STREAMING 空壳（overlay 已撤、定稿内容未发射）时
-            // 也占住高度，不让助手气泡塌成 0 高把视口钳回用户气泡。
-            // 限定 isCurrentTurn：崩溃遗留的 STREAMING 行不是当前回合，不挂永久转圈。
-            StreamingIndicator()
-        }
         if (body.isNotEmpty()) {
             MessageMarkdown(
                 content = body,
@@ -244,11 +233,16 @@ private fun AssistantStep(
             )
             else -> message.errorMessage?.let { WarningRow(it) }
         }
-        if (isStreaming && message.content.isNotEmpty()) {
-            StreamingIndicator()
-        }
     }
 }
+
+/** 思考和工具已经收进摘要行，这里只留正文、引用和状态。空壳不占一行，避免多出空白间隔。 */
+private fun ChatMessageItem.hasAssistantBody(streaming: Boolean): Boolean =
+    visibleAnswer(streaming).isNotEmpty() ||
+        citations.isNotEmpty() ||
+        status == MessageStatus.ERROR ||
+        status == MessageStatus.CANCELLED ||
+        errorMessage != null
 
 @Composable
 private fun MessageActions(
@@ -285,32 +279,6 @@ private fun MessageActions(
                 maxLines = 1,
             )
         }
-    }
-}
-
-@Composable
-private fun StreamingIndicator() {
-    val transition = rememberInfiniteTransition(label = "streaming")
-    val alpha by transition.animateFloat(
-        initialValue = 0.25f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 700),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "alpha",
-    )
-    Row(
-        modifier = Modifier.padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        SpikeMark(size = 16.dp, color = MaterialTheme.colorScheme.primary.copy(alpha = alpha))
-        Text(
-            text = "思考中",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     }
 }
 

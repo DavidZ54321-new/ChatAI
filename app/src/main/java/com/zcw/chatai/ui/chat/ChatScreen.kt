@@ -478,7 +478,11 @@ fun ChatScreen(
                                         group = group.items,
                                         streamingMessageId = state.streamingMessageId,
                                         isCurrentTurn = state.isTurnActive && tail,
-                                        onUserExpand = follow.unpin,
+                                        onOpenActivity = { pieceKey ->
+                                            focusManager.clearFocus()
+                                            keyboardController?.hide()
+                                            messageOverlay = MessageOverlay.ActivitySummary(group.key, pieceKey)
+                                        },
                                         meta = lastAssistant
                                             ?.takeIf { last -> group.items.any { it.id == last.id } }
                                             ?.let { lastAssistantMeta },
@@ -738,6 +742,32 @@ fun ChatScreen(
             text = overlay.text,
             onDismiss = { messageOverlay = null },
         )
+        is MessageOverlay.ActivitySummary -> {
+            val group = groups.firstOrNull { it.key == overlay.groupKey } as? MessageGroup.Assistant
+            if (group == null) {
+                LaunchedEffect(overlay.groupKey) { messageOverlay = null }
+            } else {
+                val turnIndex = groups.indexOfFirst { it.key == overlay.groupKey }
+                val pieces = remember(group.items, state.streamingMessageId) {
+                    ActivityLog.pieces(group.items, state.streamingMessageId)
+                }
+                val steps = ActivityLog.stepsOf(pieces, overlay.pieceKey)
+                if (steps == null) {
+                    LaunchedEffect(overlay.pieceKey) { messageOverlay = null }
+                } else {
+                    ActivitySummaryCard(
+                        steps = steps,
+                        followLatest = ActivityLog.isLive(
+                            pieces,
+                            overlay.pieceKey,
+                            state.isTurnActive && MessageGroups.isTailGroup(groups, turnIndex),
+                            state.streamingMessageId,
+                        ),
+                        onDismiss = { messageOverlay = null },
+                    )
+                }
+            }
+        }
     }
 
     // 编辑弹层：破坏性截断先确认（只有后面还有消息时才问一次）。
@@ -1011,4 +1041,7 @@ private sealed interface MessageOverlay {
 
     /** 打开那一刻的正文，选字期间不再跟着流式改写。 */
     data class SelectText(val text: String) : MessageOverlay
+
+    /** 这一段活动的摘要。只记组 key 和活动 key，内容从当前消息列表现算。 */
+    data class ActivitySummary(val groupKey: String, val pieceKey: String) : MessageOverlay
 }
