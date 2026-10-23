@@ -115,6 +115,16 @@ object ContextBuilder {
                 Role.TOOL -> Unit
 
                 Role.ASSISTANT -> {
+                    // 停止或失败后只剩思考：不发出空助手行。数据库那一行仍在，活动详情还能打开。
+                    // 已写出的半截正文照常出站。不看填充后的正文，避免和「要不要把思考当回答」缠在一起。
+                    if (
+                        message.status != MessageStatus.COMPLETE &&
+                        message.content.isBlank() &&
+                        message.toolCalls.isEmpty() &&
+                        message.attachments.isEmpty()
+                    ) {
+                        continue
+                    }
                     wire += toWire(
                         message, keepAttachments, labels,
                         imageProvider, videoProvider, documentProvider, audioProvider,
@@ -247,6 +257,7 @@ object ContextBuilder {
             message.content,
             message.reasoningContent,
             message.toolCalls.isNotEmpty(),
+            status = message.status,
         )
     }
 

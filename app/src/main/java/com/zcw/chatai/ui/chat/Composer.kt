@@ -137,22 +137,28 @@ fun Composer(
         )
         // 按钮行：附件 → 模型 → 联网 → 弹簧 → 发送。模型 chip 宽度上限是行宽的 25%，
         // 长模型名只省略号，不把发送键挤出去（BoxWithConstraints 读的是行可用宽）。
+        // 前三个之间留 5.dp，图标和模型 chip 不再贴在一起。
         BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
             val chipMaxWidth = maxWidth * 0.25f
             Row(verticalAlignment = Alignment.CenterVertically) {
-                IconBareButton(
-                    painter = painterResource(R.drawable.ic_attach),
-                    contentDescription = "添加附件",
-                    onClick = onAttachClick,
-                    iconSize = 22.dp,
-                    tint = scheme.onSurfaceVariant,
-                )
-                ModelChip(model = model, onClick = onModelClick, maxWidth = chipMaxWidth)
-                WebSearchToggle(
-                    enabled = webSearchEnabled,
-                    available = webSearchAvailable,
-                    onClick = onToggleWebSearch,
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    IconBareButton(
+                        painter = painterResource(R.drawable.ic_attach),
+                        contentDescription = "添加附件",
+                        onClick = onAttachClick,
+                        iconSize = 22.dp,
+                        tint = scheme.onSurfaceVariant,
+                    )
+                    ModelChip(model = model, onClick = onModelClick, maxWidth = chipMaxWidth)
+                    WebSearchToggle(
+                        enabled = webSearchEnabled,
+                        available = webSearchAvailable,
+                        onClick = onToggleWebSearch,
+                    )
+                }
                 Spacer(Modifier.weight(1f))
                 PrimaryActionButton(
                     isTurnActive = isTurnActive,

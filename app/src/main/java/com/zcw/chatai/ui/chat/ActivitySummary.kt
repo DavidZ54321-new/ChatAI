@@ -45,6 +45,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -303,7 +304,11 @@ fun ActivitySummaryCard(
                         } else {
                             Column(Modifier.fillMaxSize()) {
                                 DetailHeader(step = open, onBack = { pageId = null }, modifier = dragHandle)
-                                DetailBody(step = open, modifier = Modifier.weight(1f))
+                                DetailBody(
+                                    step = open,
+                                    follow = ActivityLog.followsTail(open),
+                                    modifier = Modifier.weight(1f),
+                                )
                             }
                         }
                     }
@@ -401,11 +406,34 @@ private fun detailTitle(step: ActivityStep): String = when (step) {
 }
 
 @Composable
-private fun DetailBody(step: ActivityStep, modifier: Modifier = Modifier) {
+private fun DetailBody(step: ActivityStep, follow: Boolean, modifier: Modifier = Modifier) {
+    val scroll = rememberScrollState()
+    val pin = remember { ActivityTailFollow.Pin() }
+    val followNow = rememberUpdatedState(follow)
+    var viewportHeight by remember { mutableIntStateOf(0) }
+    val userScroll = remember {
+        object : NestedScrollConnection {
+            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+                if (source == NestedScrollSource.UserInput) {
+                    pin.onUserScroll(scroll.value, scroll.maxValue, followNow.value)
+                }
+                return Offset.Zero
+            }
+        }
+    }
+    LaunchedEffect(scroll) {
+        snapshotFlow { viewportHeight to scroll.maxValue }.collect { (height, max) ->
+            if (height == 0) return@collect
+            val target = pin.onMeasured(scroll.value, max, followNow.value)
+            if (target != null && scroll.value != target) scroll.scrollTo(target)
+        }
+    }
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .verticalScroll(rememberScrollState())
+            .onSizeChanged { viewportHeight = it.height }
+            .nestedScroll(userScroll)
+            .verticalScroll(scroll)
             .padding(horizontal = 20.dp, vertical = 8.dp),
     ) {
         when (step) {

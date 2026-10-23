@@ -117,13 +117,14 @@ data class ChatMessageItem(
     /** 消息落库时间（毫秒）。链路页用它标每一轮；0 只出现在没填时间的测试数据里。 */
     val createdAt: Long = 0,
 ) {
-    /** 气泡和复制用的正文。流式过程中不把思考顶上去。 */
+    /** 气泡和复制用的正文。流式中、以及停止或失败的回合，不把思考顶上去。 */
     fun visibleAnswer(streaming: Boolean = false): String =
-        if (streaming) {
-            content
-        } else {
-            AssistantVisible.text(content, reasoning, hasToolCalls)
-        }
+        AssistantVisible.text(
+            content,
+            reasoning,
+            hasToolCalls,
+            status = if (streaming) MessageStatus.STREAMING else status,
+        )
 }
 
 data class ChatUiState(

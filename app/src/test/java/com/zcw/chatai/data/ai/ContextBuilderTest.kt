@@ -239,6 +239,78 @@ class ContextBuilderTest {
     }
 
     @Test
+    fun cancelledReasoningOnlyAssistantIsLeftOutOfTheWindow() {
+        val thought = "The user says it's a song riddle."
+        val messages = listOf(
+            message(id = "u1", role = Role.USER, content = "猜一首歌"),
+            message(
+                id = "a1",
+                role = Role.ASSISTANT,
+                content = "",
+                status = MessageStatus.CANCELLED,
+                reasoningContent = thought,
+            ),
+            message(id = "u2", role = Role.USER, content = "继续"),
+        )
+        val built = ContextBuilder.build(messages, imageTurns = 0, imageProvider = { null })
+        assertEquals(listOf("user", "user"), built.map { it.role })
+        assertTrue(built.none { it.content == thought || it.reasoning == thought })
+    }
+
+    @Test
+    fun failedReasoningOnlyAssistantIsLeftOutOfTheWindow() {
+        val messages = listOf(
+            message(id = "u1", role = Role.USER, content = "猜一首歌"),
+            message(
+                id = "a1",
+                role = Role.ASSISTANT,
+                content = "",
+                status = MessageStatus.ERROR,
+                reasoningContent = "半截思维链",
+            ),
+        )
+        val built = ContextBuilder.build(messages, imageTurns = 0, imageProvider = { null })
+        assertEquals(listOf("user"), built.map { it.role })
+    }
+
+    @Test
+    fun cancelledPartialAnswerKeepsContentAndDoesNotPromoteReasoning() {
+        val messages = listOf(
+            message(
+                id = "a1",
+                role = Role.ASSISTANT,
+                content = "已经写出的半句",
+                status = MessageStatus.CANCELLED,
+                reasoningContent = "思维链不该进正文",
+            ),
+        )
+        val built = ContextBuilder.build(messages, imageTurns = 0, imageProvider = { null })
+        assertEquals("已经写出的半句", built.single().content)
+        assertEquals("思维链不该进正文", built.single().reasoning)
+    }
+
+    @Test
+    fun cancelledToolCallTurnStaysPairedAndDoesNotPromoteReasoning() {
+        val calls = listOf(ToolCall("call_1", "web_search", "{\"query\":\"x\"}"))
+        val messages = listOf(
+            message(
+                id = "a1",
+                role = Role.ASSISTANT,
+                content = "",
+                status = MessageStatus.CANCELLED,
+                toolCalls = calls,
+                reasoningContent = "想搜一下",
+            ),
+            message(id = "t1", role = Role.TOOL, content = "已中断", toolCallId = "call_1"),
+        )
+        val built = ContextBuilder.build(messages, imageTurns = 0, imageProvider = { null })
+        assertEquals(listOf("assistant", "tool"), built.map { it.role })
+        assertEquals("", built[0].content)
+        assertEquals("想搜一下", built[0].reasoning)
+        assertEquals(calls, built[0].toolCalls)
+    }
+
+    @Test
     fun toolCallTurnEchoesReasoningEitherWay() {
         val calls = listOf(ToolCall("call_1", "web_search", "{\"query\":\"x\"}"))
         val messages = listOf(

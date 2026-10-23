@@ -192,6 +192,12 @@ object ActivityLog {
     fun isFailed(step: ActivityStep): Boolean =
         step is ActivityStep.Tool && step.result.status == ToolStatus.FAILED
 
+    /** 这一步的正文还在涨，详情页才允许贴底跟随。思考要等正文开始才停，工具要等跑完。 */
+    fun followsTail(step: ActivityStep): Boolean = when (step) {
+        is ActivityStep.Thinking -> step.streaming && !step.answerStarted
+        is ActivityStep.Tool -> step.result.status == ToolStatus.RUNNING
+    }
+
     fun toolLine(result: ToolResult): String {
         val title = toolCallTitle(result)
         val head = if (result.status == ToolStatus.RUNNING) "$title…" else title
